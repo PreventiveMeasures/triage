@@ -17,12 +17,7 @@ export function layoutDependencyLayers(nodes, importsOf, roots, { width = 900, r
       queue.push(target)
     }
   }
-  const groups = new Map()
-  for (const node of nodes) {
-    const level = depth.get(node.id) ?? null
-    if (!groups.has(level)) groups.set(level, [])
-    groups.get(level).push(node)
-  }
+  const groups = Map.groupBy(nodes, (node) => depth.get(node.id) ?? null)
   const parents = new Map(nodes.map((n) => [n.id, []]))
   for (const [id, targets] of importsOf) {
     if (!byId.has(id)) continue
@@ -68,17 +63,15 @@ export function layoutDependencyLayers(nodes, importsOf, roots, { width = 900, r
     }
   }
   edges.sort((a, b) => String(a.from).localeCompare(String(b.from)) || String(a.to).localeCompare(String(b.to)))
-  const incoming = new Map(), outgoing = new Map()
-  for (const edge of edges) {
-    if (!outgoing.has(edge.from)) outgoing.set(edge.from, [])
-    if (!incoming.has(edge.to)) incoming.set(edge.to, [])
-    outgoing.get(edge.from).push(edge)
-    incoming.get(edge.to).push(edge)
+  // Each bar's ports spread evenly, ordered by the bars at their other ends.
+  for (const list of Map.groupBy(edges, (e) => e.from).values()) {
+    list.sort((a, b) => rects.get(a.to).x - rects.get(b.to).x)
+    list.forEach((e, i) => { e.sourcePort = (i + 1) / (list.length + 1) })
   }
-  for (const list of outgoing.values()) list.sort((a, b) => rects.get(a.to).x - rects.get(b.to).x)
-  for (const list of incoming.values()) list.sort((a, b) => rects.get(a.from).x - rects.get(b.from).x)
-  for (const list of outgoing.values()) list.forEach((e, i) => { e.sourcePort = (i + 1) / (list.length + 1) })
-  for (const list of incoming.values()) list.forEach((e, i) => { e.targetPort = (i + 1) / (list.length + 1) })
+  for (const list of Map.groupBy(edges, (e) => e.to).values()) {
+    list.sort((a, b) => rects.get(a.from).x - rects.get(b.from).x)
+    list.forEach((e, i) => { e.targetPort = (i + 1) / (list.length + 1) })
+  }
   const totalSize = levels.reduce((sum, row) => sum + row.size, 0)
   for (const row of levels) row.share = totalSize > 0 ? row.size / totalSize : null
   return { levels, rects, edges, depth, totalSize, width, height: levels.length > 0 ? levels.length * (rowHeight + gap) - gap : 0, gap }

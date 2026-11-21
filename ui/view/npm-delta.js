@@ -1,51 +1,34 @@
-// The lines a version wanting reviews changes, beside its row in a list of
-// them (team-dependencies.js, dialogs/repository-item-dialog.js): against the
-// version it was (`base`), of its package or another the host names a
-// review's base of (`baseName`), or, new, its whole package's (`(empty)`), a
-// patched one's as its pnpm patch changes it (`patch`, where it is read), as the
-// server counts them (GET /api/npm/deltas): `+x −y`, and, where declaration
-// files changed in types alone, which a reviewer may pass leaving them out,
-// `(+z −w -types)`; and `, binary` where binary files, which lines don't
-// count, changed too. Those a team's Dependencies tab is told with its
-// versions held as they come (seedNpmDeltas); the rest read once their rows
-// near the viewport (lazy-render.js), those asked within a frame asked
-// together, as many as ASKED_TOGETHER a request, as many requests at once as
-// READ_AT_ONCE, those asked first read first; and held for the session, what
-// a version holds never changing; one that fails asked again after RETRY_MS.
+// `<npm-delta>`: the lines a version wanting reviews changes, beside its row
+// (team-dependencies.js, dialogs/repository-item-dialog.js), as the server
+// counts them (GET /api/npm/deltas): against `base` (of package `baseName`)
+// or the whole package (`(empty)`), as `patch` changes it where given: `+x
+// −y`, `(+z −w -types)` where declaration files changed in types alone, and
+// `, binary` where binary files changed too. Those seeded (seedNpmDeltas) are
+// held as they come; the rest read once their rows near the viewport, those
+// asked within a frame together (ASKED_TOGETHER a request, READ_AT_ONCE
+// requests at once), held for the session, a failure asked again after RETRY_MS.
 import { LitElement, html, nothing } from 'lit'
-import { state } from '#client/index.js'
 import { fetchNpmDeltas } from './client-managed.js'
 import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
+import { sessionKept } from './activity-reads.js'
 
 const READ_AT_ONCE = 2
 const ASKED_TOGETHER = 50
-// The most of its address a request's versions take, lest it be refused as
-// too long.
+// The most of its address a request's versions take, lest it be refused as too long.
 const ASKED_LENGTH = 6000
 const RETRY_MS = 60_000
 
 const held = new Map()
-// Those asked within this frame, by their keys, then those waiting their
-// turn, a request's each.
+// Those asked within this frame by key, then those waiting their turn, a request's each.
 const asking = new Map()
 const waiting = []
 const listeners = new Set()
-let heldFor = null
 let inFlight = 0
 let framed = false
 // Each listener told of the delta that changed (its key), none where all may have.
 const changed = key => { for (const notify of listeners) notify(key) }
-
-function sessionHeld() {
-  const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
-  if (session !== heldFor) {
-    held.clear()
-    asking.clear()
-    waiting.length = 0
-    heldFor = session
-  }
-  return held
-}
+// What is held and asked, forgotten as another session or role reads.
+const sessionHeld = sessionKept(held, asking, { clear: () => { waiting.length = 0 } })
 
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null
 const lines = told => count(told?.additions) === null || count(told?.deletions) === null ? null : { additions: told.additions, deletions: told.deletions }
@@ -53,14 +36,13 @@ const lines = told => count(told?.additions) === null || count(told?.deletions) 
 const ready = (all, told) => ({ status: 'ready', until: Number.POSITIVE_INFINITY, ...all, typeless: lines(told.typeless), binary: told.binary === true })
 const failed = error => ({ status: 'error', until: Date.now() + RETRY_MS, error })
 
-// A delta's key: its version's, its base's (of another package, its name
-// before it), and its patch's hash.
+// A delta's key: its version's, its base's (another package's named before
+// it), and its patch's hash.
 const keyOf = (name, version, base, patchHash, baseName = name) =>
   `${name}\0${version}\0${baseName === name ? '' : `${baseName}@`}${base}${patchHash ? `\0${patchHash}` : ''}`
-// Version `version` of package `name`'s delta against `base`, of package
-// `baseName`, as `patch` (`{ hash, repoId, commit, path }`) changes it where
-// given, as held, else asked: `{ status }`, 'loading', then 'ready' with
-// `additions`, `deletions`, `typeless` and `binary`, or 'error' with its `error`.
+// A version's delta, as held, else asked: `{ status }`, 'loading', then
+// 'ready' with `additions`, `deletions`, `typeless` and `binary`, or 'error'
+// with its `error`. `patch` is `{ hash, repoId, commit, path }`.
 export function npmDelta(name, version, base, patch = null, baseName = name) {
   const data = sessionHeld()
   const key = keyOf(name, version, base, patch?.hash, baseName)
@@ -78,13 +60,12 @@ export function npmDelta(name, version, base, patch = null, baseName = name) {
   return loading
 }
 
-// Those told otherwise, as a team's Dependencies are (team-dependencies.js),
-// `[name, version, base, delta]` each, held as those asked for are, one
-// asked for meanwhile asked no more.
+// Those told otherwise, as a team's Dependencies are, `[name, version, base,
+// delta]` each, held as those asked are, one asked meanwhile asked no more.
 export function seedNpmDeltas(deltas) {
   const data = sessionHeld()
   for (const [name, version, base, told] of deltas) {
-    const all = lines(told), key = `${name}\0${version}\0${base}`
+    const all = lines(told), key = keyOf(name, version, base)
     if (!all || data.get(key)?.status === 'ready') continue
     asking.delete(key)
     data.set(key, ready(all, told))
@@ -92,8 +73,7 @@ export function seedNpmDeltas(deltas) {
   }
 }
 
-// Those asked within the frame, in requests of as many as ASKED_TOGETHER,
-// their address no longer than ASKED_LENGTH.
+// Those asked within the frame, in requests of ASKED_TOGETHER at most, no longer than ASKED_LENGTH.
 function askTogether() {
   framed = false
   let length = 0, request = []
@@ -127,13 +107,12 @@ function readDone() {
 // A request's versions, each held as the server tells it, or why it
 // couldn't be counted; one aborted asked again once drawn.
 function readOf(asked) {
-  const data = held
   const left = new Map(asked.map(({ key, loading }) => [key, loading]))
   const settle = (key, entry) => {
     if (!left.has(key)) return
-    if (data.get(key) === left.get(key)) {
-      if (entry) data.set(key, entry)
-      else data.delete(key)
+    if (held.get(key) === left.get(key)) {
+      if (entry) held.set(key, entry)
+      else held.delete(key)
     }
     left.delete(key)
     changed(key)
@@ -151,16 +130,17 @@ function readOf(asked) {
 }
 
 // The version a pull request's row is reviewed against, `{ name, version }`,
-// none for its whole package: the one the host names (`base`) where it names
-// them (`review.reviewedBases`), else one it was, a patched one's the
-// version it patches where it was that.
+// null for its whole package: the one the host names (`review.reviewedBases`),
+// else one it was, a patched one's the version it patches where it was that.
 export function reviewBase(pkg, review) {
   if (review?.reviewedBases) return pkg.base ?? null
   const was = pkg.patch && pkg.was?.includes(pkg.version) ? pkg.version : pkg.was?.find(prior => prior !== pkg.version)
   return was ? { name: pkg.name, version: was } : null
 }
 
-const counted = (additions, deletions) => html`<span class="is-added">+${additions.toLocaleString('en-US')}</span> <span class="is-deleted">−${deletions.toLocaleString('en-US')}</span>`
+const added = n => html`<span class="is-added">+${n.toLocaleString('en-US')}</span>`
+const deleted = n => html`<span class="is-deleted">−${n.toLocaleString('en-US')}</span>`
+const counted = (additions, deletions) => html`${added(additions)} ${deleted(deletions)}`
 
 class NpmDeltaElement extends LitElement {
   static properties = { name: { attribute: false }, version: { attribute: false }, base: { attribute: false }, baseName: { attribute: false }, patch: { attribute: false } }
@@ -184,8 +164,7 @@ class NpmDeltaElement extends LitElement {
     this._unwatch()
   }
 
-  // Told as what is held changes, and read once it nears the viewport, no
-  // longer watched for it then.
+  // Told as what is held changes, and read once it nears the viewport, no longer watched for it then.
   _watch() {
     listeners.add(this._notify)
     if (this._near) return
@@ -202,8 +181,7 @@ class NpmDeltaElement extends LitElement {
     unwatchNearViewport(this)
   }
 
-  // Its delta's key, and what it is against as it is told: the version, of
-  // another package named before it.
+  // Its delta's key, and what it is against: the version, another package's named before it.
   _key() { return keyOf(this.name, this.version, this.base ?? '(empty)', this.patch?.hash, this.baseName ?? this.name) }
   _against() { return this.base && this.base !== '(empty)' ? `${this.baseName && this.baseName !== this.name ? `${this.baseName}@` : ''}${this.base}` : null }
 
@@ -216,13 +194,12 @@ class NpmDeltaElement extends LitElement {
       return html`<span class="npm-delta is-error" data-tooltip=${entry.error} .tooltipContent=${html`<div class="compare-tip">
         <div class="compare-tip-head">Lines not counted</div><div>${entry.error}</div></div>`}>?</span>`
     }
-    // What it tells, formatted, its tooltip: what it is against, the lines
-    // added and removed, those but for declaration files changed in types
-    // alone, and that binary files changed too.
+    // Its tooltip: what it is against, the lines added and removed, those
+    // but for type-only declaration files, and that binary files changed too.
     const tip = html`<div class="compare-tip"><div class="compare-tip-head">Lines changed</div>
       <div class="compare-tip-rows"><span class="compare-tip-label">Against</span><span>${this._against() ?? 'none, the whole package'}</span>
-        <span class="compare-tip-label">Added</span><span class="is-added">+${entry.additions.toLocaleString('en-US')}</span>
-        <span class="compare-tip-label">Removed</span><span class="is-deleted">−${entry.deletions.toLocaleString('en-US')}</span>
+        <span class="compare-tip-label">Added</span>${added(entry.additions)}
+        <span class="compare-tip-label">Removed</span>${deleted(entry.deletions)}
         ${entry.typeless ? html`<span class="compare-tip-label">Types aside</span><span>${counted(entry.typeless.additions, entry.typeless.deletions)}</span>` : nothing}</div>
       ${entry.typeless ? html`<div class="compare-tip-note">Types aside: leaving out the declaration files changed in types alone</div>` : nothing}
       ${entry.binary ? html`<div class="compare-tip-note">Binary files changed too, which no line counts</div>` : nothing}</div>`

@@ -20,14 +20,16 @@ import { beforeEach, describe, it } from 'node:test'
 import './_polyfills.js'
 
 const { state } = await import('../client/state.ts')
-const { readReport } = await import('@preventive/report')
-const { applyFilters, applyOpeningFilters, applySorting, confidenceOnScale, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters, priorityApplies, priorityForGroup, rangeApplies, shouldLockConfirmed } = await import('../ui/view/filters.js')
-const { activeTabFor, getMergedGroups, getShownGroups, groupKey, linkableGroups, mergeDuplicateFields, sortTabs } = await import('../ui/view/group.js')
+const { REVALIDATE_KINDS, readReport } = await import('@preventive/report')
+const { applyFilters, applyOpeningFilters, applySorting, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters, priorityApplies, priorityForGroup, rangeApplies, shouldLockConfirmed } = await import('../ui/view/filters.js')
+const { activeTabFor, getMergedGroups, getShownGroups, groupKey, linkableGroups, sortTabs } = await import('../ui/view/group.js')
+const { mergeDuplicateFields } = await import('../common/finding-duplicates.js')
+const { activeRevalidateKinds, confidenceOnScale, hasRevalidateStamp } = await import('../common/finding-filters.js')
 const {
-  PARTIAL_MODES, REVALIDATE_FILTERS, REVALIDATE_KINDS, activeRevalidateKinds,
+  PARTIAL_MODES, REVALIDATE_FILTERS,
   canDropRevalidation, configureRevalidation, formatRunMeta, hasRevalidateField,
-  hasRevalidateStamp, isRevalidation, reachableRevalidateFilters,
-  revalidateKind, revalidateStamp, revalidationShown, voidsConfidence,
+  isRevalidation, isRuledOut: voidsConfidence, reachableRevalidateFilters,
+  revalidateKind, revalidateStamp, revalidationShown,
 } = await import('../ui/view/format.js')
 
 // Neutralise every other filter so each assertion isolates the

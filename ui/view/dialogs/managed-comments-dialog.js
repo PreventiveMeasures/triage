@@ -54,14 +54,17 @@ class ManagedCommentsDialog extends AppDialog {
   _commentsChanged = () => {
     if (!this.isConnected) return
     if (!this._current()) { this._close(); return }
-    const thread = this.renderRoot.querySelector('.discussion-log')
-    const atBottom = thread && thread.scrollHeight - thread.scrollTop - thread.clientHeight < 32
+    const atBottom = this._atBottom()
     // Keep the composer and original edit version: a remote edit must still
     // conflict with an existing draft instead of silently authorizing overwrite.
     this._comments = managedCommentsFor(this.finding)
     if (atBottom) void this._scrollToLatest()
   }
   _close = () => this._finish(null)
+  _atBottom() {
+    const thread = this.renderRoot.querySelector('.discussion-log')
+    return thread && thread.scrollHeight - thread.scrollTop - thread.clientHeight < 32
+  }
   _scrollToLatest = async () => {
     await this.updateComplete
     const thread = this.renderRoot.querySelector('.discussion-log')
@@ -69,8 +72,7 @@ class ManagedCommentsDialog extends AppDialog {
   }
   _refresh = async ({ scroll = false } = {}) => {
     if (!this._current()) { this._close(); return }
-    const thread = this.renderRoot.querySelector('.discussion-log')
-    const atBottom = thread && thread.scrollHeight - thread.scrollTop - thread.clientHeight < 32
+    const atBottom = this._atBottom()
     this._busy = true
     this._error = ''
     const ok = await loadManagedReportComments(this.finding._managedReportId)

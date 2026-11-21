@@ -1,25 +1,8 @@
-// Bundle/findings graph view — separate esbuild entry point so the
-// `<graph-layout>` LitElement (with its ~37 KB of bundled shadow
-// CSS), the canvas hover / pan / zoom logic, AND the
-// selection-card / focus-overlay / top-packages templates don't
-// land in the main view.js bundle. `ui/view/graph-attach.js`
-// `await import('./graph.js')`s this module lazily the first time
-// the graph view is shown.
-//
-// The side-effect import registers `customElements.define(
-// 'graph-layout', …)` so the host element returned from
-// `attachGraphLayout` is already upgraded by the time it lands in
-// the DOM. `attachGraph2Interaction` is re-exported so the attach
-// helper can wire the canvas in the same async cycle.
-//
-// `refreshSidebar` / `refreshTopPkgs` carry the per-click refresh
-// logic (shadow-root querySelector + litRender(renderSelectionCard…)).
-// Keeping the rendering bodies here holds the chunky templates
-// (renderSelectionCard, renderFocusOverlay, renderTopPkgsBlock) out
-// of the main bundle — the main-bundle refresh wrappers in
-// render.js / render-bundle.js only do data-fetch + ctx assembly
-// (which needs the `state` aggregator) and dispatch into us.
-
+// The graph view: `<graph-layout>` (with its shadow CSS), the canvas logic
+// and the selection-card, focus-overlay and top-packages templates, as an
+// esbuild entry that view/graph-attach.js imports the first time a graph
+// shows, so view.js doesn't carry them. The wrappers in render.js and
+// render-bundle.js assemble `prep` and `ctx` from state and call in here.
 import { render as litRender } from 'lit'
 import './view/graph/graph-layout.js'
 import { renderFocusOverlay, renderSelectionCard, renderTopPkgsBlock } from './view/graph/render.js'
@@ -27,14 +10,10 @@ import { buildGraph } from './view/graph/data.js'
 
 export { attachGraph2Interaction } from './view/graph/canvas.js'
 
-// Repaint the right-panel selection card + the top-right canvas
-// drill-in overlay slot. Both depend on the same selection / solo /
-// focus state (graph2 in view/graph/state.js), so they refresh
-// together. Called by the main-bundle wrappers
-// `refreshGraph2Sidebar` (render.js) / `refreshBundleGraphSidebar`
-// (render-bundle.js), which compute `graph` + `ctx` from state.
-// `host` is the page's one `<graph-layout>` unless named: the lockfile
-// viewer's sits in its own shadow root (view/lockfile-graph.js).
+// The selection card and the canvas's focus overlay, which share the
+// selection state (view/graph/state.js). `host` is the page's one
+// `<graph-layout>` unless named: the lockfile viewer's is in its own shadow
+// root (view/lockfile-graph.js).
 export function refreshSidebar(prep, ctx, host = document.querySelector('graph-layout')) {
   const root = host?.shadowRoot
   if (!root) return
@@ -45,9 +24,8 @@ export function refreshSidebar(prep, ctx, host = document.querySelector('graph-l
   if (focusSlot) litRender(renderFocusOverlay(graph), focusSlot)
 }
 
-// Repaint just the right-panel Top-packages block — fires when
-// the user flips the Issues / Files mini-tab so the canvas's rAF
-// + hover state aren't torn down by a full render() cycle.
+// The Top-packages block alone, as its Issues / Files tab flips, so the
+// canvas's frame loop and hover survive.
 export function refreshTopPkgs(prep, host = document.querySelector('graph-layout')) {
   const root = host?.shadowRoot
   if (!root) return
@@ -56,30 +34,20 @@ export function refreshTopPkgs(prep, host = document.querySelector('graph-layout
   litRender(renderTopPkgsBlock(buildGraphFromPrep(prep)), block)
 }
 
-// `prep` is the raw-inputs shape `buildGraph2Data` /
-// `buildBundleGraphData` assemble from `state.reports` /
-// `state.bundleDetails`. The `buildGraph(...)` call lives here so
-// data.js stays out of the main bundle.
-//
-// `prep.options.pkgOf` (bundle-only) drives package classification
-// at buildGraph time; `prep.strippedToOrig` (bundle-only) stamps
-// each node's `origFile` so the selection card's "View source →"
-// button can hand the unstripped path back to the source viewer.
+// `prep`, as buildGraph2Data / buildBundleGraphData assemble it; built here
+// so data.js stays out of view.js. `strippedToOrig` (bundles) gives each
+// node the unstripped path its "View source →" opens.
 export function buildGraphFromPrep(prep) {
   const graph = buildGraph(prep.treeData, prep.files, prep.ownCounts, prep.transitiveCounts,
     prep.severitySets, prep.colorSets, prep.fileFindings, prep.options)
   if (prep.strippedToOrig) {
     for (const n of graph.nodes) n.origFile = prep.strippedToOrig.get(n.file)
   }
-  // Bundle-only "Packages" mode gate (3+ packages on the full
-  // inventory; see buildBundleGraphData). Stamped on the graph so
-  // the canvas can AND it with the `graph2.packagesView` toggle —
-  // a toggle value persisted from another bundle can't flip a
-  // 2-package (or findings-tab) graph into package mode.
+  // Gates the persisted Packages toggle (3+ packages, buildBundleGraphData),
+  // so another bundle's setting can't switch this graph to packages.
   graph.canPackagesView = prep.canPackagesView ?? false
-  // A graph of packages alone (a lockfile's, see lockfile-graph-inputs.js):
-  // its members are a package's installed copies, not files, so every view
-  // stays at package altitude whatever the Packages toggles say.
+  // A lockfile's graph (lockfile-graph-inputs.js): its members are installed
+  // copies, not files, so it stays at package level whatever the toggles say.
   graph.packagesOnly = prep.packagesOnly ?? false
   graph.supportsLayers = prep.supportsLayers ?? false
   graph.layerRoots = prep.layerRoots
@@ -88,12 +56,10 @@ export function buildGraphFromPrep(prep) {
   graph.entryPackages = prep.entryPackages
   graph.ownSourceFiles = prep.ownSourceFiles
   graph.reasons = prep.reasons ?? []
-  // Bundle graph with its Issues switch off (or nothing matched): the
-  // severity and mark filters, shared with the findings graph, must not
-  // dim nodes that carry no findings here.
+  // Issues off (or none matched): the shared severity and mark filters must
+  // not dim nodes that carry no findings here.
   graph.issuesHidden = prep.issuesShown === false
-  // Which data this graph shows (the bundle's integrity), so a kept pan
-  // and zoom never carries over to another bundle with the same files.
+  // The bundle's integrity, so a kept pan and zoom stays with its bundle.
   graph.viewId = prep.viewId ?? null
   return graph
 }

@@ -1,7 +1,7 @@
 // Sparse dependency matrix: O(files + imports) storage, never an N × N array.
 // Rows import columns. Expanded packages retain their external connections.
 import { orderCyclicGroup } from './matrix-order.js'
-import { pkgLabel } from '../bundle-pkg-of.js'
+import { pkgLabel } from '../../../common/bundle-pkg-of.js'
 import { fileLabelOf } from './file-label.js'
 import { countsTowardsCycles } from './cycle-imports.js'
 
@@ -39,6 +39,24 @@ export function stronglyConnected(ids, links) {
     groups.push(group.toSorted())
   }
   return { groups, componentOf }
+}
+
+// `links` (id → ids, every id among `ids`) condensed into its strongly
+// connected components: `next[c]` the components c links to, `incoming[c]`
+// how many link to c, and `order` a topological order of them.
+export function condense(ids, links) {
+  const { groups, componentOf } = stronglyConnected(ids, links)
+  const incoming = groups.map(() => 0), next = groups.map(() => new Set())
+  for (const [from, targets] of links) {
+    for (const to of targets) {
+      const a = componentOf.get(from), b = componentOf.get(to)
+      if (a !== b && !next[a].has(b)) { next[a].add(b); incoming[b]++ }
+    }
+  }
+  const indegree = [...incoming], order = []
+  indegree.forEach((n, i) => { if (!n) order.push(i) })
+  for (const id of order) for (const to of next[id]) if (--indegree[to] === 0) order.push(to)
+  return { groups, componentOf, next, incoming, order }
 }
 
 export function buildDependencyMatrix(graph, { expanded = new Set(), order = 'structure', query = '', neighborhood = null, cyclesOnly = false } = {}) {

@@ -1,73 +1,43 @@
-/* Print: strip interactive widgets (toolbar, stats, reset, mark-dots,
-   x-button — noise on paper) and give findings `break-inside: avoid`
-   so one isn't split across a page. File-groups may still span pages:
-   a file with many findings is commoner than a finding long enough to
-   need its own page. */
+/* Print: interactive chrome goes, findings keep `break-inside: avoid`
+   (finding-card.css) so one isn't split across pages; a file group may
+   span them. */
 @media print {
-  /* ~9pt root scales the rem-based screen sizes to a tighter
-     A4/Letter density than 11pt (body ~8pt, headings ~11.7pt, badges
-     ~6.3pt) — trades a little readability for more findings/page. */
+  /* ~9pt root: a tighter A4 / Letter density for more findings a page. */
   html { font-size: 9pt; }
   body { background: #fff; color: #000; line-height: 1.35; display: block; }
 
-  .toolbar, .stats { display: none !important; }
-  /* Graph view is interactive-only; hide the host so print doesn't
-     dump a giant black box. Mirrored in graph/graph2.css's
-     `@media print { :host { display: none } }`; this light-DOM rule
-     is a no-cost belt-and-suspenders against shadow-CSS @media-print
-     edge cases. */
-  graph-layout { display: none !important; }
-  #drop-zone, app-sidebar { display: none !important; }
+  /* Screen-only chrome: toolbars, the interactive graph (its shadow sheet
+     hides it too), the sidebar and landing, the sync badge, the empty repo
+     chip's "Set repo" call to action, the severity bars (muddy on paper;
+     `display: none` so the row reflows), the focus queue, the kanban
+     dialog's rail and the pane divider. */
+  .toolbar,
+  graph-layout,
+  #drop-zone,
+  app-sidebar,
+  .page-head .report-sync-badge,
+  .page-head repo-chip[empty],
+  .page-head .meta-row .status-bar,
+  .team-slide-bar > .status-bar,
+  .focus-sidebar,
+  .kanban-detail-side,
+  .focus-splitter { display: none !important; }
   #report { max-width: none; padding: 0; }
   header h1 { font-size: 1.2rem; }
 
-  /* Standalone-mode PWA paints a 1px top border on #main-content to
-     mirror the sidebar→main divider (theme.css under
-     `(display-mode: standalone)`). No sidebar on paper, so the line
-     would just sit across the top of the first page. */
+  /* No sidebar on paper, so no standalone-PWA top divider (theme.css). */
   #main-content { border-top: 0 !important; }
 
-  /* Per-report sync status badge ("N cloud / M local") — interactive
-     workspace-state UI, meaningless on paper, and its local/cloud
-     chunks render as small buttons that pull the eye off the title. */
-  .page-head .report-sync-badge { display: none !important; }
-
-  /* Empty-state repo chip is a "Set repo" CTA — on-screen only,
-     useless on paper. `<repo-chip>` reflects `empty` as a boolean
-     host attribute when `url` is falsy (render.js's repoChipTemplate);
-     populated-chip print chrome lives in `view/repo-chip.css`. */
-  .page-head repo-chip[empty] { display: none !important; }
-
-  /* Strip on-screen link colors so a linked filename reads identically
-     to bare text. `inherit` resolves to body #000. All selectors named
-     explicitly because:
-       • `a { color: var(--accent) }` (theme.css, 0,0,1) — covered by
-         the generic `a` below.
-       • `.file-header a { color: var(--text) }` (findings.css, 0,1,1)
-         — needs matching `.file-header a` here to win on source order.
-       • `.flat-group-loc .file { color: var(--text) }` (findings.css)
-         colors the span around the link, so the <a> inherits a
-         non-body color even with `color: inherit`; override the span
-         too. */
+  /* Links read as bare text. `.file-header a` (findings.css, 0,1,1) is
+     named to win on source order; `.flat-group-loc .file` colors the span
+     the link inherits from. */
   a, .file-header a, .flat-group-loc .file, .flat-group-loc .file a { color: inherit; }
 
-  /* Theme variables — pinned to one print-friendly set so dark/light
-     mode doesn't affect output. Dark defaults (light --text, saturated
-     --accent) print near-invisible or garish on white; the light
-     overrides drift too. Pinning every theme-flipped var in one place
-     keeps the cascade simple with one canonical palette. Both
-     selectors listed so the rule wins under either theme —
-     `body.theme-light` outweighs `body` alone. Severity colors
-     (--critical etc.) and inline mark palettes live in shadow DOM,
-     pinned in the `<finding-card>` print block.
-
-     --text #000 / --muted #555 carry through the shadow boundary into
-     finding-card body copy and muted subtrees (chip backgrounds, sep
-     dots, repo glyphs). --border #888 reads on paper without
-     dominating (dark #30363d prints near-black, light #d1d9e0 nearly
-     vanishes). --accent / --green pinned to their light-theme values,
-     tuned for black-on-white; surfaces collapse to white so tinted
-     backgrounds (card body, triage menus) don't print as gray boxes. */
+  /* One print palette whatever the theme (`body.theme-light` outweighs
+     `body`, so both are named). It crosses into the finding cards' shadow
+     DOM; their severity and mark colors are pinned in finding-card.css's
+     print block. --border #888 reads without dominating; surfaces go white
+     so tints don't print as gray boxes. */
   body, body.theme-light {
     --bg: #fff;
     --border: #888;
@@ -79,15 +49,8 @@
     --surface-active: #fff;
   }
 
-  /* Page-head: strip the screen pill chrome (chip backgrounds /
-     borders / controls) so the title row reads as plain printed type,
-     theme-independent. report.css's screen rules nest under
-     `#report header.page-head` (specificity 1,1,1+), so plain
-     `.page-head .file-chip` loses the cascade and chips keep pulling
-     `var(--text)`/`var(--muted)` from the active theme — a dark-theme
-     user would get dark surface tints with light-on-white chip text.
-     `!important` makes the print sheet authoritative. Pencil button,
-     URL input, and empty-repo CTA chip are on-screen-only, dropped. */
+  /* The title row as plain type: report.css's chip rules sit under
+     `#report header.page-head` (1,1,1+), so `!important` makes these win. */
   .page-head .file-chip,
   .page-head .meta-row .tag,
   .page-head .files-toggle-btn {
@@ -98,80 +61,31 @@
   }
   .page-head .file-chip svg { color: #000 !important; }
   .page-head .meta-row { color: #000 !important; }
-  /* repo-chip's pencil + input live in its shadow root —
-     `repo-chip.css` hides them. Here we drop the workspace severity
-     bar (proportional severity-color palette that prints as muddy
-     noise). `display: none`, not `visibility: hidden`, so the row
-     reflows without a phantom 200×8 gap. */
-  .page-head .meta-row .status-bar, .team-slide-bar > .status-bar { display: none !important; }
   .page-head { break-after: avoid; }
 
-  /* …but `break-after: avoid` cannot save the FIRST seam on its own.
-     A finding tall enough to fill most of a sheet doesn't fit under
-     the report header, so it starts a new page; honouring the avoid
-     would then mean moving the header down too and leaving page one
-     blank, which the UA refuses — so the header stays behind, alone
-     on a page of its own. That is the reported bug, and no break
-     property fixes it, because the constraint is the card's own
-     `break-inside: avoid` (finding-card.css).
-
-     So the opening card gives that up: it may split across the seam,
-     which means the report starts under its header every time and
-     runs on overleaf. Only this one card — every other finding still
-     moves whole to the next page, where doing so costs a gap and not
-     a blank sheet. Both shapes of the body are named: a group's
-     first card (grouped by file, or the list view's `.flat-group`),
-     and a card sitting directly in the body slot. */
+  /* `break-after: avoid` can't save the first seam: an opening card too
+     tall to fit under the header starts a new page, and the header stays
+     behind alone (the UA won't leave page one blank). So only that card
+     gives up its `break-inside: avoid` (finding-card.css): the first card
+     of the first group, or one directly in the body slot. */
   #findings-body-slot > :first-child finding-card:first-of-type,
   #findings-body-slot > finding-card:first-child { --finding-print-break: auto; }
 
-  /* Per-finding card print rules (break-inside: avoid, multi-case
-     banner, stacked tab bodies, .marks suppression, .badge palette
-     overrides) live in `<finding-card>`'s shadow DOM — see the
-     `@media print` block in view/finding-card.css. */
-
   .file-header { break-after: avoid; font-size: .85rem; }
 
-  /* List view (flat, ungrouped) wraps each finding in a `.flat-group`
-     whose first child `.flat-group-loc` is the filename/line/meta row
-     naming the source for the card below. Pin that row to its card so
-     a page break never lands between filename and finding body. The
-     card itself can still break across pages — we only guard the
-     header-to-body seam. */
+  /* Keep the list view's location row with its card. */
   .flat-group-loc { break-after: avoid; }
 
-  /* The header echoes file/line/meta for the ACTIVE tab. On screen
-     that's the only visible tab, so the echo just promotes meta into
-     the header band. In print, a duplicate group stacks every tab
-     body with its own .line-row (re-enabled in finding-card.css's
-     print block) — keeping the header's run-meta would pin the active
-     tab's metadata to the group banner, not its own body. The
-     `.multi-case` gate leaves single-tab findings unchanged. Sampled
-     prints use the same layout (header shows meta, in-body line-row
-     stays hidden), so meta is neither doubled nor dropped. */
+  /* A duplicate group prints every tab with its own line row
+     (finding-card.css), so the header's run-meta of the active tab would
+     mislabel the rest. Single-tab and sampled prints keep it. */
   .flat-group.multi-case:not(:has(> finding-card[print-one-sample])) .flat-group-loc .run-meta { display: none; }
 
-  /* Focus view-mode. The right-hand "Up next" queue (prev/next nav +
-     the compact card list) is interactive navigation chrome — useless
-     on paper, so drop it. With it gone, unwind the focus layout's
-     flex/grid + per-pane scroll containers back to normal block flow
-     so the focused finding-card (and its inline Code panel, when one
-     is mounted) print in full down the page instead of clipping to the
-     on-screen scroll viewport — the same reason list/grouped views
-     paginate cleanly. The view-mode swap pipeline (events.js) only
-     maps table → list, so a report printed from focus mode stays in
-     focus and yields the single focused card. */
-  .focus-sidebar { display: none !important; }
-  /* Same call for the kanban detail dialog's same-column rail: a
-     queue you click through, with nothing to say on paper. */
-  .kanban-detail-side { display: none !important; }
+  /* Focus view: unwind the grid and per-pane scrollers to block flow so
+     the focused card and its Code panel print in full. */
   .focus-view,
   .focus-main,
   .focus-main.with-code { display: block !important; }
-  /* The pane divider is a drag target, not content — and with the
-     grid unwound above it would print as a stray rule between the
-     card and its code. */
-  .focus-splitter { display: none !important; }
   .focus-pane,
   .focus-pane-code,
   .focus-code-body { overflow: visible !important; }

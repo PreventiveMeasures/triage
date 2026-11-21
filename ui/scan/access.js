@@ -21,15 +21,22 @@ export class ScanAccess {
     const catalogue = defaultScanModels(this.provider)
     this.loadModels = () => Promise.resolve(catalogue)
   }
-  _disconnect() {
+  _cancel() {
     this._controller?.abort()
-    this.connected = false
-    this.managed = false
     this.loading = false
     this.error = null
     this.catalogue = null
+  }
+  // Pickers keep the remote catalogue once one came, else the preview's.
+  _changed() {
     if (!this._remoteModels) this._previewModels()
     this.onChange()
+  }
+  _disconnect() {
+    this._cancel()
+    this.connected = false
+    this.managed = false
+    this._changed()
   }
   get ready() { return this.connected && !this.loading && this.catalogue != null }
   setKey(value) {
@@ -41,14 +48,8 @@ export class ScanAccess {
     if (this.provider === value || this.managed) return
     this.provider = value
     if (this.connected && value) return this._load(value)
-    if (this.connected) {
-      this._controller?.abort()
-      this.loading = false
-      this.error = null
-      this.catalogue = null
-    }
-    if (!this._remoteModels) this._previewModels()
-    this.onChange()
+    if (this.connected) this._cancel()
+    this._changed()
   }
   connect() {
     this._disconnect()

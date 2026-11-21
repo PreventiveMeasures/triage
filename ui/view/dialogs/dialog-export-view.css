@@ -1,59 +1,29 @@
-/* `<export-view-dialog>` layer on top of dialog-base.css — the
-   read-only look at the Markdown the Download button would write.
-
-   The base's 480px measure is for a dialog that asks a question. This
-   one is a document viewer, and a report wrapped into a question's
-   column stops looking like the file it is going to produce — so it
-   takes the screen less a 2rem margin all round, the way a preview
-   window does. `100vw` overshoots the client width by the scrollbar
-   when the page behind has one, which the margin absorbs: the box
-   never overflows, it just sits a few pixels off centre. */
+/* `<export-view-dialog>`: a read-only look at the Markdown Download would
+   write — a document viewer, so it takes the screen less a 2rem margin
+   (which absorbs `100vw`'s scrollbar overshoot). */
 dialog {
   max-width: none; max-height: none;
   width: calc(100vw - 4rem); height: calc(100vh - 4rem);
   margin: 2rem auto;
-  /* Tighter than the base's 1.1rem/1.25rem question-dialog inset, and
-     even all round: at this size the frame is a window around a
-     document, and every pixel it keeps is a line of the file the
-     reader doesn't get. `position` is what the close button's corner
-     pin resolves against — the UA already positions a modal dialog,
-     but this says so rather than relying on it. */
+  /* What the close button's corner pin resolves against. */
   position: relative;
   padding: 12px;
 }
 
-/* Column layout so the document takes every row the header doesn't.
-   Keyed on `[open]`, never bare `dialog`: an author `display`
-   on the element itself beats the UA's `dialog:not([open])
-   { display: none }` and would paint a closed dialog onto the page. */
+/* Keyed on `[open]`: an author `display` on bare `dialog` would beat the
+   UA's `dialog:not([open]) { display: none }`. */
 dialog[open] {
   display: flex; flex-direction: column;
 }
 
-/* No blur on the backdrop, unlike every other dialog. This one covers
-   the page but for its 2rem margin, so the blur only ever softens that
-   strip — and a backdrop filter costs a full-viewport pass on every
-   frame the document scrolls, which is exactly when this dialog is
-   producing frames. In a profile of a long scroll it was two fifths of
-   the compositor's work; the tint stays. */
+/* No backdrop blur: it only softens the 2rem strip, yet costs a
+   full-viewport pass per scrolled frame (two fifths of the compositor's
+   work in a profile). */
 dialog::backdrop { backdrop-filter: none; }
 
-/* One line for everything that names the file: the title, its
-   measurements after a divider, and Copy at the far end. No intro
-   paragraph here — the heading names the thing and the thing is right
-   there — so that line takes the gap the intro would have had. The
-   margin moves off the `h3` and onto the row, which is what Copy is
-   vertically centred against.
-
-   The right padding is the corner close button's berth: it is pinned
-   to the dialog rather than laid out in this row, so the row has to
-   reserve the space itself — the button's own 28px plus a wide gap,
-   so the two never read as a pair and a mis-aimed click at one is
-   nowhere near the other.
-
-   None of this line is part of the file, and a select-all inside a
-   modal takes every selectable thing in it — so the row steps out of
-   the selection, and Ctrl+A is the document alone. */
+/* The title, its measurements and Copy on one line. The right padding is
+   the corner close button's berth, wide enough not to pair with Copy; the
+   row is out of the selection so Ctrl+A takes the document alone. */
 header {
   display: flex; align-items: center; gap: .45rem;
   margin-bottom: .6rem;
@@ -62,12 +32,8 @@ header {
 }
 header h3 { margin: 0; }
 
-/* Close, pinned to the dialog's top-right corner — the same 22px
-   square, borderless until hover, that the kanban detail modal puts in
-   its own corner (`.kanban-detail-actions` in findings.css), and in
-   the same place, so the two popups are closed the same way. Above
-   the header rather than inside it: the corner is where a reader looks
-   for the way out of a window, and it costs the title line nothing. */
+/* Close, pinned top-right as the kanban detail modal's is
+   (`.kanban-detail-actions` in findings.css). */
 .evd-close {
   position: absolute; top: 6px; right: 6px; z-index: 1;
   width: 22px; height: 22px;
@@ -81,20 +47,13 @@ header h3 { margin: 0; }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
 
-/* The document itself, and the only part of the dialog that flexes:
-   the header takes what it needs and this takes the rest, however tall
-   the window is. `min-height: 0` because a flex item's floor is its
-   content, which for a long report would grow the box past the bottom
-   of the dialog instead of scrolling.
-
-   Scrolls vertically only — the lines wrap, so there is never anything
-   to reach sideways for. */
+/* The document takes the rest of the height (`min-height: 0`, or a long
+   report grows past the dialog instead of scrolling). */
 .evd-code {
   flex: 1 1 auto; min-height: 0;
-  margin: 0;
   overflow: auto;
   border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
-  background: var(--bg, var(--surface));
+  background: var(--bg);
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .78rem; line-height: 1.55;
@@ -105,36 +64,20 @@ header h3 { margin: 0; }
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
 
-/* A row per source line: its number, then the line. Two columns rather
-   than one gutter column beside one block of text, because these lines
-   WRAP — a paragraph taking four visual rows has to take the number
-   column's four rows with it, which a single-block layout cannot do.
-
-   The rows come in chunks of a few hundred lines (export-view-chunks.js
-   decides where one ends), and each chunk is its own two-column grid
-   rather than all of them one: `content-visibility: auto` then skips
-   the layout and paint of every chunk off screen, which is what keeps
-   a forty-thousand-line report scrolling like a short one. While a
-   chunk is skipped, its stand-in is its line count times the line
-   height (`--evd-chunk-lines`, set per chunk); once it has been laid
-   out, `auto` remembers its real height. The columns line up from one
-   chunk to the next because the gutter width is one value set on the
-   container — the digit count of the last line, as `--evd-lineno-width`,
-   so a 90-line report doesn't reserve room for four figures.
-
-   `div`s, deliberately not `pre`: a grid container generates anonymous
-   items from non-collapsible text between its children, so `white-space:
-   pre` on the container would turn any text between the rows into
-   phantom cells. It lives on the line instead. */
+/* A row per source line, number then line, as two grid columns because
+   the lines wrap and a number must span its line's rows. Chunks of a few
+   hundred lines (export-view-chunks.js) are each a grid with
+   `content-visibility: auto`, so off-screen chunks skip layout and paint;
+   a skipped chunk stands in as its line count times the line height
+   (`--evd-chunk-lines`). One gutter width on the container
+   (`--evd-lineno-width`, the last line's digits) aligns them all. `div`s,
+   not `pre`: `white-space: pre` on a grid would make text between rows
+   anonymous cells. */
 .evd-lines {
   --evd-gutter: calc(var(--evd-lineno-width, 3ch) + 1.4rem);
   padding: .5rem 0;
-  /* The gutter — its tint, and the rule beside it — painted here for
-     the whole height of the document rather than by each number cell.
-     Cells exist only in the chunks that have rows and are painted only
-     in the chunks on screen, so a gutter drawn by them stopped short of
-     the padding above the first line and went missing behind every
-     skipped chunk. One width serves this and the grid columns. */
+  /* The gutter tint and rule painted once for the whole height: cells
+     exist only in rendered chunks. */
   background-image: linear-gradient(
     to right,
     rgb(from var(--text) r g b / .03) 0 calc(var(--evd-gutter) - 1px),
@@ -149,12 +92,9 @@ header h3 { margin: 0; }
   content-visibility: auto;
   contain-intrinsic-size: auto calc(var(--evd-chunk-lines, 1) * 1.55em);
 }
-/* A chunk before it has rows (export-view-dialog.js builds them when
-   the chunk comes near): its text alone, one block, wrapped like the
-   lines will be and set in the column they will take, so the text
-   doesn't move when the rows arrive — only the numbers appear. This is
-   what find-in-page reads for the whole document, and what a jump far
-   down the document may show for a frame. */
+/* A chunk before its rows are built (as it nears the viewport): its text
+   in one block, wrapped and placed as the lines will be, so only the
+   numbers appear when they arrive. Find-in-page reads this. */
 .evd-chunk.evd-pending {
   display: block;
   padding: 0 .75rem 0 calc(var(--evd-gutter) + .6rem);
@@ -166,14 +106,10 @@ header h3 { margin: 0; }
   color: var(--muted);
   text-align: right;
   font-variant-numeric: tabular-nums;
-  /* Numbers are chrome, not content: keep them out of a selection so
-     copying the preview yields the file, not a numbered listing. */
+  /* Copying yields the file, not a numbered listing. */
   user-select: none;
 }
-/* `pre-wrap` keeps the file's own spacing — indented list items, the
-   blank line between sections — while letting a long line fold instead
-   of running off the side. `anywhere` so an unbroken path or URL folds
-   too rather than forcing the column wider than the dialog. */
+/* The file's own spacing, long lines (and unbroken paths) folding. */
 .evd-line {
   padding: 0 .75rem 0 .6rem;
   font: inherit; background: none;
@@ -181,30 +117,14 @@ header h3 { margin: 0; }
   overflow-wrap: anywhere;
 }
 
-/* Byte / line count, riding the title's own line after a divider —
-   the same "what am I committing to" role the confirm dialog's count
-   headline plays, in footnote weight. Beside the heading rather than
-   on a row of its own: it names the file the heading names, and a
-   dialog whose whole body is a document shouldn't spend a band of it
-   on two numbers. */
+/* Byte / line count beside the title. */
 .evd-meta {
   color: var(--muted); font-size: .74rem;
   font-variant-numeric: tabular-nums;
 }
 
-/* Copy — icon plus label, at the size and weight the finding card's
-   own copy button takes in focus context (`:host([context='focus'])
-   .mark-copy` in finding-card.css): 1.75rem tall, .72rem text, the
-   glyph and the word .35rem apart. A frame of its own because it
-   stands alone, where the card's sits in a bordered action group.
-   `margin-left: auto` puts it at the end of the title row, so a longer
-   heading or a bigger count never crowds it; what holds it clear of
-   the close button in the corner above is the row's right padding.
-
-   The two moments after a click borrow the card's pulse as well: green
-   for a copy that landed, and — this button having no second glyph to
-   swap in — the same treatment in `--critical` for one that didn't,
-   with the advice in its hover text. */
+/* Copy, sized as the focus-view card's copy button, at the row's end; it
+   pulses green on success and red on failure (advice in its hover text). */
 .evd-copy {
   margin-left: auto; flex-shrink: 0;
   height: 1.75rem; padding: 0 .55rem; gap: .35rem;
@@ -217,11 +137,11 @@ header h3 { margin: 0; }
   &:hover { color: var(--accent); background: var(--surface-active); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   &.evd-done {
-    color: var(--green, #4ade80);
-    background: color-mix(in srgb, var(--green, #4ade80) 14%, transparent);
+    color: var(--green);
+    background: color-mix(in srgb, var(--green) 14%, transparent);
   }
   &.evd-failed {
-    color: var(--critical, #f87171);
-    background: color-mix(in srgb, var(--critical, #f87171) 14%, transparent);
+    color: var(--critical);
+    background: color-mix(in srgb, var(--critical) 14%, transparent);
   }
 }

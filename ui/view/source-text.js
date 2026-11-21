@@ -9,7 +9,7 @@ export const TEXT_NODE_MAX = 2 ** 20
 export const LONG_LINE = Math.floor(2 ** 25 / 15)
 
 // Text as nodes of at most TEXT_NODE_MAX characters, a surrogate pair in one.
-export function textNodes(text) {
+function textNodes(text) {
   const nodes = []
   for (let from = 0; from < text.length;) {
     let to = Math.min(from + TEXT_NODE_MAX, text.length)

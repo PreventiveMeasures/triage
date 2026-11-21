@@ -46,7 +46,7 @@ export function bundleOriginLinks(bundle, prefix = '', commitInfo = null) {
   if (github) {
     const directory = [repoDirectory(bundle.repo), repoDirectory({ directory: prefix })].filter(Boolean).join('/')
     const commit = bundleCommitHash(bundle.repo?.commit)
-    const path = directory.split('/').map(encodeURIComponent).join('/')
+    const path = encodePath(directory)
     const base = `https://github.com/${github}`
     const tagRepository = reportRepoGithub({ repo: { github: commitInfo?.github } })
     const tags = tagRepository ? catalogTags(commitInfo, commit) : []

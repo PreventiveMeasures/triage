@@ -18,31 +18,16 @@ import { knowGithubUsers } from './github-users.js'
 import { checked, reviewFailures, unreviewedVersions } from './pull-dependencies.js'
 import { versionRow } from './team-dependencies.js'
 import { CHECKS, icon } from './repository-tiles.js'
+import { heldAnswers } from './server-asks.js'
 
-const KEEP_MS = 2 * 60_000
-const RETRY_MS = 30_000
-
-const held = new Map()
-// The bundles whose details are open, by their ids.
-const opened = new Set()
-let keptFor = null
-let changed = () => {}
-
-function sessionHeld() {
-  const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
-  if (session !== keptFor) {
-    held.clear()
-    opened.clear()
-    keptFor = session
-  }
-  return held
-}
+// By bundle, where it is, and session; the bundles whose details are open.
+const reviews = heldAnswers(state)
 
 // A repository's review set anew (the admin's repository page): what is
 // held asked again.
 globalThis.addEventListener?.('dependency-review-changed', () => {
-  held.clear()
-  changed()
+  reviews.held.clear()
+  reviews.changed()
 })
 
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : 0
@@ -53,7 +38,7 @@ const isVersion = one => typeof one?.name === 'string' && typeof one.version ===
 // versions the bundle holds (`versions`) and those no lockfile installing it
 // locks (`unlocked`, each told why it can't be reviewed), how many more
 // (`moreUnlocked`).
-export function checkedBundleReview(answer) {
+function checkedBundleReview(answer) {
   if (!answer?.review) return null
   const shown = checked(answer)
   if (!shown.review) return null
@@ -61,28 +46,10 @@ export function checkedBundleReview(answer) {
     unlocked: Array.isArray(answer.unlocked) ? answer.unlocked.filter(isVersion).map(({ name, version }) => ({ name, version, unsupported: 'unlocked' })) : [] }
 }
 
-// Bundle `bundle`'s review as held, else asked: 'loading', then 'ready'
-// with its `answer` (null for none in effect), or 'error' with its `error`;
-// asked again once old, shown as it was meanwhile, or once an error's retry
-// is due; held by where it is too, so that one moved is asked again at once.
-export function bundleDependencyReview(bundle) {
-  const data = sessionHeld()
-  const id = `${bundle.managedId}\0${bundle.repoId}\0${bundle.repoDirectory ?? ''}`
-  const entry = data.get(id)
-  if (entry && Date.now() < entry.until) return entry
-  const loading = entry?.status === 'ready' ? { ...entry, until: Number.POSITIVE_INFINITY, refreshing: true } : { status: 'loading', until: Number.POSITIVE_INFINITY }
-  data.set(id, loading)
-  fetchBundleDependencyReview(bundle.managedId).then(answer => ({ status: 'ready', until: Date.now() + KEEP_MS, answer: checkedBundleReview(knowGithubUsers(answer)) }))
-    .catch(err => err?.name === 'AbortError' ? null : { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'It couldn’t be read.' })
-    .then(next => {
-      if (data.get(id) !== loading) return false
-      if (next) data.set(id, next)
-      else data.delete(id)
-      changed()
-      return true
-    })
-  return loading
-}
+// Bundle `bundle`'s review as held (heldAnswers), its `answer` null for none
+// in effect; held by where it is too, so that one moved is asked again at once.
+const bundleDependencyReview = bundle => reviews.ask(`${bundle.managedId}\0${bundle.repoId}\0${bundle.repoDirectory ?? ''}`,
+  () => fetchBundleDependencyReview(bundle.managedId), answer => ({ answer: checkedBundleReview(knowGithubUsers(answer)) }), { refresh: { refreshing: true } })
 
 const plural = (value, noun) => `${value.toLocaleString('en-US')} ${noun}${value === 1 ? '' : 's'}`
 const CHEVRON = icon(svg`<path d="m6 4 4 4-4 4"/>`)
@@ -137,7 +104,7 @@ function terms(answer, unread) {
 // what it tells changes (render.js render).
 export function bundleDependencyReviewFact(entry, onChange) {
   if (!entry?.managedId || entry.repoId == null || entry.kind !== 'stasis' || !state.managedSession || state.managedSession.publicShare) return nothing
-  changed = onChange
+  reviews.changed = onChange
   const read = bundleDependencyReview(entry)
   if (read.status === 'loading') return nothing
   if (read.status === 'error') {
@@ -146,10 +113,9 @@ export function bundleDependencyReviewFact(entry, onChange) {
   const { answer } = read
   if (!answer) return nothing
   const { chip, said, listed, more, unread } = told(answer)
-  const id = entry.managedId, open = opened.has(id)
+  const id = entry.managedId, open = reviews.opened.has(id)
   const toggle = () => {
-    if (opened.has(id)) opened.delete(id)
-    else opened.add(id)
+    reviews.toggle(id)
     onChange()
   }
   return html`<dt>Dependency review</dt><dd class="bundle-review">

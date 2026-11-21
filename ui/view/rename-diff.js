@@ -1,35 +1,27 @@
 // Compare's diff of a JavaScript file minified on both sides with renamed
-// names hidden: worked out by the server from the two files pretty-printed,
-// the old one given the new one's names (server-managed/rename-diff.ts),
-// whitespace changes shown and hidden both. Every pair a comparison's view
-// diffs so comes in one request, the first time one is wanted, a line each as
-// the server works it out; a pair it brought none of, or the file a view
-// shows first while they come, is asked for alone, by both files' paths and
-// their texts' hashes, as their copies are (pretty-source.js). The server
-// checks its own diff (@preventive/compare's renamedDiffs); the viewer takes
-// it as it is, once it names the two files asked about and, as the copies it
-// was worked out from, the two the view draws. A comparison's diffs are kept
-// together, for either whitespace setting, the last few comparisons' for the
-// session: turning a setting on or off asks for none again.
+// names hidden, worked out by the server from both files pretty-printed, the
+// old given the new one's names (server-managed/rename-diff.ts; it checks its
+// own diff), whitespace changes shown and hidden both. A comparison's pairs
+// come in one request, a line each, the first time one is wanted; a pair it
+// brought none of, or the file a view shows first meanwhile, is asked for
+// alone, by both paths and hashes. A diff is taken once it names the two
+// files asked about and, as the copies it was worked out from, the two the
+// view draws. The last few comparisons' are kept, for either setting.
 import { computeFileHash } from '@preventive/report'
-import { bundleFilesAsMap } from './bundle-sources.js'
+import { bundleFilesAsMap } from '../../common/bundle-sources.js'
 import { fetchBundleRenameDiff, fetchBundleRenameDiffs, fetchNpmRenameDiff, fetchNpmRenameDiffs } from './client-managed.js'
+import { aborted, evict, failureOf, later, limiter, retryWait, retryable, teller, touch } from './server-asks.js'
 import { weakNotify } from './weak-notify.js'
 
 // Comparisons whose diffs are kept, the one read last last, each holding
 // every pair of its files diffed so far.
 const KEPT_COMPARISONS = 2
-// Diffs asked for alone at once: as many as the server works out at once
-// (server-managed/rename-diff.ts), the rest waiting their turn, in the order
-// asked; one the server kept comes back at once.
-const MAX_FETCHES = 2
-// A failure that may pass (the server busy, a timeout) is asked again on a
-// paint this long after it came, twice as long each time it fails again.
-const RETRY_MS = 5_000
-const RETRY_MAX_MS = 5 * 60_000
-// How long diffs that come close together wait for each other, to be told
-// to the view that asked at once.
-const TELL_MS = 30
+// Diffs asked for alone are asked as many at once as the server works out
+// (server-managed/rename-diff.ts), the rest waiting their turn; one the
+// server kept comes back at once.
+const inTurn = limiter(2)
+// Diffs coming close together are told to the view that asked at once.
+const tell = teller(30)
 
 // What an answer not shaped as the server answers, for other files than those
 // asked about, or of other copies than those drawn, is told as.
@@ -41,9 +33,6 @@ const MISMATCH = "The server's diff doesn't match this file as shown."
 // files the registry's are not.
 export const renameDiffable = (base, other) => !!(base?.managedId && other?.managedId)
   || (!!base?.npm && !!other?.npm && !base.npmPatch && !other.npmPatch && base.npm.name === other.npm.name)
-
-// Whether asking again for a diff that failed with `status` may succeed.
-const retryable = status => !(status >= 400 && status < 500 && status !== 429)
 
 // Comparisons by both sides' integrity: `diffs` by both files' paths, each
 // `{ status: 'loading' }`, `{ status: 'ready', before, reason, reads, copies,
@@ -74,35 +63,14 @@ function readAnswer(answer, hash, otherHash) {
 
 const fileHash = (details, path, text) => details.fileHashes?.get(path) ?? computeFileHash(text)
 
-// Views to tell of diffs come, each once, a little after the first of them.
-const told = new Set()
-function tell(notify) {
-  if (!notify) return
-  if (told.size === 0) {
-    setTimeout(() => {
-      const views = [...told]
-      told.clear()
-      for (const view of views) view()
-    }, TELL_MS)
-  }
-  told.add(notify)
-}
-
-// A failure that may pass, given when it is asked again (`until`), counting
-// `tries`, the view that last asked painted again then.
+// A failure that may pass (the server busy, a timeout), given when it is
+// asked again (`until`), counting `tries`, the view that last asked painted
+// again then.
 function due(comparison, failure, tries = 0) {
-  const wait = Math.min(RETRY_MS * 2 ** tries, RETRY_MAX_MS)
+  const wait = retryWait(tries)
   Object.assign(failure, { until: Date.now() + wait, tries: tries + 1 })
-  setTimeout(() => { comparison.notify?.() }, wait)?.unref?.()
+  later(wait, () => { comparison.notify?.() })
   return failure
-}
-
-// Past KEPT_COMPARISONS, the least recent whose request ended.
-function evict() {
-  for (const [key, comparison] of comparisons) {
-    if (comparisons.size <= KEPT_COMPARISONS) break
-    if (comparison.ended) comparisons.delete(key)
-  }
 }
 
 // Every pair a comparison's view diffs with renamed names hidden, in one
@@ -136,31 +104,16 @@ async function loadComparison(key, comparison, base, other, scope) {
     await (base.npm ? fetchNpmRenameDiffs(base.npm.name, base.npm.version, other.npm.version, line)
       : fetchBundleRenameDiffs(base.managedId, other.managedId, line, { scope }))
   } catch (err) {
-    // A session that changed asks again under the new one, on its render.
-    if (err?.name === 'AbortError') {
+    if (aborted(err)) {
       if (comparisons.get(key) === comparison) comparisons.delete(key)
       return
     }
-    rest = { status: 'error', message: err?.message ?? String(err), retry: retryable(err?.status) }
+    rest = failureOf(err)
   }
   Object.assign(comparison, { ended: true, rest })
   if (rest?.retry) due(comparison, rest, comparison.tries)
   tell(comparison.notify)
-  evict()
-}
-
-let fetches = 0
-const turns = []
-
-async function inTurn(work) {
-  if (fetches < MAX_FETCHES) fetches++
-  else await new Promise(resolve => { turns.push(resolve) })
-  try { return await work() }
-  finally {
-    const next = turns.shift()
-    if (next) next()
-    else fetches--
-  }
+  evict(comparisons, KEPT_COMPARISONS, ended => ended.ended)
 }
 
 // One pair asked for alone, kept with its comparison's.
@@ -175,12 +128,11 @@ async function load(comparison, pair, asked, base, basePath, before, other, path
     next = readAnswer(answer, hash, otherHash) ?? { status: 'error', message: MISMATCH, retry: true }
     next.tries = asked.tries
   } catch (err) {
-    // A session that changed asks again under the new one, on its render.
-    if (err?.name === 'AbortError') {
+    if (aborted(err)) {
       if (comparison.diffs.get(pair) === asked) comparison.diffs.delete(pair)
       return
     }
-    next = { status: 'error', message: err?.message ?? String(err), retry: retryable(err?.status) }
+    next = failureOf(err)
   }
   if (comparison.diffs.get(pair) !== asked) return
   if (next.status === 'error' && next.retry) due(comparison, next, asked.tries)
@@ -202,16 +154,13 @@ async function load(comparison, pair, asked, base, basePath, before, other, path
 // found within it, apart from the whole bundles'.
 export function renameDiff(base, basePath, before, other, path, after, ignoreWhitespace, notify, drawn, alone = false, scope = '') {
   const key = `${base.integrity}\0${other.integrity}\0${scope}`
-  let comparison = comparisons.get(key)
-  comparisons.delete(key)
-  // One whose request failed for a reason that may have passed asked for
+  // One whose request failed for a reason that may have passed is asked for
   // again once due, the pairs it brought kept.
-  if (!comparison || (comparison.rest?.until !== undefined && Date.now() >= comparison.rest.until)) {
-    comparison = { diffs: comparison?.diffs ?? new Map(), notify: null, ended: false, rest: null, tries: comparison?.rest?.tries }
-    loadComparison(key, comparison, base, other, scope)
-  }
-  comparisons.set(key, comparison)
-  evict()
+  const comparison = touch(comparisons, key, KEPT_COMPARISONS, ended => ended.ended, was => {
+    const made = { diffs: was?.diffs ?? new Map(), notify: null, ended: false, rest: null, tries: was?.rest?.tries }
+    loadComparison(key, made, base, other, scope)
+    return made
+  }, was => !was || (was.rest?.until !== undefined && Date.now() >= was.rest.until))
   comparison.notify = weakNotify(notify)
   if (before !== bundleFilesAsMap(base).get(basePath) || after !== bundleFilesAsMap(other).get(path)) return { status: 'error', message: MISMATCH, retry: false }
   const pair = `${basePath}\0${path}`

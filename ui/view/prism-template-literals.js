@@ -1,33 +1,22 @@
 // Template literals for Prism's JavaScript family, found by scanning rather
-// than by its regular expression.
+// than by its regex. A regex can't count: Prism's nests `${…}` braces two
+// deep at most, counting those in strings and regexes too, so a lit
+// template whose handler builds an object ends at the wrong brace, and the
+// leftover backticks pair the other way round — inverting the highlighting
+// to the end of the file.
 //
-// Prism finds a template literal with one regex, and a regex can't count:
-// a `${…}` in it may nest braces two deep at most, and every brace counts,
-// those in a string or a regex too. A lit template whose handler builds an
-// object (`@click=${() => { fire(new CustomEvent(n, { detail: { … } })) }}`)
-// is deeper than that, so the match ends at the wrong brace or fails at the
-// opening backtick. Prism then pairs the backticks left over the other way
-// round, and everything after reads inverted: the template's markup coloured
-// as code, the code between templates as a string, down to the file's end.
+// The scan reads a template as the language does: braces counted in a
+// `${…}` at any depth; strings, comments and regex literals in one skipped
+// whole; a nested template its own. Outside templates too, a backtick in a
+// string, comment or regex opens nothing. A slash's meaning is a guess from
+// what precedes it, and a wrong one inside a `${…}` would leave the
+// template open to the end of the text — so a template or `${…}` the scan
+// leaves open is matched by Prism's own pattern instead: a misread costs
+// what it did before, not the rest of the file.
 //
-// So here a template runs to its closing backtick as the language reads it:
-// braces counted in a `${…}`, at any depth; a quote, a comment or a regex
-// literal in one skipped whole; a template in one its own nested template.
-// Outside templates too, a backtick in a string, a comment or a regex
-// (`.replace(/`/g, "\\`")`) opens nothing.
-//
-// What a slash starts is a guess from what comes before it, though, and a
-// wrong one inside a `${…}` (a regex taken for division, so its backtick
-// opens a template; division taken for a regex, so it swallows the `}`)
-// leaves the template open to the end of the text, which Prism's regex,
-// blind to what a `${…}` holds, never did. So a template or a `${…}` the
-// scan leaves open is matched by Prism's own pattern instead: a misread
-// costs what it did before this module, not the rest of the file.
-//
-// Prism matches a pattern by setting its `lastIndex` and calling `exec`, and
-// reads the match's text and `index`, so an object with those stands in for
-// the regex. Its `global` keeps a greedy rule from being rebuilt as a RegExp
-// from a `source` it doesn't have.
+// Prism matches by setting `lastIndex` and calling `exec`, reading the
+// match's text and `index`, so an object with those stands in for the
+// regex; its `global` keeps a greedy rule from being rebuilt as a RegExp.
 
 // Stack entries: a template, or a `${…}` counting the braces opened in it
 // and not closed yet.
@@ -54,15 +43,13 @@ function quotedEnd(text, at) {
   return text.length
 }
 
-// Whether a `/` here may start a regex rather than divide: Prism's own rule
-// for its regex token (not after a name, a number, a literal or a closing
-// bracket), and after a keyword that ends a statement's start or an operand.
-// Not after a postfix `++` or `--` either, which ends an operand too: there
-// is no incrementing a regex. Nor, in JSX and TSX, at the `</` of a closing
-// tag (`</p>`, `</Foo.Bar>`, `</组件>`, `</>`), though a regex may follow a `<` there
-// too: one that opens with what reads as a tag's name and `>` is left to
-// misread. JavaScript and TypeScript have no tags, so in them `</` is a
-// comparison with a regex (`i</x/.exec(s).index`), whatever follows.
+// Whether a `/` here may start a regex rather than divide: Prism's rule
+// (not after a name, number, literal or closing bracket), or after a
+// keyword that leaves an operand to come; never after a postfix `++` /
+// `--`. In JSX and TSX not at a closing tag's `</` (`</p>`, `</Foo.Bar>`,
+// `</组件>`, `</>`) — a regex there that reads as a tag name and `>` is left
+// misread; in JavaScript and TypeScript `</` is a comparison with a regex
+// (`i</x/.exec(s).index`).
 const DIVIDES_AFTER = /[$\w\u00A0-\uFFFF.'"`)\]]/u
 const KEYWORD_BEFORE = /(?:^|[^$\w\u00A0-\uFFFF.])(?:await|case|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield)$/u
 const JSX_CLOSE_REST = /\s*(?:[\p{ID_Start}$_][\p{ID_Continue}$.:-]*\s*)?>/uy
@@ -81,22 +68,19 @@ function regexMayStart(text, at) {
   return KEYWORD_BEFORE.test(text.slice(Math.max(0, i - 10), i + 1))
 }
 
-// What may follow a regex literal, its flags aside: a line's or the text's
-// end, a comment, punctuation that closes an operand (`.test`, `,`, `)`) —
-// Prism's lookahead for its regex token — or an operator joining it to the
-// next (`/`/ && ok`). What looks like one followed by anything else is a
-// division with a slash further on: `${/a/ / 2}/${n}`.
+// What may follow a regex literal past its flags: a line or text end, a
+// comment, punctuation closing an operand (Prism's lookahead), or an
+// operator (`/`/ && ok`). Anything else makes it a division with a slash
+// further on: `${/a/ / 2}/${n}`.
 const REGEX_FOLLOWED = /[a-z]*[^\S\n\r\u2028\u2029]*(?:$|[\n\r\u2028\u2029,.;:})\]?&|+\-*%=!^<>]|\/[/*]|in(?:stanceof)?(?![$\w]))/uy
 
-// Where the scan of the last slash that looked like a regex and wasn't one
-// stopped, in the text being scanned: a `/` before that divides. Without it a
-// long line of `(/[` would rescan to the line's end from every slash. A regex
-// that does start in between goes unread as one, on a line already misread.
+// Where the scan of the last would-be regex that wasn't one stopped: a `/`
+// before that divides, so a long line of `(/[` isn't rescanned from every
+// slash (a real regex in between goes unread, on a line already misread).
 let regexFailedAt = -1
 
-// Past the comment or regex literal a `/` starts, or past the `/` alone when
-// it divides. A regex can't cross a line end either: one that would is read
-// as division.
+// Past the comment or regex literal a `/` starts, or past the `/` alone
+// when it divides (as is a would-be regex crossing a line end).
 function slashEnd(text, at) {
   const next = text[at + 1]
   if (next === '/') {
@@ -177,19 +161,18 @@ function nextInterpolation(text, from) {
   return null
 }
 
-// Texts the scan left something open in, and how many times. Past a few,
-// Prism's pattern takes every match in the text, so one that fails over and
-// over isn't rescanned to its end each time. Kept for one tokenizing: Prism's
-// hooks clear it before and after each, so one highlight's count never
-// carries into the next, of the same text or another.
+// Texts the scan left something open in, and how often: past a few,
+// Prism's pattern takes every match, so a text failing over and over isn't
+// rescanned to its end each time. Cleared around each tokenizing (Prism's
+// hooks), so counts never carry into the next highlight.
 const unclosed = new Map()
 const UNCLOSED_MAX = 4
 
-// A rule's matcher: the scan, and Prism's own pattern for it (`stock`, made
-// global) where the scan leaves the match open. A template's pattern searches
-// from the backtick the scan found, past those in strings and comments; a
-// `${…}`'s from where Prism asked, for its lookbehind group to read the
-// escapes before the `$`, a group cut off here as Prism would.
+// A rule's matcher: the scan, falling back to Prism's own pattern (`stock`,
+// made global) where the scan leaves the match open. A template's pattern
+// searches from the backtick the scan found; a `${…}`'s from where Prism
+// asked, so its lookbehind group can read the escapes before the `$` (the
+// group cut off here, as Prism would).
 function scanner(find, stock, lookbehind, inJsx) {
   return {
     global: true,
@@ -220,13 +203,11 @@ function globalCopy(pattern) {
   return new RegExp(pattern.source, pattern.global ? pattern.flags : `${pattern.flags}g`)
 }
 
-// Every JavaScript-family grammar carries its own copy of the rule (Prism's
-// `extend` clones it into TypeScript, JSX and TSX, and into the grammars that
-// embed one: markup's `<script>`, TypeScript's types), so this walks them all
-// and rewires each copy it finds, once: a copy can sit in two grammars (JSX
-// shares its own with the JavaScript clone its `${…}` reads code by). The
-// copies JSX and TSX lead to read `</` as a closing tag; JavaScript's own and
-// TypeScript's, met first, from their own names or markup's `<script>`, don't.
+// Prism's `extend` clones the rule into every JavaScript-family grammar and
+// those embedding one (markup's `<script>`, TypeScript's types), so all are
+// walked and each copy rewired once (a copy can sit in two grammars). The
+// copies reached from JSX and TSX read `</` as a closing tag; JavaScript's
+// and TypeScript's own, met first, don't.
 export function scanTemplateLiterals({ languages, hooks }) {
   const seen = new Set()
   const visit = (grammar, inJsx) => {
@@ -237,8 +218,7 @@ export function scanTemplateLiterals({ languages, hooks }) {
         const { interpolation } = rule.inside
         rule.pattern = scanner(nextTemplate, globalCopy(rule.pattern), false, inJsx)
         interpolation.pattern = scanner(nextInterpolation, globalCopy(interpolation.pattern), Boolean(interpolation.lookbehind), inJsx)
-        // The scanner cuts the lookbehind group from a match of Prism's own
-        // pattern itself; its own matches have none to cut.
+        // The scanner cuts the lookbehind group itself.
         delete interpolation.lookbehind
       }
       visit(rule, inJsx)

@@ -1,19 +1,8 @@
-// First-time encryption nudge — fires the first time the user
-// performs a meaningful action that creates new local data
-// (currently: dropping a file, creating a workspace), provided:
-//   1. The passkey vault is NOT already enabled.
-//   2. The browser exposes WebAuthn (passkeys are usable).
-//   3. We haven't asked before (gated by a localStorage flag).
-//
-// If the user accepts, the setup dialog runs and migrates whatever
-// happens to already be on disk; the action that triggered the
-// prompt then proceeds and lands as ENCRYPTED data (the session
-// key is set by setup before the awaited prompt resolves).
-// Declining sets the flag too, so we don't pester the user on
-// every subsequent action. The flag can be cleared by manually
-// removing the localStorage key — there's no in-app affordance
-// for that, but the encryption icon in the sidebar header is
-// still always available for an explicit later enable.
+// The first-use encryption nudge, before the first action creating local
+// data (a file drop, a new workspace), when the vault isn't enabled, the
+// browser has passkeys, and it hasn't asked before (a localStorage flag; the
+// sidebar's lock icon stays for a later enable). Accepted, setup runs and
+// migrates what is on disk, and the action then lands encrypted.
 
 import { isEncryptionEnabled, isPasskeyEnvironmentSupported } from '#client/index.js'
 import { openPasskeySetupDialog } from './lazy-dialogs.js'
@@ -27,25 +16,16 @@ function markPrompted() {
   try { localStorage.setItem(PROMPTED_KEY, '1') } catch {}
 }
 
-// Decide-and-run. Resolves once the prompt (and any follow-up setup
-// dialog) settles — caller awaits this BEFORE the action that creates
-// new local data so chosen encryption takes effect for that data.
-//
-// Only set the prompted flag on a SETTLED outcome:
-//   - explicit Cancel on the confirm → user said "no", don't re-ask.
-//   - setup completed AND vault now enabled → success, no re-prompt.
-//   - accepted confirm but cancelled setup, or WebAuthn ceremony
-//     failed → leave the flag UNSET so the next action re-asks.
-//     Otherwise one mis-click + setup-cancel would permanently shut
-//     the user out, with no in-app affordance to bring it back.
+// Awaited before the action, so a chosen encryption covers its data. The
+// flag is set only on a settled answer — a Cancel, or a vault now enabled —
+// so a setup cancelled after accepting (or a failed ceremony) asks again:
+// one mis-click mustn't shut the prompt out for good.
 export async function maybePromptFirstUse() {
   if (isEncryptionEnabled()) return
   if (!isPasskeyEnvironmentSupported()) return
   if (alreadyPrompted()) return
-  // Cheap, native, consistent with the "Disable encryption?"
-  // confirm in the sidebar header toggle. A full-fledged dialog
-  // would duplicate what the setup dialog already explains; we
-  // just gate the launch.
+  // A native confirm, as the header toggle's disable is: the setup dialog
+  // explains the rest.
   const accept = confirm(
     'Encrypt your DeepView data with a passkey?\n\n'
     + 'Your triage notes, workspaces, and report files are stored on this device. '

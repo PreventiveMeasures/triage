@@ -1,109 +1,72 @@
-// `<analyzer-select>` — toolbar dropdown that filters findings along
-// run-meta dimensions: analyzer and model, and in App mode the
-// validation model as well. Still a dropdown (a
-// 30px trigger pill matching the sibling sort select), but the panel
-// is a custom popover with one column per dimension, so the user can
-// pick an analyzer, a model, or BOTH — the combination narrows to
-// findings that carry that exact analyzer+model pair (the same tuples
-// the header combo tags and per-finding run-meta lines display).
+// `<analyzer-select>` — the toolbar dropdown filtering findings along
+// run-meta dimensions: analyzer and model, and in App mode the validation
+// model too. A 30px trigger pill like the sort select, opening a custom
+// popover with one column per dimension, so the user can pick an analyzer,
+// a model, or both (the analyzer+model pairs the header combo tags show).
 //
-// The validation model is the model of a revalidation pass's own row
-// (`revalidate: "revalidation"`), and Model is then that of every other
-// row: of the scans beneath the pass's, which App mode folds away. So a
-// pass run on one model everywhere still leaves that model's own
-// findings to be asked for under Model. A row matches each where any of
-// its rows does (filters.js matchesRunRow).
+// The validation model is that of a revalidation pass's own row; Model is
+// then that of every other row, the scans App mode folds under the pass's.
+// A row matches each where any of its rows does (filters.js matchesRunRow).
 //
-// Selection model per column: single-select with toggle-off (the
-// `source-filter` convention) plus an explicit "All …" row that
-// clears the dimension. The panel intentionally stays open after a
-// pick — composing a combination takes two clicks — and dismisses on
-// outside click / Escape / trigger re-click via the native
-// `popover="auto"` machinery (same approach as the per-finding triage
-// menu: top layer, so no `overflow` parent can clip it).
+// Per column: single-select with toggle-off plus an "All …" row clearing
+// the dimension. The panel stays open after a pick (a combination takes two
+// clicks) and closes through native `popover="auto"` (outside click /
+// Escape / trigger) in the top layer, where no `overflow` parent clips it.
 //
-// Each value row shows a group count CROSS-FILTERED by the other
-// dimensions' current selection — pick a model and the analyzer
-// column previews how many groups each analyzer would show under
-// that model (and vice versa), which is what makes nonexistent
-// combinations visible before clicking (they read 0 and dim, but
-// stay clickable). Counts are group-level over whole rows remaining
-// after the source/confidence/outcome selectors and the App/underlying/
-// upstream lens, the rows App mode folds under a pass's included; a
-// group counts for a value when the row would pass with that value
-// and the other dimensions' filters — a SOME tab carrying the
-// analyzer+model pair, as matchesFilters' per-finding conjunction,
-// and some pass's row of the validation model.
+// Each value's count is CROSS-FILTERED by the other dimensions' selection
+// (filters.js runFilterCounts), so a combination that doesn't exist reads
+// 0 and dims, though it stays clickable. Counts are groups over the rows
+// left after the source / confidence / outcome selectors and the lens.
 //
-// Reactivity: extends StateElement, so reads of
-// `state.filterAnalyzer` / `state.filterModel` /
-// `state.filterValidationModel` during render() are
-// tracked — a stale-filter clear in the parent (report swap drops the
-// selected analyzer or model) re-renders the trigger label and row
-// highlights without the parent re-passing anything.
+// A row click dispatches `analyzer-change` with EVERY dimension in
+// `detail` (`{ analyzer, model, validationModel }`, the clicked one
+// updated); events.js writes the state and renders.
 //
-// On a row click, dispatches `analyzer-change` with EVERY dimension
-// in `detail` (`{ analyzer, model, validationModel }` — the clicked one
-// updated, the others passed through). events.js's listener writes the
-// state fields and calls render() (the body repaints since the filtered
-// set changes).
-//
-// Properties (all `attribute: false`):
-//   * `analyzers` — ordered analyzer keys (strings or `null`), as
-//                   computed by render.js. A column renders only when
-//                   its dimension has more than one distinct value,
-//                   but Validation model, which renders with one.
-//   * `models`    — ordered pretty model names (strings or `null`) of
-//                   every row but a revalidation pass's.
-//   * `validationModels` — the same of the passes' rows; empty outside
-//                   App mode.
-//   * `groups`    — the dedup-group list the counts run over (the
-//                   parent's scope-filtered rows, whole. Annotation and
-//                   second-row selectors don't narrow this base set).
+// Properties: `analyzers` / `models` / `validationModels`, each column's
+// ordered values (strings or `null`, from render.js; `validationModels`
+// empty outside App mode), and `groups`, the rows the counts run over.
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
-import { StateElement, html } from '@rray/frontend/state-element'
+import { html } from '@rray/frontend/state-element'
+import { ToolbarControl } from './toolbar-control.js'
 import { state } from '#client/index.js'
 import { NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, runFilterCounts, runFilterValue } from './filters.js'
 import { SOURCE_LABELS } from '@preventive/report'
 
-// Friendly labels for analyzers reported with a `source: <key>` field —
-// the report library's own names for the producers it reads, so the
-// dropdown, the page header and the markdown export all call a
-// producer the same thing. Unknown keys render verbatim. Exported so
-// render.js's analyzer ordering can group known source-marked imports
-// first (the column reads better when DeepSec / Codex Security /
-// Claude Security cluster ahead of bare analyzer names).
-export const ANALYZER_LABELS = SOURCE_LABELS
+// Producers named by a `source` marker read as the report library names
+// them; unknown keys verbatim.
+const analyzerLabel = (a) => a == null ? '(none)' : SOURCE_LABELS[a] ?? a
 
-function analyzerLabel(a) {
-  if (a == null) return '(none)'
-  return ANALYZER_LABELS[a] ?? a
-}
-
-// "(no model)" rather than the analyzer column's "(none)" — the
-// trigger pill shows the selected value bare (`Claude Security ·
-// (no model)`), where a context-free "(none)" wouldn't say which
+// "(no model)" rather than "(none)": the trigger shows the value bare
+// (`Claude Security · (no model)`), where "(none)" wouldn't say which
 // dimension it came from.
-function modelLabel(m) {
-  return m == null ? '(no model)' : m
-}
+const modelLabel = (m) => m == null ? '(no model)' : m
 
-class AnalyzerSelect extends StateElement {
+// The columns, in order. `values` / counts are the `${dim}s` property and
+// runFilterCounts key. A column shows when its values reach `min`: the
+// analyzer and model columns only where they vary, the validation model's
+// with a single value too (Model then means the scans beneath the passes,
+// and a row with no pass matches none; filters.js runFiltersOffered).
+const DIMENSIONS = [
+  { dim: 'analyzer', heading: 'Analyzer', allLabel: 'All analyzers', stateKey: 'filterAnalyzer',
+    sentinel: NULL_ANALYZER_SENTINEL, labelOf: analyzerLabel, min: 2, picked: analyzerLabel },
+  { dim: 'model', heading: 'Model', allLabel: 'All models', stateKey: 'filterModel',
+    sentinel: NULL_MODEL_SENTINEL, labelOf: modelLabel, min: 2, picked: modelLabel },
+  { dim: 'validationModel', heading: 'Validation model', allLabel: 'All validation models', stateKey: 'filterValidationModel',
+    sentinel: NULL_MODEL_SENTINEL, labelOf: modelLabel, min: 1, picked: (v) => `validated by ${modelLabel(v)}` },
+]
+
+class AnalyzerSelect extends ToolbarControl {
   static properties = {
     analyzers: { attribute: false },
     models:    { attribute: false },
     validationModels: { attribute: false },
     groups:    { attribute: false },
-    // Mirrors the popover's open state (set from `beforetoggle`).
-    // Reactive so opening triggers a Lit update whose `updated()`
-    // re-measures the panel at its real size — `beforetoggle` fires
-    // while the popover is still display:none, so the first
-    // positioning pass runs on fallback dimensions.
+    // Mirrors the popover's open state (set from `beforetoggle`), so
+    // opening triggers an update whose `updated()` re-measures the panel:
+    // `beforetoggle` fires while it is still display:none.
     _open: { state: true },
   }
-
-  createRenderRoot() { return this }
 
   constructor() {
     super()
@@ -115,70 +78,19 @@ class AnalyzerSelect extends StateElement {
   }
 
   render() {
-    const showAnalyzers = this.analyzers.length > 1
-    const showModels = this.models.length > 1
-    // Shown with a single value too, unlike the other two: Model then
-    // means the scans beneath the passes, and this column says which
-    // model the passes ran on. Nor is one vacuous as a filter, as a row
-    // with no pass in it matches none (the parent offers the dropdown
-    // for it alone where some row has none: filters.js runFiltersOffered).
-    const showValidation = this.validationModels.length > 0
-    if (!showAnalyzers && !showModels && !showValidation) return nothing
-
-    // Active filter values mapped back to dimension values:
-    // `undefined` = dimension unfiltered, `null` = the no-value bucket.
-    const wantA = runFilterValue(state.filterAnalyzer, NULL_ANALYZER_SENTINEL)
-    const wantM = runFilterValue(state.filterModel, NULL_MODEL_SENTINEL)
-    const wantV = runFilterValue(state.filterValidationModel, NULL_MODEL_SENTINEL)
-
-    const { analyzers: analyzerCounts, models: modelCounts, validationModels: validationCounts } = runFilterCounts(this.groups)
-
-    // Trigger label — the selection reads like the header combo tags:
-    // `Claude Security`, `opus 4 7`, or `security · opus 4 7` for a
-    // combination, a validation model as `validated by opus 4 7`.
-    // Unfiltered, name the dimension that actually varies ("All models"
-    // when every finding shares one analyzer but models differ).
-    const selected = [
-      wantA === undefined ? null : analyzerLabel(wantA),
-      wantM === undefined ? null : modelLabel(wantM),
-      wantV === undefined ? null : `validated by ${modelLabel(wantV)}`,
-    ].filter((label) => label !== null)
+    const shown = DIMENSIONS.filter((d) => this[`${d.dim}s`].length >= d.min)
+    if (shown.length === 0) return nothing
+    const counts = runFilterCounts(this.groups)
+    // The selection reads like the header combo tags (`security · opus 4 7`,
+    // `validated by opus 4 7`); unfiltered, it names the first dimension
+    // that varies.
+    const selected = DIMENSIONS.flatMap((d) => {
+      const want = runFilterValue(state[d.stateKey], d.sentinel)
+      return want === undefined ? [] : [d.picked(want)]
+    })
     const filtering = selected.length > 0
-    const summary = filtering ? selected.join(' · ')
-      : showAnalyzers ? 'All analyzers' : showModels ? 'All models' : 'All validation models'
-    const columns = [
-      showAnalyzers && this._column({
-        dim: 'analyzer',
-        heading: 'Analyzer',
-        allLabel: 'All analyzers',
-        values: this.analyzers,
-        sentinel: NULL_ANALYZER_SENTINEL,
-        labelOf: analyzerLabel,
-        counts: analyzerCounts,
-        current: state.filterAnalyzer,
-      }),
-      showModels && this._column({
-        dim: 'model',
-        heading: 'Model',
-        allLabel: 'All models',
-        values: this.models,
-        sentinel: NULL_MODEL_SENTINEL,
-        labelOf: modelLabel,
-        counts: modelCounts,
-        current: state.filterModel,
-      }),
-      showValidation && this._column({
-        dim: 'validationModel',
-        heading: 'Validation model',
-        allLabel: 'All validation models',
-        values: this.validationModels,
-        sentinel: NULL_MODEL_SENTINEL,
-        labelOf: modelLabel,
-        counts: validationCounts,
-        current: state.filterValidationModel,
-      }),
-    ].filter(Boolean)
-
+    const summary = filtering ? selected.join(' · ') : shown[0].allLabel
+    const showValidation = shown.at(-1).dim === 'validationModel'
     return html`<button
       type="button"
       class=${classMap({ 'analyzer-btn': true, active: filtering })}
@@ -192,23 +104,16 @@ class AnalyzerSelect extends StateElement {
       </svg>
     </button>
     <div popover="auto" id="analyzer-select-menu" class="analyzer-menu" @beforetoggle=${this._onToggle}>
-      ${columns.map((column, i) => (i === 0 ? column : html`<div class="analyzer-menu-sep"></div>${column}`))}
+      ${shown.map((d, i) => (i === 0 ? this._column(d, counts) : html`<div class="analyzer-menu-sep"></div>${this._column(d, counts)}`))}
     </div>`
   }
 
-  // One dimension column: heading, the "All …" clear row, then a row
-  // per value with its cross-filtered count. Zero-count rows dim
-  // (`.zero`) but stay clickable — picking one empties the list
-  // visibly and recoverably rather than the menu refusing the
-  // combination.
-  //
-  // Rows are plain toggle buttons (`aria-pressed`) in a labelled
-  // group, the same semantics `<severity-chips>` uses — NOT a
-  // `listbox`/`option` pattern, which would promise arrow-key
-  // navigation the popover doesn't implement (Tab between native
-  // buttons + Enter + the popover's own Escape handling cover
-  // keyboard use).
-  _column({ dim, heading, allLabel, values, sentinel, labelOf, counts, current }) {
+  // One dimension column: heading, the "All …" clear row, then a row per
+  // value with its count. Plain toggle buttons (`aria-pressed`) in a
+  // labelled group, not a `listbox`, which would promise arrow-key
+  // navigation the popover doesn't implement.
+  _column({ dim, heading, allLabel, stateKey, sentinel, labelOf }, counts) {
+    const current = state[stateKey]
     return html`<div class="analyzer-menu-col" role="group" aria-label=${`Filter by ${heading.toLowerCase()}`}>
       <div class="analyzer-menu-head">${heading}</div>
       <button
@@ -217,9 +122,9 @@ class AnalyzerSelect extends StateElement {
         class=${classMap({ 'analyzer-menu-item': true, active: current === '' })}
         @click=${() => this._pick(dim, '')}
       ><span class="analyzer-menu-label">${allLabel}</span></button>
-      ${values.map((v) => {
+      ${this[`${dim}s`].map((v) => {
         const value = v == null ? sentinel : v
-        const n = counts.get(v) ?? 0
+        const n = counts[`${dim}s`].get(v) ?? 0
         const active = current === value
         return html`<button
           type="button"
@@ -232,16 +137,10 @@ class AnalyzerSelect extends StateElement {
   }
 
   _pick(dim, value) {
-    const detail = { analyzer: state.filterAnalyzer, model: state.filterModel, validationModel: state.filterValidationModel }
-    // Toggle-off: re-clicking the active value clears that dimension
-    // (the "All …" row's `value === ''` always lands on the clear
-    // branch's value directly).
+    const detail = Object.fromEntries(DIMENSIONS.map((d) => [d.dim, state[d.stateKey]]))
+    // Re-clicking the active value clears the dimension.
     detail[dim] = value !== '' && detail[dim] === value ? '' : value
-    this.dispatchEvent(new CustomEvent('analyzer-change', {
-      detail,
-      bubbles: true,
-      composed: true,
-    }))
+    this.emit('analyzer-change', detail)
   }
 
   _onToggle = (e) => {
@@ -249,13 +148,10 @@ class AnalyzerSelect extends StateElement {
     if (this._open) this._position()
   }
 
-  // Drop the panel below the trigger, left edges aligned (this is a
-  // leading-edge toolbar control, unlike the row-trailing triage menu
-  // which right-aligns); clamp into the viewport and flip above when
-  // the bottom would clip. Re-run from `updated()` while open so the
-  // first post-open render (and any layout shift from a re-render
-  // while picking) corrects the `beforetoggle` pass's fallback
-  // measurements.
+  // Drop the panel below the trigger, left edges aligned; clamp into the
+  // viewport and flip above when the bottom would clip. Re-run from
+  // `updated()` while open, correcting the `beforetoggle` pass's fallback
+  // measurements and any shift from a re-render while picking.
   _position() {
     const pop = this.querySelector('.analyzer-menu')
     const btn = this.querySelector('.analyzer-btn')

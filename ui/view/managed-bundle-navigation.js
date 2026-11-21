@@ -30,10 +30,9 @@ export function managedBundleRoute(teams, entry, teamId, bundleTab = 'overview',
     teams, known.map(bundle => ({ id: bundle.managedId, slug: bundle.slug })))
 }
 
-// Where a route for the open bundle puts its Code tab, so a rewrite of that
-// route keeps it: the file shown, by number, with its marked lines, or while
-// the sources a link numbers still load, the file and lines it asked for. A
-// file asked for by path has no number until they do.
+// Where a route for the open bundle puts its Code tab, for a rewrite to keep:
+// the file shown, by number, with its marked lines, or, while the sources
+// load, those a link asked for (one asked by path has no number till then).
 export function managedCodeLocation(state, tab = state.bundleDetailsTab) {
   if (tab !== 'code') return null
   const request = state.bundleCodeFileRequest
@@ -50,11 +49,9 @@ export function managedCodeLocation(state, tab = state.bundleDetailsTab) {
   return { file, line: target.line, ...(target.end > target.line ? { endLine: target.end } : {}) }
 }
 
-// Where a route for the open bundle puts its Compare tab: the bundle it
-// compares with, as Compare last told (`state.bundleCompare`) or a link asked
-// for, and `code` while it reviews the changes as a diff. Only while Compare
-// still offers it: a refreshed catalogue can move either bundle to another
-// repository.
+// Where a route for the open bundle puts its Compare tab: what it compares
+// with (`state.bundleCompare`) and its mode, while Compare still offers it
+// (a refreshed catalogue can move either bundle to another repository).
 export function managedCompareLocation(state, tab = state.bundleDetailsTab) {
   const compare = state.bundleCompare
   if (tab !== 'compare' || !compare?.target || compare.bundle !== state.selectedBundle) return null
@@ -88,13 +85,11 @@ export function managedTabLocation(state, tab = state.bundleDetailsTab) {
   return managedCodeLocation(state, tab) ?? managedCompareLocation(state, tab)
 }
 
-// Tab clicks change state before persisting their route. Carry the comparison
-// across that boundary, keeping an already-started review's original base.
-// Compare with nothing to compare with yet starts from the version Review
-// compares with, one of the same package, or failing that, from `picked(npm)`'s:
-// the version the package's risk compared the open one with, where it picked
-// one (npm-risk.js npmRisk `oldVersion`), null where it didn't or hasn't
-// arrived. Review starts from none it doesn't resume.
+// Tab clicks change state before persisting their route: the comparison
+// carried across, a started review keeping its base. Compare with nothing
+// yet starts from Review's version of the same package, else `picked(npm)`'s
+// (the version the package's risk compared with, npm-risk.js `oldVersion`,
+// or null). Review starts from none it doesn't resume.
 export function prepareNpmReviewTab(state, tab, picked = () => null) {
   const npm = state.bundles?.find(entry => entry.integrity === state.selectedBundle)?.npm
   if (!npm || tab === state.bundleDetailsTab) return

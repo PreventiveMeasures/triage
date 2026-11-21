@@ -1,9 +1,7 @@
-// The dialogs: every dialog in view/dialogs/, an esbuild entry point of its
-// own. `view/lazy-dialogs.js` imports it by a runtime string the first time a
-// dialog opens, so neither view.js nor client-managed.js carries them. Built
-// with them, it takes lit and the client state from the same chunks, and so
-// the same instances. Its exports are lazy-dialogs.js's stand-ins, name for
-// name, but for the dialogs view.js holds up front (lazy-dialogs.js).
+// Every dialog in view/dialogs/, an esbuild entry that view/lazy-dialogs.js
+// imports by a runtime string when a dialog first opens, so neither view.js
+// nor client-managed.js carries them; built with them, it shares their lit and
+// client state. Its exports are lazy-dialogs.js's stand-ins, name for name.
 export { openAdvisoryDetailsDialog } from './view/dialogs/advisory-details-dialog.js'
 export { openCommentDialog } from './view/dialogs/comment-dialog.js'
 export { openDeleteBundleDialog } from './view/dialogs/delete-bundle-dialog.js'

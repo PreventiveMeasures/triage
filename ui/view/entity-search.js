@@ -1,24 +1,13 @@
-// `<entity-search>` — bare `<input type="search">` shared by the
-// Packages and Repositories page toolbars. Sibling of
-// `<toolbar-search>` (findings + Files-tab variant — different
-// chrome, has an SVG icon prefix and lives inside `.search-row`)
-// and `<entity-sort>` (Packages/Repositories sort dropdown).
-//
-// Dispatches `search-input(detail: { kind, value })` on native
-// `input`, matching the contract `<toolbar-search>` already uses;
-// the two new kinds route through events.js's `search-input`
-// listener. No focus-keeping dance needed: Lit reuses the `<input>`
-// across re-renders and `live()` is a no-op DOM write when the typed
-// value matches state, so the user's caret survives every keystroke.
-//
-// Attributes:
-//   * `kind` — `"packages"` (writes state.packagesSearchQuery) or
-//              `"repositories"` (writes state.repositoriesSearchQuery).
+// `<entity-search>` — the Packages and Repositories toolbars' search field,
+// a bare input emitting `search-input` as `<toolbar-search>` does (events.js
+// writes the kind's state slot). Lit reuses the input and `live()` makes the
+// matching write a no-op, so the caret survives every keystroke.
 import { nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 import { kindConfig } from './kind-config.js'
+import { emit } from './emit.js'
 
 const KIND = {
   packages:     { stateKey: 'packagesSearchQuery',     label: 'Filter packages' },
@@ -34,9 +23,8 @@ class EntitySearch extends StateElement {
 
   constructor() {
     super()
-    // No sensible default — `kind` discriminates which state slice
-    // the autorun reads. Missing surfaces as a dev warn (see
-    // render()) rather than silently routing to one kind.
+    // No default: a missing kind warns (kindConfig) rather than silently
+    // routing to one.
     this.kind = ''
   }
 
@@ -53,13 +41,7 @@ class EntitySearch extends StateElement {
     >`
   }
 
-  _onInput = (e) => {
-    this.dispatchEvent(new CustomEvent('search-input', {
-      detail: { kind: this.kind, value: e.target.value },
-      bubbles: true,
-      composed: true,
-    }))
-  }
+  _onInput = (e) => { emit(this, 'search-input', { kind: this.kind, value: e.target.value }) }
 }
 
 customElements.define('entity-search', EntitySearch)

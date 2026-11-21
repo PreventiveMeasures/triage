@@ -16,6 +16,8 @@ const ERRORS = {
   'no-finding': 'This finding is no longer available in this workspace.',
 }
 
+const CLOSED_AS = { not_planned: 'Not planned', duplicate: 'Duplicate', completed: 'Completed' }
+
 // How long the draft waits for what the finding's bundle says of its
 // evidence before it goes without (`draftOptionsReady`).
 const DRAFT_OPTIONS_WAIT = 3000
@@ -106,7 +108,7 @@ class ManagedIssueDialog extends AppDialog {
       <div class="dialog-content">
       <p class="nwd-intro">${created ? 'Created' : 'Create'} in <strong>${this.context?.repository}</strong> as <strong>@${this.session?.login}</strong>.</p>
       ${this.createdUrl ? html`<section class="created-issue" aria-label="Created GitHub issue">
-        <div class="issue-heading"><span class=${`issue-status ${issue?.status ?? 'open'} ${issue?.stateReason ?? ''}`}>${issue?.status === 'closed' ? issue.stateReason === 'not_planned' ? 'Not planned' : issue.stateReason === 'duplicate' ? 'Duplicate' : issue.stateReason === 'completed' ? 'Completed' : 'Closed' : 'Open'}</span>
+        <div class="issue-heading"><span class=${`issue-status ${issue?.status ?? 'open'} ${issue?.stateReason ?? ''}`}>${issue?.status === 'closed' ? CLOSED_AS[issue.stateReason] ?? 'Closed' : 'Open'}</span>
           <span class="issue-number">${issue?.number ? `#${issue.number}` : ''}</span></div>
         <h4><a href=${this.createdUrl} target="_blank" rel="noopener">${issue?.title ?? this.title}</a></h4>
         <p class="nwd-note">Opened by @${issue?.author ?? this.session?.login}</p>

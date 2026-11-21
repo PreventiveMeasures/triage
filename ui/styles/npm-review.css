@@ -168,14 +168,10 @@ npm-review .npm-review-dialog::backdrop { background: rgb(0 0 0 / .45); }
   border-bottom: 1px solid var(--border);
   }
 .npm-review-close { position: absolute; top: 6px; right: 6px; z-index: 1; }
-/* WCO PWA mode: the panel runs to the window's top-right corner, which
-   is where Windows / Linux paint their window controls — right over the
-   close button. Drop the panel's content below that strip, as
-   `.kanban-detail-side` does (findings.css explains the clamp): the
-   titlebar's height when the right-side strip has any width, otherwise
-   nothing, so macOS, with its controls top-left, keeps the corner. The
-   close button is placed from the padding box's outer edge, which the
-   padding doesn't move, so it takes the same inset itself. */
+/* WCO: the panel reaches the top-right corner, under the Windows / Linux
+   window controls; drop its content below that strip as
+   `.kanban-detail-side` does (findings.css explains the clamp). The close
+   button, placed from the padding box's edge, takes the same inset. */
 /* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
 @media (display-mode: window-controls-overlay) {
   npm-review .npm-review-dialog {
@@ -268,12 +264,10 @@ npm-review .npm-review-coverage button { min-height: 0; margin-left: .35rem; pad
   }
 .dependency-review-section ol { list-style: none; }
 .dependency-review-section > .npm-review-muted { margin: 0; padding: .4rem .5rem .25rem; line-height: 1.5; }
-/* A review a line: what it is of, its verdict, how much of it was checked,
-   who (a team's), its teams and notes, when, and what to do with it, each a
-   column of the list's; its details open under it, by how much of it was
-   checked, a button drawn as text. What to do with it takes the room of as
-   many buttons as a row mostly has at most, one's own two, a team's one, so
-   every row's columns line up whichever it has. */
+/* A review a line, in the list's shared columns: what it is of, verdict,
+   how much was checked, who (a team's), teams and notes, when, actions
+   (room for the most buttons a row has, so columns line up); details open
+   under it. */
 .dependency-review-row { border-bottom: 1px solid var(--border); font-size: .78rem; }
 .dependency-review-row:hover, .dependency-review-row.is-expanded { background: var(--surface); }
 .dependency-review-row-main {

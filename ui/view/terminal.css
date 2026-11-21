@@ -1,8 +1,4 @@
-/* `<bundle-terminal>` shadow-DOM styles. Imported as text by
-   ui/terminal.js and wrapped with unsafeCSS() so the bytes ship in
-   the component's shadow root. Theme custom properties (--bg, --text,
-   --muted, --accent, --critical, --border) cascade across the shadow
-   boundary, so the terminal follows page dark/light mode. */
+/* `<bundle-terminal>` (ui/terminal.js) shadow-DOM styles, in the theme's tokens. */
 
 :host {
   display: flex;
@@ -11,8 +7,8 @@
   position: relative;
   height: 100%;
   min-height: 0;
-  background: var(--bg, #0c0c0c);
-  color: var(--text, #e6edf3);
+  background: var(--bg);
+  color: var(--text);
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 13px;
   line-height: 1.45;
@@ -31,29 +27,23 @@
 /* The banner is guidance, not output: kept out of a selection, so
    copying the transcript starts at the first command. */
 .banner {
-  color: var(--muted, #8b949e);
+  color: var(--muted);
   margin-bottom: 8px;
   user-select: none;
 }
 
-/* Clickable command suggestions in the banner — plain accent text,
-   no button chrome; inherits monospace/size from the host so the line
-   reads as continuous prose. */
-.banner .cmd {
-  color: var(--accent, #58a6ff);
-}
-.banner .cmd:hover {
-  text-decoration: underline;
-}
+/* Clickable command suggestions, plain accent text. */
+.banner .cmd { color: var(--accent); }
+.banner .cmd:hover { text-decoration: underline; }
 
 .line {
   white-space: pre-wrap;
   overflow-wrap: break-word;
 }
 
-.cwd { color: var(--accent, #58a6ff); }
+.cwd { color: var(--accent); }
 /* A transcript line spaces its sigil with real spaces, which copy. */
-.sigil { color: var(--muted, #8b949e); }
+.sigil { color: var(--muted); }
 
 .stdout,
 .stderr {
@@ -63,44 +53,35 @@
   overflow-wrap: break-word;
 }
 
-.stderr { color: var(--critical, #d8413a); }
+.stderr { color: var(--critical); }
 
-/* Diff colouring. ui/view/diff-color.js decides whether a block of
-   stdout is a diff at all and labels each line; these are the six
-   labels it hands back. Theme tokens rather than raw hues, so a diff
-   retunes with the rest of the UI — and only the lines a rule claimed
-   carry a span, so the context lines that make up most of a unified
-   diff stay plain text inside the same <pre>. */
+/* The six line labels ui/view/diff-color.js gives a diff; context lines
+   carry no span. */
 .diff-head {
-  color: var(--text, #e6edf3);
+  color: var(--text);
   font-weight: 600;
 }
-.diff-hunk { color: var(--accent, #58a6ff); }
-.diff-add { color: var(--green, #3fb950); }
-.diff-del { color: var(--critical, #d8413a); }
-.diff-chg { color: var(--yellow, #d29922); }
-.diff-meta { color: var(--muted, #8b949e); }
+.diff-hunk { color: var(--accent); }
+.diff-add { color: var(--green); }
+.diff-del { color: var(--critical); }
+.diff-chg { color: var(--yellow); }
+.diff-meta { color: var(--muted); }
 
 .form {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   padding: var(--terminal-form-padding, 8px 14px 10px);
-  border-top: 1px solid var(--border, #2c2c2c);
+  border-top: 1px solid var(--border);
 }
 
-/* Visible focus indicator. The input strips its outline for the
-   bare-prompt look, so the form's top border brightens to accent
-   while focus is anywhere in the row — satisfies WCAG 2.4.7 without
-   boxing the input itself. */
+/* The outline-less input's focus indicator (WCAG 2.4.7). */
 .form:focus-within {
-  border-top-color: var(--accent, #58a6ff);
+  border-top-color: var(--accent);
 }
 
-/* While a line is running the send is refused (see #onSubmit), so the
-   row says as much rather than letting Enter look broken: the sigil
-   dims and the caret stops blinking. Typing still works — what is
-   composed here is sent once the running line is done. */
+/* While a line runs the send is refused (#onSubmit): the sigil dims and
+   the caret stops, though typing still works. */
 .form[aria-busy='true'] .sigil {
   opacity: .4;
 }
@@ -109,11 +90,7 @@
   caret-color: transparent;
 }
 
-/* Prompt-row cwd shrinks with ellipsis so a deep `cd` doesn't push
-   the input off the right edge. min-width: 0 overrides the flex-item
-   default `min-width: auto`, which would keep the span at content
-   width. Output-line `.cwd` stays unstyled (its pre-wrap container
-   handles wrapping). */
+/* The prompt's cwd ellipsises so a deep `cd` can't push the input off. */
 .form .cwd {
   flex: 0 1 auto;
   min-width: 0;
@@ -122,19 +99,13 @@
   white-space: nowrap;
   user-select: none;
 }
-/* The prompt row is a flex row, where a space between items takes no
-   room, so it spaces its sigil with margins instead: a space each side
-   in the monospace font, as on a transcript line, so a command starts
-   in the same column before and after Enter. */
+/* A flex row drops spaces, so the sigil's are margins, one `ch` each, so a
+   command starts in the same column before and after Enter. */
 .form .sigil { flex: 0 0 auto; user-select: none; margin: 0 1ch; }
 
-/* Wraps the real <input> + ghost-suggestion overlay so the overlay
-   can absolute-position against the input's box without competing for
-   layout space in the form row. */
+/* The input and its ghost-suggestion overlay. */
 .input-wrap {
   flex: 1 1 auto;
-  /* Same min-width override — without it a long cwd plus the input's
-     content width could exceed the row width. */
   min-width: 0;
   position: relative;
   display: flex;
@@ -153,11 +124,8 @@
   position: relative;
 }
 
-/* Ghost suggestion: a transparent copy of `_input` pushes the visible
-   tail past the caret so it reads as a continuation. `white-space:
-   pre` keeps the padding span's width in step with the input's
-   monospace text. `pointer-events`/`user-select: none` keep
-   clicks/selection on the real input. */
+/* A transparent copy of the input (`pre`, to keep its width) pushes the
+   suggestion's tail past the caret. */
 .ghost {
   position: absolute;
   inset: 0;
@@ -168,7 +136,7 @@
   overflow: hidden;
   pointer-events: none;
   user-select: none;
-  color: var(--muted, #8b949e);
+  color: var(--muted);
   opacity: .55;
 }
 
@@ -176,31 +144,20 @@
   color: transparent;
 }
 
-/* Transient hints from the shell's `notes` channel — informational
-   asides (hidden entries `ls` skipped, a glob left literal, a `head`
-   truncation) that are neither output nor error. They sit over the
-   top-right of the component so they read as commentary on the run
-   without displacing a single transcript line, and ui/terminal.js
-   removes each on its own timer.
-
-   `pointer-events: none` keeps the stack inert: click-anywhere-to-
-   focus, drag-select over output, and the scrollbar underneath all
-   keep working through it. That also means there is nothing to
-   dismiss — the timer is the only exit, which is the point. */
+/* Transient hints from the shell's `notes` channel (a hidden entry `ls`
+   skipped, a glob left literal), over the top-right of the transcript and
+   removed on their own timers; inert, so clicks, selection and the
+   scrollbar work through them. */
 .notes {
   position: absolute;
   top: 8px;
-  /* Matches .output's right padding so hints line up with output. */
+  /* .output's right padding. */
   right: 14px;
   z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 6px;
-  /* Narrow enough to leave most of the transcript visible beside it.
-     Hints are drawn over whatever is at the top of the viewport, the
-     banner included; the output auto-scrolls, so what they cover is
-     the oldest visible lines rather than the run just made. */
   max-width: min(52%, 320px);
   pointer-events: none;
 }
@@ -208,34 +165,27 @@
 .note {
   box-sizing: border-box;
   padding: 5px 9px;
-  border: 1px solid var(--border, #2c2c2c);
+  border: 1px solid var(--border);
   border-radius: var(--ui-radius, 5px);
-  /* Opaque: these overlap live output, which would otherwise show
-     through and make both unreadable. */
-  background: var(--bg, #0c0c0c);
-  color: var(--muted, #8b949e);
+  /* Opaque over the output. */
+  background: var(--bg);
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.4;
   /* The stack is right-aligned; the text inside it is not. */
   text-align: left;
   overflow-wrap: break-word;
-  /* Fade in quickly, hold, then fade out so the removal timer lands
-     on an already-invisible node. --dwell-out (dwell − fade) is set
-     per note by the component. `forwards` on the out animation only:
-     a `backwards` fill would hold opacity 1 through the delay and,
-     as the later animation, override the fade-in. */
+  /* Fade in, hold, fade out before the removal timer (`--dwell-out`, set
+     per note). `forwards` only: a `backwards` fill would hold opacity 1
+     through the delay and override the fade-in. */
   animation: note-in 140ms ease-out, note-out 400ms ease-in var(--dwell-out, 5600ms) forwards;
 }
 
-/* A gap the command line hid — see ui/view/silenced-gaps.js. Warmer
-   than a plain note because it reports something the run refused to
-   do, which nothing in the transcript is going to mention: the amber
-   edge marks it as a diagnostic rather than an aside. The word
-   `silenced` in the text carries the same distinction, so the colour
-   is never the only thing saying it. */
+/* A gap the command line hid (ui/view/silenced-gaps.js): a diagnostic,
+   edged amber (its text says `silenced` too). */
 .note-gap {
-  border-color: var(--warning, #d97706);
-  color: var(--text, #e6edf3);
+  border-color: var(--warning);
+  color: var(--text);
 }
 
 @keyframes note-in {
@@ -247,9 +197,6 @@
   100% { opacity: 0; transform: translateY(-4px); }
 }
 
-/* Reduced motion: no slide, no fade. The note appears and then
-   vanishes when its timer fires — the information still arrives and
-   still leaves on its own. */
 @media (prefers-reduced-motion: reduce) {
   .note {
     animation: none;

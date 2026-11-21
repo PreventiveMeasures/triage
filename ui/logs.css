@@ -1,7 +1,7 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
   --bg: #0d1117; --surface: #161b22; --surface2: #1c2128; --border: #30363d; --text: #e6edf3;
-  --muted: #8b949e; --accent: #58a6ff; --green: #3fb950; --orange: #f0883e;
+  --muted: #8b949e; --accent: #58a6ff;
   --user: #58a6ff; --assistant: #a371f7; --tool: #d29922; --thinking: #8b949e;
   --system: #6e7681; --summary: #3fb950; --error: #f85149;
 }
@@ -47,7 +47,7 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 
 .tabs {
   display: flex; gap: .25rem; overflow-x: auto; margin-bottom: 1rem;
-  border-bottom: 1px solid var(--border); padding-bottom: 0;
+  border-bottom: 1px solid var(--border);
 }
 .tab {
   background: transparent; border: 1px solid transparent; border-bottom: none;
@@ -80,8 +80,7 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 }
 .badge.user { color: var(--user); border-color: var(--user); }
 .badge.assistant { color: var(--assistant); border-color: var(--assistant); }
-.badge.tool_use { color: var(--tool); border-color: var(--tool); }
-.badge.tool_result { color: var(--tool); border-color: var(--tool); }
+.badge.tool_use, .badge.tool_result { color: var(--tool); border-color: var(--tool); }
 .badge.thinking { color: var(--thinking); border-color: var(--thinking); }
 .badge.system { color: var(--system); border-color: var(--system); }
 .badge.summary { color: var(--summary); border-color: var(--summary); }

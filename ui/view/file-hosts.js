@@ -5,7 +5,7 @@
 import { html, nothing } from 'lit'
 import { EXFILTRATION, npmHostSeverity, npmHostTags } from '../../risk/files/hosts.js'
 import { fileRiskOf } from './file-risk.js'
-import { linesNote, onlyLine, opensAt } from './file-runs-code.js'
+import { linesNote, opensAt } from './file-runs-code.js'
 
 
 // The services a version's file names, under the hosts' tags, as risk read it
@@ -36,7 +36,7 @@ const TAG_NOTES = new Map([
 export function npmExfiltrationTag(found, was, path) {
   if (!found) return nothing
   return npmHostTags(found).map(([tag, services]) => {
-    const at = opensAt(path, path === undefined ? undefined : onlyLine([...services.values()]))
+    const at = opensAt(path, [...services.values()])
     return html`<span data-bundle-view-source=${at.path} data-bundle-view-line=${at.line}
       class=${`npm-exfiltration is-${npmHostSeverity(tag, services, was)}`} data-tooltip=${`${TAG_NOTES.get(tag)}: ${npmExfiltrationSaid(services, was)}`}>${tag}</span>`
   })

@@ -1,38 +1,25 @@
-// `<annotation-filter>` — comment | issue | fix | flag after the Sources / Deps
-// switch, or duplicates | cross-context | App-stacked | security beside App mode. Each
-// chip cycles an INDEPENDENT, AND-combined tri-state filter (state.filterComment /
-// filterIssue / filterFix / filterFlagged / filterDuplicates / filterCrossContext /
-// filterAppStacked / filterSecurity: '' → 'with' → 'without' → ''):
-// selecting more narrows the row set further
-// (see matchesFilters in filters.js). Mirrors `<source-filter>`'s
-// multi-chip pill, using the same glyphs as the per-finding marks.
+// `<annotation-filter>` — comment | issue | fix | flag after the Sources /
+// Deps switch, or (group="context") duplicates | cross-context | App-stacked
+// | security beside App mode. Each chip cycles an independent, AND-combined
+// tri-state (`state.filterComment` … `filterSecurity`: '' → 'with' →
+// 'without' → ''; filters.js matchesFilters).
 //
-// Self-gating: a chip renders only when at least one finding carries that
-// annotation (the `has*` properties, computed once per render in
-// render.js's toolbarTemplate over the loaded set) OR while its filter is
-// active — so a left-active filter can always be switched off. The whole
-// group is dropped by the toolbar when none of the chips would show.
-// Duplicates is report-only and requires a resolved link outside the report;
-// its selection is cleared when no qualifying row remains. Cross-context and
-// App-stacked rows are mutually exclusive by lens, so each chip follows the
-// switches that make it applicable.
-//
-// Reactivity: extends StateElement, so the active highlights follow the
-// `state.filter*` tri-states. Click dispatches `annotation-filter-toggle`
-// with the chip `key`; events.js cycles the matching tri-state and
-// re-renders. The host carries the bordered-pill chrome via the
-// `annotation-filter` selector in toolbar.css.
+// A chip shows while some finding carries its annotation (the `has*`
+// properties, scanned by render.js over the loaded set) OR while its filter
+// is on, so a left-active filter can always be switched off. Duplicates is
+// report-only; Security needs both matching and nonmatching rows. Click
+// dispatches `annotation-filter-toggle(detail: { key })`; events.js cycles
+// the tri-state.
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { appMarkup } from './markup.js'
-import { StateElement, html } from '@rray/frontend/state-element'
+import { html } from '@rray/frontend/state-element'
+import { ToolbarControl } from './toolbar-control.js'
 import { state } from '#client/index.js'
-import { ensureHostAria } from './host-aria.js'
 import { LINKS_ICON_SVG } from './icons.js'
 
-// Inlined glyphs (same path data as render-finding.js's COMMENT_ICON /
-// ISSUE_ICON / FIX_ICON / FLAG_ICON) so this toolbar chip stays a light
-// StateElement rather than importing the finding-render module.
+// The per-finding marks' glyphs (render-finding.js), inlined so this chip
+// doesn't import the finding-render module.
 const COMMENT_GLYPH = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
   <path class="bubble" d="M2.5 3h11a.5.5 0 0 1 .5.5v6.5a.5.5 0 0 1-.5.5H8.4l-3 2.6V10.5H2.5a.5.5 0 0 1-.5-.5V3.5a.5.5 0 0 1 .5-.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
 </svg>`
@@ -46,8 +33,7 @@ const FIX_GLYPH = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidd
 const FLAG_GLYPH = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
   <path class="flag-cloth" d="M5 1.5h6v13l-3-2.7-3 2.7z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
 </svg>`
-// Reuse the links-file identity from the sidebar so this filter reads as
-// "linked issues" rather than the finding action that copies a link.
+// The sidebar's links-file mark: "linked issues", not the copy-link action.
 const DUPLICATES_GLYPH = appMarkup(LINKS_ICON_SVG.replace('width="14" height="14"', 'width="12" height="12"'))
 const CROSS_CONTEXT_GLYPH = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
   <g fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round">
@@ -78,7 +64,7 @@ const CHIPS = [
 ]
 const CONTEXT_KEYS = new Set(['duplicates', 'cross-context', 'app-stacked', 'security'])
 
-class AnnotationFilter extends StateElement {
+class AnnotationFilter extends ToolbarControl {
   static properties = {
     group: { type: String },
     hasComment: { attribute: false },
@@ -91,60 +77,35 @@ class AnnotationFilter extends StateElement {
     hasSecurityContrast: { attribute: false },
   }
 
-  createRenderRoot() { return this }
-
   constructor() {
     super()
     this.group = 'marks'
-    this.hasComment = false
-    this.hasIssue = false
-    this.hasFix = false
-    this.hasFlagged = false
-    this.hasDuplicates = false
-    this.hasCrossContext = false
-    this.hasAppStacked = false
-    this.hasSecurityContrast = false
+    for (const { hasKey } of CHIPS) this[hasKey] = false
   }
 
-  connectedCallback() {
-    super.connectedCallback()
-    ensureHostAria(this, { role: 'group', 'aria-label': this.group === 'context' ? 'Finding row filters' : 'Annotation filter' })
+  get groupLabel() {
+    return this.group === 'context' ? 'Finding row filters' : 'Annotation filter'
   }
 
   render() {
-    // Security requires both matching and nonmatching rows. Other chips show
-    // when their annotation exists OR their filter is active (to clear it).
     const visible = CHIPS.filter((c) => (this.group === 'context') === CONTEXT_KEYS.has(c.key))
       .filter((c) => c.key === 'security' ? this.hasSecurityContrast : c.key === 'duplicates'
         ? !state.currentWorkspace && (this.hasDuplicates || state[c.stateKey])
         : this[c.hasKey] || state[c.stateKey])
     if (visible.length === 0) return nothing
-    const renderChip = (c) => {
-      // Tri-state: '' → 'with' (only) → 'without' (exclude) → ''.
-      const sel = state[c.stateKey]
-      const { label } = c
-      const title = sel === 'with'
-        ? `Showing only ${label} — click to exclude them`
-        : sel === 'without'
-          ? `Excluding ${label} — click to clear`
-          : `Show only ${label}`
+    return html`${visible.map(({ key, glyph, label, stateKey }) => {
+      const sel = state[stateKey]
+      const title = sel === 'with' ? `Showing only ${label} — click to exclude them`
+        : sel === 'without' ? `Excluding ${label} — click to clear`
+        : `Show only ${label}`
       return html`<button
         type="button"
         class=${classMap({ 'annotation-chip': true, 'sel-with': sel === 'with', 'sel-without': sel === 'without' })}
         aria-label=${title}
         aria-pressed=${String(sel !== '')}
-        @click=${() => this._toggle(c.key)}
-      >${c.glyph}</button>`
-    }
-    return html`${visible.map(renderChip)}`
-  }
-
-  _toggle(key) {
-    this.dispatchEvent(new CustomEvent('annotation-filter-toggle', {
-      detail: { key },
-      bubbles: true,
-      composed: true,
-    }))
+        @click=${() => this.emit('annotation-filter-toggle', { key })}
+      >${glyph}</button>`
+    })}`
   }
 }
 

@@ -1,25 +1,14 @@
-// `<slide-triage-tabs>` — Invalid / Deleted bucket tabs shown in the
-// header of the Packages / Repositories detail slides. Both kinds
-// share shape/classes/toggle behaviour but read different state slices
-// (`state.packageSlideTriage` vs. `state.repositorySlideTriage`),
-// discriminated by the `kind` property rather than per-page data
-// attributes: a click dispatches `slide-triage-toggle` with the bound
-// `kind` + picked bucket, and events.js's single listener writes the
-// matching slice and re-renders. (Same custom-event pattern as
-// `<severity-chips>`, `<triage-filter>`, `<color-marker>`.)
-//
-// Reactivity: extends StateElement. The render() autorun reads the
-// `kind`-selected slice, so selecting an active bucket re-highlights
-// the right tab without a parent prop hand-off.
-//
-// Returns `nothing` when no bucket is visible (no findings AND no
-// active selection), so the host can drop it in unconditionally.
-//
-// `counts` is `{ invalid, deleted }` from the parent's filter pipeline.
+// `<slide-triage-tabs>` — the Invalid / Deleted bucket tabs in the header
+// of the Packages / Repositories detail slides. `kind` picks the state
+// slice the autorun reads (`state.packageSlideTriage` /
+// `state.repositorySlideTriage`); a click dispatches `slide-triage-toggle`
+// with `kind` + bucket and events.js writes that slice. Renders nothing
+// when no bucket has findings or is selected. `counts` is
+// `{ invalid, deleted }`.
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
-import { StateElement, html } from '@rray/frontend/state-element'
-import { ensureHostAria } from './host-aria.js'
+import { html } from '@rray/frontend/state-element'
+import { ToolbarControl } from './toolbar-control.js'
 import { kindConfig } from './kind-config.js'
 import { state } from '#client/index.js'
 
@@ -30,27 +19,20 @@ const KIND = {
   repository: { stateKey: 'repositorySlideTriage' },
 }
 
-class SlideTriageTabs extends StateElement {
+class SlideTriageTabs extends ToolbarControl {
   static properties = {
     counts: { attribute: false },
     kind:   { type: String },
   }
 
-  createRenderRoot() { return this }
+  groupLabel = 'Triage view'
 
   constructor() {
     super()
     this.counts = {}
-    // No sensible default — `kind` discriminates which state slice
-    // the autorun reads. Leaving it empty surfaces a missing-attr
-    // host as a dev warn (via the guard in render()) rather than a
-    // silent route to one of the kinds.
+    // No default: a host missing `kind` warns (kindConfig) rather than
+    // silently reading one of the slices.
     this.kind = ''
-  }
-
-  connectedCallback() {
-    super.connectedCallback()
-    ensureHostAria(this, { role: 'group', 'aria-label': 'Triage view' })
   }
 
   render() {
@@ -61,22 +43,13 @@ class SlideTriageTabs extends StateElement {
     if (visible.length === 0) return nothing
     return html`${visible.map((b) => {
       const active = current === b
-      const n = this.counts[b] ?? 0
       return html`<button
         type="button"
         class=${classMap({ 'triage-state-btn': true, [`triage-state-${b}`]: true, active })}
         aria-pressed=${String(active)}
-        @click=${() => this._toggle(b)}
-      >${b.charAt(0).toUpperCase() + b.slice(1)} (${n})</button>`
+        @click=${() => this.emit('slide-triage-toggle', { kind: this.kind, value: b })}
+      >${b.charAt(0).toUpperCase() + b.slice(1)} (${this.counts[b] ?? 0})</button>`
     })}`
-  }
-
-  _toggle(value) {
-    this.dispatchEvent(new CustomEvent('slide-triage-toggle', {
-      detail: { kind: this.kind, value },
-      bubbles: true,
-      composed: true,
-    }))
   }
 }
 

@@ -3,14 +3,12 @@
 // while for the session that read it.
 
 // What `key` names in `data` (entries `{ status, until }`), as held while
-// fresh (`until`), else read with `ask`: 'loading' till it answers, then the
-// entry `ready` makes of its answer (`settled` told once it is held), or
-// `failed` of its error (null to hold none, as for a read aborted). One held
-// 'ready' and gone old is still shown while it is read again (`rereading`),
-// replaced only by what that read answers, never blanked: where it fails,
-// kept, read again `retryMs` after; aborted, read again when next shown.
-// One made fresh again meanwhile, as reading its next page does, keeps what
-// it holds, the answer dropped.
+// fresh (`until`), else read with `ask`: 'loading' till it answers, then
+// `ready`'s entry of its answer (`settled` told once held), or `failed`'s of
+// its error (null to hold none). One 'ready' gone old is shown while read
+// again (`rereading`), never blanked: a failure keeps it, read again
+// `retryMs` after; an abort reads it again when next shown. One made fresh
+// meanwhile (as reading its next page does) keeps what it holds.
 export function heldRead(data, key, ask, { ready, failed, settled = () => {}, retryMs, repaint }) {
   const held = data.get(key)
   if (held && Date.now() < held.until) return held

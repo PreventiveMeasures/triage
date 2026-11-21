@@ -3,8 +3,13 @@ import { managedAppState } from './state.js'
 import { reportRepoGithub } from '@preventive/report'
 import { commonFileDirectory } from '../../common/managed/repository-alias.ts'
 
+// `signal` and the managed session's end, whichever comes first.
+const sessionSignal = signal => signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
+const sessionChanged = () => new DOMException('Managed session changed', 'AbortError')
+const json = response => response.json()
+
 export async function fetchManagedBundleCatalog({ signal } = {}) {
-  signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
+  signal = sessionSignal(signal)
   signal.throwIfAborted()
   const response = await managedFetch('/api/admin/bundles', { credentials: 'same-origin', signal })
   signal.throwIfAborted()
@@ -23,7 +28,7 @@ async function requestBundle(id, part, signal) {
   if (!response.ok) throw Object.assign(new Error(`Bundle ${part} request failed (${response.status})`), { status: response.status })
   const data = part === 'contents' ? await response.text() : await response.json()
   signal?.throwIfAborted()
-  if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
+  if (generation !== managedAppState.generation) throw sessionChanged()
   return data
 }
 export function fetchBundleMetadata(id, { signal } = {}) {
@@ -33,7 +38,7 @@ export function fetchBundleMetadata(id, { signal } = {}) {
 // The location editor handles failures inline. Its reference read must stop
 // with that editor instead of leaving a shared request that can raise a toast.
 export async function fetchBundleOrigin(id, { signal } = {}) {
-  signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
+  signal = sessionSignal(signal)
   const data = await requestBundle(id, 'metadata', signal)
   const repo = data?.bundle?.repo ?? null
   const github = reportRepoGithub({ repo })
@@ -54,7 +59,7 @@ export async function fetchBundleOrigin(id, { signal } = {}) {
 }
 
 export async function fetchBundleContents(id, { signal } = {}) {
-  signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
+  signal = sessionSignal(signal)
   try { return await requestBundle(id, 'contents', signal) }
   catch (err) {
     if (err.name !== 'AbortError') managedAppState.notify(`Couldn't load bundle contents: ${err.message}`)
@@ -87,7 +92,7 @@ export const PATCH_ERRORS = {
 }
 // A patch's fields as the npm endpoints take them, where `patch` names one
 // (`{ hash, repoId, commit, path }`).
-export const patchParams = patch => patch ? { patchHash: patch.hash,
+const patchParams = patch => patch ? { patchHash: patch.hash,
   ...patch.repoId == null ? {} : { patchRepoId: String(patch.repoId), patchCommit: patch.commit }, ...patch.path == null ? {} : { patchPath: patch.path } } : {}
 
 const NPM_ERRORS = {
@@ -102,17 +107,13 @@ const NPM_ERRORS = {
   502: "The npm registry couldn't be reached.",
 }
 
-// Reads asked for ahead of their readers (prefetch), by their URL, each
-// `{ reading, until, generation }`: the first read of one within
-// PREFETCH_MS, of the session that asked for it, takes its answer, none read
-// again; one taken failing, or refused, as a server busy for a moment
-// refuses it, read anew, but for a session change; one none takes in time
-// called off.
+// Reads made ahead of their readers, by URL. The first request() for one
+// within PREFETCH_MS, in the same session, takes its answer; a failed or
+// refused one is read anew; one nobody takes in time is aborted.
 const PREFETCH_MS = 15_000
 const prefetched = new Map()
 
-// `url` read now, for a read of it soon to take (request).
-export function prefetch(url) {
+function prefetch(url) {
   if (prefetched.has(url)) return
   const unread = new AbortController()
   const reading = managedFetch(url, { credentials: 'same-origin', signal: AbortSignal.any([unread.signal, managedAppState.sessionController.signal]) })
@@ -139,11 +140,10 @@ const abortable = (promise, signal) => new Promise((resolve, reject) => {
   promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
 })
 
-// A read that a session change aborts, its failures named by `errors`, by
-// their error code or else their status; one read ahead (prefetch) taken, but
-// for a request of another method (`init`).
+// A read that a session change aborts, its failures named by `errors` (by
+// error code, else status); a prefetched answer is taken for a GET.
 export async function request(url, errors, read, signal, init = {}) {
-  signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
+  signal = sessionSignal(signal)
   const generation = managedAppState.generation
   const ask = () => managedFetch(url, { credentials: 'same-origin', ...init, signal })
   const ahead = init.method ? null : takePrefetched(url, generation)
@@ -159,13 +159,13 @@ export async function request(url, errors, read, signal, init = {}) {
   }
   const data = await read(response)
   signal.throwIfAborted()
-  if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
+  if (generation !== managedAppState.generation) throw sessionChanged()
   return data
 }
 
 // npm package reads are never kept: the server checks access, against the
 // registry, on every one.
-const requestNpm = (part, params, signal) => request(`/api/npm/${part}?${new URLSearchParams(params)}`, NPM_ERRORS, response => response.json(), signal)
+const requestNpm = (part, params, signal) => request(`/api/npm/${part}?${new URLSearchParams(params)}`, NPM_ERRORS, json, signal)
 
 const REPOSITORY_CODE_ERRORS = {
   'no-repository': 'This repository is not available to you.',
@@ -188,8 +188,9 @@ const REPOSITORY_CODE_ERRORS = {
   502: 'GitHub couldn’t be reached.',
 }
 
-const requestRepository = (part, params, signal) =>
-  request(`/api/admin/repositories/${part}?${new URLSearchParams(params)}`, REPOSITORY_CODE_ERRORS, response => response.json(), signal)
+// A repository's `part`, its failures named by `errors`.
+const requestRepository = (part, params, signal, errors = REPOSITORY_CODE_ERRORS) =>
+  request(`/api/admin/repositories/${part}?${new URLSearchParams(params)}`, errors, json, signal)
 
 // A repository's directory at a revision (`ref`: a commit, `heads/<branch>`,
 // `tags/<tag>`, or '' for the default branch's head), for the code viewer:
@@ -198,9 +199,8 @@ export function fetchRepositoryCode(repoId, ref, path, { signal } = {}) {
   return requestRepository('code', { repoId, ref, path }, signal)
 }
 
-// What the code viewer's header offers: the repositories its reader may
-// browse, a repository's branches and tags, and a directory's entries, to
-// open one of them where the directory itself can't be.
+// The code viewer header's choices: browsable repositories, a repository's
+// branches and tags, and a directory's entries.
 export async function fetchBrowsableRepositories({ signal } = {}) {
   return (await requestRepository('browsable', {}, signal)).repos ?? []
 }
@@ -209,8 +209,7 @@ export function fetchRepositoryRefs(repoId, { signal } = {}) {
   return requestRepository('refs', { repoId }, signal)
 }
 
-// With `commitOnly`, the commit alone, as a view reading none of the
-// directory's entries opens at: none listed.
+// With `commitOnly`, the commit alone, no entries listed.
 export function fetchRepositoryContents(repoId, ref, path, { signal, commitOnly = false } = {}) {
   return requestRepository('contents', { repoId, ref, path, ...commitOnly ? { listing: 'none' } : {} }, signal)
 }
@@ -223,13 +222,11 @@ const REPOSITORY_HISTORY_ERRORS = {
   400: 'Not a repository’s history.',
 }
 
-// The History tab's commits: from a revision, a page at a time (`page`), or
-// across the repository's most recently updated branches (`all`), a later
-// page on from the commits `from` names.
+// The History tab's commits, a `page` at a time from a revision, or across
+// the most recently updated branches (`all`), on from those `from` names.
 export function fetchRepositoryHistory(repoId, ref, path, { page = 1, all = false, fresh = false, from = null, signal } = {}) {
-  return request(`/api/admin/repositories/history?${new URLSearchParams({ repoId, ref, path, page, ...all ? { all: 'true' } : {}, ...fresh ? { fresh: 'true' } : {},
-    ...from ? { from: from.join(',') } : {} })}`,
-    REPOSITORY_HISTORY_ERRORS, response => response.json(), signal)
+  return requestRepository('history', { repoId, ref, path, page, ...all ? { all: 'true' } : {}, ...fresh ? { fresh: 'true' } : {},
+    ...from ? { from: from.join(',') } : {} }, signal, REPOSITORY_HISTORY_ERRORS)
 }
 
 const REPOSITORY_CHANGES_ERRORS = {
@@ -242,13 +239,12 @@ const REPOSITORY_CHANGES_ERRORS = {
 // The files each of the commits `shas` names changes within `path`, as
 // Replay plays them, fifty commits at most.
 export function fetchRepositoryChanges(repoId, path, shas, { signal } = {}) {
-  return request(`/api/admin/repositories/changes?${new URLSearchParams({ repoId, path, shas: shas.join(',') })}`,
-    REPOSITORY_CHANGES_ERRORS, response => response.json(), signal)
+  return requestRepository('changes', { repoId, path, shas: shas.join(',') }, signal, REPOSITORY_CHANGES_ERRORS)
 }
 
 // The files commit `commit` holds within `path`, which Replay starts from.
 export function fetchRepositoryTree(repoId, path, commit, { signal } = {}) {
-  return request(`/api/admin/repositories/tree?${new URLSearchParams({ repoId, path, commit })}`, REPOSITORY_CHANGES_ERRORS, response => response.json(), signal)
+  return requestRepository('tree', { repoId, path, commit }, signal, REPOSITORY_CHANGES_ERRORS)
 }
 
 const REPOSITORY_ISSUES_ERRORS = {
@@ -264,7 +260,7 @@ const REPOSITORY_ISSUES_ERRORS = {
 // open or closed (`state`), a page at a time, on from the cursor `after`.
 const issuesUrl = (repoId, kind, state, after) => `/api/admin/repositories/issues?${new URLSearchParams({ repoId, kind, state, ...after ? { after } : {} })}`
 export function fetchRepositoryIssues(repoId, kind, { state = 'open', after = null, signal } = {}) {
-  return request(issuesUrl(repoId, kind, state, after), REPOSITORY_ISSUES_ERRORS, response => response.json(), signal)
+  return request(issuesUrl(repoId, kind, state, after), REPOSITORY_ISSUES_ERRORS, json, signal)
 }
 
 const REPOSITORY_AGENTS_ERRORS = {
@@ -279,7 +275,7 @@ const REPOSITORY_AGENTS_ERRORS = {
 // page, naming neither, with issues and branches).
 const agentsUrl = (repoId, pulls, commits) => `/api/admin/repositories/agents?${new URLSearchParams({ repoId, ...pulls ? { pulls } : {}, ...commits ? { commits } : {} })}`
 export function fetchRepositoryAgents(repoId, { pulls = null, commits = null, signal } = {}) {
-  return request(agentsUrl(repoId, pulls, commits), REPOSITORY_AGENTS_ERRORS, response => response.json(), signal)
+  return request(agentsUrl(repoId, pulls, commits), REPOSITORY_AGENTS_ERRORS, json, signal)
 }
 
 const REPOSITORY_ITEM_ERRORS = {
@@ -290,7 +286,7 @@ const REPOSITORY_ITEM_ERRORS = {
 
 // An issue or pull request, as its popup shows it, with its description.
 export function fetchRepositoryItem(repoId, number, { signal } = {}) {
-  return request(`/api/admin/repositories/item?${new URLSearchParams({ repoId, number })}`, REPOSITORY_ITEM_ERRORS, response => response.json(), signal)
+  return requestRepository('item', { repoId, number }, signal, REPOSITORY_ITEM_ERRORS)
 }
 
 const PULL_DEPENDENCIES_ERRORS = {
@@ -301,32 +297,26 @@ const PULL_DEPENDENCIES_ERRORS = {
   400: 'Not a pull request of a repository.',
 }
 
-// The package versions a pull request's lockfiles lock that they didn't where
-// its branch left its base, by directory, an update's with those it was; with
-// `review`, as an open one's are asked, each's review where its repository
-// reviews dependencies, and the other versions wanting reviews.
-// With `listed`, as an open one's tile on the Pull requests tab asks: by the
-// commits the page it is of names.
+// The versions a pull request's lockfiles add against its base, by directory,
+// an update's with its old version; with `review`, each's review where its
+// repository reviews dependencies; with `listed`, by the commits the Pull
+// requests page it is listed on names.
 const pullDependencyFlags = ({ review, listed }) => ({ ...review ? { review: '1' } : {}, ...listed ? { listed: '1' } : {} })
 export function fetchPullDependencies(repoId, number, { review = false, listed = false, signal } = {}) {
-  return request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, number, ...pullDependencyFlags({ review, listed }) })}`,
-    PULL_DEPENDENCIES_ERRORS, response => response.json(), signal)
+  return requestRepository('pull-dependencies', { repoId, number, ...pullDependencyFlags({ review, listed }) }, signal, PULL_DEPENDENCIES_ERRORS)
 }
-// Those of several of a repository's pull requests at once, by number, each
-// its answer, else an error of why GitHub failed it.
+// Several pull requests' at once, by number: each answer, or why GitHub failed it.
 export async function fetchPullDependenciesOf(repoId, numbers, { review = false, listed = false, signal } = {}) {
-  const { pulls, users, deltas } = await request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, numbers: numbers.join(','), ...pullDependencyFlags({ review, listed }) })}`,
-    PULL_DEPENDENCIES_ERRORS, response => response.json(), signal)
+  const { pulls, users, deltas } = await requestRepository('pull-dependencies', { repoId, numbers: numbers.join(','), ...pullDependencyFlags({ review, listed }) },
+    signal, PULL_DEPENDENCIES_ERRORS)
   return pullAnswers(pulls, users, deltas)
 }
-// Each with the app's users the answer names (`users`), and the lines the
-// versions they want reviewed change, counted already (`deltas`), each's.
+// Each with the users the answer names and the counted `deltas`.
 const pullAnswers = (pulls, users, deltas) => new Map((Array.isArray(pulls) ? pulls : []).filter(pull => Number.isSafeInteger(pull?.number)).map(pull => [pull.number,
   typeof pull.error === 'string' ? Object.assign(new Error(PULL_DEPENDENCIES_ERRORS[pull.error] ?? `It couldn’t be read (${pull.error}).`), { code: pull.error })
     : { ...pull, ...users ? { users } : {}, ...Array.isArray(deltas) && deltas.length > 0 ? { deltas } : {} }]))
 
-// Why the versions the repository's default branch's lockfiles lock that
-// want review, where its review is in effect for the reader, couldn't be read.
+// Why the default branch's versions wanting review couldn't be read.
 const BRANCH_DEPENDENCIES_ERRORS = {
   ...REPOSITORY_ITEM_ERRORS,
   'github-not-found': 'GitHub has none of a lockfile it lists on the default branch.',
@@ -334,10 +324,9 @@ const BRANCH_DEPENDENCIES_ERRORS = {
   'github-status-403': 'GitHub refused to read its lockfiles. The GitHub App reading this repository needs Contents: read, which an owner of its installation approves.',
   400: 'Not a repository.',
 }
-// What the npm versions a bundle holds want of review, as the lockfiles
-// installing it lock them at the commit it was built from, where its
-// repository reviews dependencies (GET /api/bundles/:id/dependency-review),
-// `{ review: null }` where none is in effect for the reader.
+// What a bundle's npm versions want of review, as locked at the commit it
+// was built from (GET /api/bundles/:id/dependency-review); `{ review: null }`
+// where none is in effect for the reader.
 const BUNDLE_DEPENDENCY_REVIEW_ERRORS = {
   ...BRANCH_DEPENDENCIES_ERRORS,
   'no-bundle': 'This bundle is not available to you.',
@@ -349,13 +338,11 @@ const BUNDLE_DEPENDENCY_REVIEW_ERRORS = {
   400: 'Not a bundle.',
 }
 export function fetchBundleDependencyReview(id, { signal } = {}) {
-  return request(`/api/bundles/${encodeURIComponent(id)}/dependency-review`, BUNDLE_DEPENDENCY_REVIEW_ERRORS, response => response.json(), signal)
+  return request(`/api/bundles/${encodeURIComponent(id)}/dependency-review`, BUNDLE_DEPENDENCY_REVIEW_ERRORS, json, signal)
 }
 
-// A bundle's last validation its reader may see (GET
-// /api/bundles/:id/validation), `{ validation }`, null for none; and, POSTed,
-// it validated anew: its own code against GitHub, its dependencies against
-// upstream's packages.
+// A bundle's last validation (`{ validation }`, null for none); POSTed, it
+// is validated anew: its code against GitHub, its dependencies upstream.
 const BUNDLE_VALIDATION_ERRORS = {
   ...BUNDLE_DEPENDENCY_REVIEW_ERRORS,
   'unsupported-bundle': 'Only Stasis bundles are validated.',
@@ -367,19 +354,16 @@ const BUNDLE_VALIDATION_ERRORS = {
 }
 const validationUrl = id => `/api/bundles/${encodeURIComponent(id)}/validation`
 export function fetchBundleValidation(id, { signal } = {}) {
-  return request(validationUrl(id), BUNDLE_VALIDATION_ERRORS, response => response.json(), signal)
+  return request(validationUrl(id), BUNDLE_VALIDATION_ERRORS, json, signal)
 }
 export function runBundleValidation(id, csrfToken, { signal } = {}) {
   return request(validationUrl(id), BUNDLE_VALIDATION_ERRORS, response => response.json().catch(() => null), signal, { method: 'POST', headers: { 'x-csrf-token': csrfToken } })
 }
 
-// A team's Dependencies tab's, of those of its repositories `repoIds` names,
-// else all, in one request (GET /api/teams/:id/dependencies): `onLine`
-// called with each line as it comes, as the server tells them
-// (server-managed/http.ts handleTeamDependencies), a repository's failure
-// told by why (`error`), as is why not all its open pull requests were read
-// (`pulls.error`), and its pull requests' dependencies by number, as
-// fetchPullDependenciesOf tells them (`dependencies`).
+// A team's Dependencies tab, of `repoIds` or all, in one request (GET
+// /api/teams/:id/dependencies, http.ts handleTeamDependencies): `onLine` with
+// each line as it comes, failures (`error`, `pulls.error`) said in words and
+// `dependencies` as fetchPullDependenciesOf gives them.
 const TEAM_DEPENDENCIES_ERRORS = { 'no-team': 'This team is not available to you.', 400: 'Not a team’s repositories.' }
 const GITHUB_FAILED = 'GitHub failed to answer. Try again shortly.'
 const UNREAD_PULLS_ERRORS = { ...REPOSITORY_ISSUES_ERRORS, 'github-status-502': GITHUB_FAILED, 'github-status-504': GITHUB_FAILED, 'time-up': 'Reading them took too long.' }
@@ -387,9 +371,7 @@ const unreadPulls = error => `Not all its open pull requests were read. ${UNREAD
 export function fetchTeamDependencies(teamId, onLine, { repoIds = null, signal } = {}) {
   const query = repoIds ? `?${new URLSearchParams({ repoIds: repoIds.join(',') })}` : ''
   return request(`/api/teams/${encodeURIComponent(teamId)}/dependencies${query}`, TEAM_DEPENDENCIES_ERRORS, async response => {
-    const generation = managedAppState.generation
-    for await (const line of responseLines(response)) {
-      if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
+    for await (const line of sessionLines(response)) {
       onLine(typeof line.error === 'string' ? { ...line, error: BRANCH_DEPENDENCIES_ERRORS[line.error] ?? BRANCH_DEPENDENCIES_ERRORS[line.status]
         ?? `It couldn’t be read (${line.error}).`, code: line.error } : Array.isArray(line.dependencies) ? { ...line, dependencies: pullAnswers(line.dependencies, line.users) }
         : typeof line.pulls?.error === 'string' ? { ...line, pulls: { ...line.pulls, error: unreadPulls(line.pulls.error) } } : line)
@@ -410,12 +392,11 @@ const REPOSITORY_PULSE_ERRORS = {
 // the pull requests and issues of the last `weeks` weeks.
 const pulseUrl = (repoId, weeks) => `/api/admin/repositories/pulse?${new URLSearchParams({ repoId, weeks })}`
 export function fetchRepositoryPulse(repoId, weeks, { signal } = {}) {
-  return request(pulseUrl(repoId, weeks), REPOSITORY_PULSE_ERRORS, response => response.json(), signal)
+  return request(pulseUrl(repoId, weeks), REPOSITORY_PULSE_ERRORS, json, signal)
 }
 
-// The first read an Activity view opening on `tab` makes, read ahead of it
-// while its bundle loads (repository-code.js): Issues' or Pull requests'
-// first page in `state`, Agents' first, Pulse's period of `weeks`.
+// The first read an Activity view opening on `tab` makes, prefetched while
+// its bundle loads (repository-code.js).
 export function prefetchActivity(repoId, tab, { state = 'open', weeks = 4 } = {}) {
   if (tab === 'issues' || tab === 'pulls') prefetch(issuesUrl(repoId, tab, state, null))
   else if (tab === 'agents') prefetch(agentsUrl(repoId, null, null))
@@ -425,8 +406,8 @@ export function prefetchActivity(repoId, tab, { state = 'open', weeks = 4 } = {}
 // The Pulse tab's pull requests and issues of the days `from` to `to`
 // (YYYY-MM-DD; none, on) and of any of `authors` (GitHub logins).
 export function fetchRepositoryPulseItems(repoId, weeks, { from, to = null, authors = [] }, { signal } = {}) {
-  const query = new URLSearchParams({ repoId, weeks, from, ...to === null ? {} : { to }, ...authors.length > 0 ? { authors: authors.join(',') } : {} })
-  return request(`/api/admin/repositories/pulse/items?${query}`, REPOSITORY_PULSE_ERRORS, response => response.json(), signal)
+  return requestRepository('pulse/items', { repoId, weeks, from, ...to === null ? {} : { to }, ...authors.length > 0 ? { authors: authors.join(',') } : {} },
+    signal, REPOSITORY_PULSE_ERRORS)
 }
 
 // A version's manifest and files; with `patch`, its files alone, as the
@@ -455,9 +436,8 @@ export function fetchNpmSocket(name, version, { signal } = {}) {
   return requestNpm('socket', { name, version }, signal)
 }
 
-// What calls for a look at a version, against `otherVersion` where given, as
-// the server's risk tells it (server-managed/npm-risk.ts): the viewer reads
-// risk from here alone, telling none of it itself.
+// A version's risk, against `otherVersion` where given, as the server alone
+// works it out (server-managed/npm-risk.ts).
 export function fetchNpmRisk(name, version, otherVersion = null, { signal } = {}) {
   return requestNpm('risk', { name, version, ...otherVersion === null ? {} : { otherVersion } }, signal)
 }
@@ -477,10 +457,9 @@ const PRETTY_ERRORS = {
   502: "The npm registry couldn't be reached.",
 }
 
-// A bundle's file pretty-printed by the server, which keeps the copy; the
-// viewer keeps it only while the file is open (pretty-source.js).
-// `{ text, source }`, `source` the hash of the file the server formatted it
-// from, as it names it.
+// A bundle's file pretty-printed by the server, which keeps the copy (the
+// viewer only while it is open): `{ text, source }`, `source` the hash of the
+// file formatted.
 export function fetchPrettyBundleFile(id, path, hash, { signal } = {}) {
   return request(`/api/bundles/${encodeURIComponent(id)}/pretty?${new URLSearchParams({ path, hash })}`, PRETTY_ERRORS, prettyFile, signal)
 }
@@ -511,19 +490,24 @@ export async function* responseLines(response) {
   }
 }
 
-// Every file of an npm version that needs pretty-printing, pretty-printed by
-// the server in one request, which keeps the copies of a public one: `onLine`
-// called with each as it comes, in path order, `{ path, source, text }`, or
-// `{ path, source, status, message }` where it has none, `source` as above.
-// Resolves once the server sent them all; refused as the version's files are.
+// Those of the session they were asked in alone.
+async function* sessionLines(response) {
+  const generation = managedAppState.generation
+  for await (const line of responseLines(response)) {
+    if (generation !== managedAppState.generation) throw sessionChanged()
+    yield line
+  }
+}
+
+// Every file of an npm version needing it, pretty-printed in one request:
+// `onLine` with each in path order, `{ path, source, text }` or `{ path,
+// source, status, message }`; resolves once all came.
 export function fetchPrettyNpmFiles(name, version, onLine, { signal } = {}) {
   return requestPrettyLines(`/api/npm/pretty?${new URLSearchParams({ name, version })}`, NPM_ERRORS, onLine, signal)
 }
 
-// The files that changed between two bundles, or two versions of a package,
-// both sides' pretty-printed by the server in one request, those it kept
-// first: `onLine` called with each as it comes, as above, with the `side` it
-// is of, `base` (the one asked about) or `other`.
+// The changed files of two bundles or versions, both sides pretty-printed in
+// one request, kept ones first: as above, with their `side`, `base` or `other`.
 export function fetchPrettyBundleChanges(id, other, onLine, { signal } = {}) {
   return requestPrettyLines(`/api/bundles/${encodeURIComponent(id)}/pretty?${new URLSearchParams({ other })}`, PRETTY_ERRORS, onLine, signal)
 }
@@ -532,13 +516,11 @@ export function fetchPrettyNpmChanges(name, version, otherVersion, onLine, { sig
   return requestPrettyLines(`/api/npm/pretty?${new URLSearchParams({ name, version, otherVersion })}`, NPM_ERRORS, onLine, signal)
 }
 
-// Pretty-printed files' lines, each told to `onLine` as it comes, a failed
-// one's error told as `message`, as `told` names it; refused as `errors` name it.
+// Each line to `onLine`, a failed one's error as `message` (by `told`); the
+// request refused as `errors` name it.
 function requestPrettyLines(url, errors, onLine, signal, told = PRETTY_ERRORS) {
   return request(url, errors, async response => {
-    const generation = managedAppState.generation
-    for await (const { error, status, ...line } of responseLines(response)) {
-      if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
+    for await (const { error, status, ...line } of sessionLines(response)) {
       await onLine(error ? { ...line, status, message: told[error] ?? told[status] ?? `Request failed (${status})` } : line)
     }
   }, signal)
@@ -552,12 +534,10 @@ const RENAME_DIFF_ERRORS = {
   504: 'Comparing this file took too long.',
 }
 
-// A JavaScript file diffed by the server with one of another bundle or
-// version, both pretty-printed, renamed names hidden, whitespace changes shown
-// and hidden: its change blocks and the removed lines left out as renamed
-// (rename-diff.js). `params` name both files, a base's `path` and `hash`, the
-// other's `otherPath` and `otherHash`.
-const requestRenameDiff = (url, signal) => request(url, RENAME_DIFF_ERRORS, response => response.json(), signal)
+// A JavaScript file diffed by the server against another bundle's or
+// version's, both pretty-printed, renamed names hidden (rename-diff.js): its
+// change blocks and the removed lines left out as renamed.
+const requestRenameDiff = (url, signal) => request(url, RENAME_DIFF_ERRORS, json, signal)
 
 export function fetchBundleRenameDiff(id, other, { path, hash, otherPath, otherHash }, { signal } = {}) {
   return requestRenameDiff(`/api/bundles/${encodeURIComponent(id)}/rename-diff?${new URLSearchParams({ path, hash, other, otherPath, otherHash })}`, signal)
@@ -567,11 +547,9 @@ export function fetchNpmRenameDiff(name, version, otherVersion, { path, hash, ot
   return requestRenameDiff(`/api/npm/rename-diff?${new URLSearchParams({ name, version, path, hash, otherVersion, otherPath, otherHash })}`, signal)
 }
 
-// Every pair of JavaScript files two bundles, or two versions of a package,
-// are diffed by so, in one request: `onLine` called with each as it is worked
-// out, in path order, the answer for one asked about alone with both files'
-// paths, or `{ path, hash, otherPath, otherHash, status, message }` where it
-// has none. Two bundles' within a reason `scope` where given.
+// Every such pair of two bundles or versions in one request: `onLine` with
+// each in path order, or `{ path, hash, otherPath, otherHash, status, message }`;
+// two bundles' within a reason `scope` where given.
 const scoped = (other, scope) => new URLSearchParams({ other, ...scope ? { scope } : {} })
 
 export function fetchBundleRenameDiffs(id, other, onLine, { signal, scope = '' } = {}) {
@@ -582,15 +560,11 @@ export function fetchNpmRenameDiffs(name, version, otherVersion, onLine, { signa
   return requestPrettyLines(`/api/npm/rename-diff?${new URLSearchParams({ name, version, otherVersion })}`, NPM_ERRORS, onLine, signal, RENAME_DIFF_ERRORS)
 }
 
-// The files that changed between two bundles, or two versions of a package,
-// in types alone, as the server proves them (@preventive/compare's
-// compareTrees `typeOnly`), and those in types alone but for what runs
-// (`runs=1`, server-managed/type-only-proof.js), in one request: `onLine`
-// called with each, `{ path, hash, otherPath, otherHash }`, a side not there
-// null, one of the latter with the lines holding what runs on either side,
-// `runs` and `otherRuns`; two bundles' within a reason `scope` where given,
-// and a version's against no files where `otherVersion` is `(empty)`, as
-// Review reads one with no base, `version` the one read.
+// The files of two bundles or versions changed in types alone, as the server
+// proves (compareTrees `typeOnly`), and those but for what runs (`runs=1`,
+// type-only-proof.js, with `runs` and `otherRuns` lines): `onLine` with each
+// `{ path, hash, otherPath, otherHash }`. `otherVersion` `(empty)` compares a
+// version with no files.
 export function fetchBundleTypeOnly(id, other, onLine, { signal, scope = '' } = {}) {
   return requestPrettyLines(`/api/bundles/${encodeURIComponent(id)}/type-only?${scoped(other, scope)}&runs=1`, PRETTY_ERRORS, onLine, signal)
 }
@@ -599,19 +573,15 @@ export function fetchNpmTypeOnly(name, version, otherVersion, onLine, { signal }
   return requestPrettyLines(`/api/npm/type-only?${new URLSearchParams({ name, version, otherVersion, runs: '1' })}`, NPM_ERRORS, onLine, signal)
 }
 
-// The lines each of several versions changes against another, or
-// `(empty)`, its whole package's, and those but for declaration files
-// changed in types alone, `[name, version, otherVersion]` each, in one
-// request (GET /api/npm/deltas): `onLine` called with each as it is counted,
-// `{ name, version, otherVersion, ...delta }`, or with why it couldn't be
-// (`error`).
+// The lines each `[name, version, otherVersion]` changes (`(empty)`: all of
+// it), and those but for declaration files changed in types alone, in one
+// request: `onLine` with each `{ name, version, otherVersion, ...delta }` or
+// its `error`.
 const DELTA_ERRORS = { ...NPM_ERRORS, 'delta-busy': 'Too many packages are being counted. Try again shortly.',
   'delta-timeout': 'Counting its lines took too long.', 'delta-failed': 'Its lines couldn’t be counted.' }
 export function fetchNpmDeltas(versions, onLine, { signal } = {}) {
   return request(`/api/npm/deltas?${new URLSearchParams({ versions: JSON.stringify(versions) })}`, DELTA_ERRORS, async response => {
-    const generation = managedAppState.generation
-    for await (const { error, status, ...line } of responseLines(response)) {
-      if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
+    for await (const { error, status, ...line } of sessionLines(response)) {
       onLine(error ? { ...line, error: DELTA_ERRORS[error] ?? DELTA_ERRORS[status] ?? `Request failed (${status})` } : line)
     }
   }, signal)
@@ -623,9 +593,8 @@ const COMPARISON_ERRORS = {
   429: 'Too many bundles are being compared. Try again shortly.',
 }
 
-// A comparison as the server works it out (server-managed/comparison.ts), its
-// files paired as Compare and Review read them: the viewer pairs none of a
-// managed bundle's or a package's itself. Its `files.basePaths` a Map again.
+// A comparison as the server pairs its files (server-managed/comparison.ts),
+// `files.basePaths` a Map again.
 const readComparison = async response => {
   const comparison = await response.json()
   comparison.files.basePaths = new Map(comparison.files.basePaths)

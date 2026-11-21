@@ -1,28 +1,4 @@
-button,
-select {
-  font: inherit;
-  cursor: default;
-}
-button:focus-visible,
-a:focus-visible,
-select:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-}
-.dropzone {
-  position: absolute;
-  inset: .6rem;
-  z-index: 5;
-  display: grid;
-  place-items: center;
-  border: 2px dashed var(--accent);
-  border-radius: var(--ui-radius, 10px);
-  background: rgb(from var(--bg) r g b / .94);
-  color: var(--accent);
-  font-size: 1rem;
-  font-weight: 600;
-  pointer-events: none;
-}
+.dropzone { font-size: 1rem; }
 .summary {
   min-height: 1.5em;
   display: flex;
@@ -34,7 +10,7 @@ select:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 .unassigned {
-  color: var(--high, #d97732);
+  color: var(--high);
 }
 .bundles {
   margin: 0;
@@ -81,23 +57,13 @@ select:focus-visible {
   background: var(--surface);
 }
 .action.danger:hover {
-  color: var(--critical, #e5534b);
-}
-.msg {
-  padding: 1rem 0;
-  margin: 0;
-  color: var(--muted);
-  font-size: .8rem;
-}
-.msg.error {
-  color: var(--critical, #e5534b);
+  color: var(--critical);
 }
 .bundle-group {
-  overflow: hidden;
+  overflow: auto hidden;
   border: 1px solid var(--border);
   border-radius: var(--ui-radius, 10px);
   background: var(--panel);
-  overflow-x: auto;
 }
 .bundle-group-head,
 .bundles {
@@ -203,4 +169,3 @@ select:focus-visible {
 .bundle-row > .location-editor { grid-column: 1 / -1; }
 
 .breadcrumb { flex-wrap: wrap; }
-.breadcrumb .breadcrumb-current { margin: 0; color: var(--text); font-size: .85rem; font-weight: 500; }

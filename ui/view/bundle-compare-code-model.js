@@ -1,13 +1,9 @@
-// Pure model behind the Compare slide's Code view — no Lit, no DOM, no
-// `state`. Two texts in, what a review needs out: the change blocks
-// between them (common/line-diff.js, or the server's with renamed names
-// hidden: server-managed/rename-diff.ts), the rows a unified or split
-// diff shows with unchanged runs folded down to their context, and the
-// words that changed inside a changed line (@preventive/compare's
-// wordRanges and pairLines) marked in a line's syntax-highlighted markup.
-//
-// Lines are numbered the way the diff numbers them: from zero, a final
-// newline ending the last line rather than starting an empty one.
+// Pure model behind Compare's Code view — no Lit, no DOM, no `state`: the
+// change blocks between two texts (common/line-diff.js, or the server's with
+// renamed names hidden), the rows a unified or split diff shows with
+// unchanged runs folded, and the words changed inside a line marked in its
+// highlighted markup. Lines are numbered from zero, a final newline ending
+// the last line rather than starting an empty one.
 import { hidesMixedWhitespace, pairLines } from '@preventive/compare/view.js'
 import { blocksHold, changeBlocks, textLines } from '../../common/line-diff.js'
 
@@ -22,17 +18,11 @@ export const EXPAND_STEP = 20
 const MIN_FOLD = 4
 
 // The change blocks between two texts, each `a[a0..a1)` replaced by
-// `b[b0..b1)`, with the lines on each side and the count of each. An
-// added file is diffed against '' and a removed one against it, so all
-// three kinds of change share one model. `ignoreWhitespace` is diff -b:
-// lines differing only in how much whitespace they have pair up as
-// unchanged (common/line-diff.js changeBlocks). `changes` are
-// blocks found elsewhere: the server's, its old side given the new one's
-// names (server-managed/rename-diff.ts). `marks` are the blocks the server
-// found to differ in renamed names alone (rename-diff-worker.js): those of
-// these blocks that are one of them are `marked`, counted apart from the
-// lines added and removed (`renamed`), for a view to draw them apart rather
-// than hiding them.
+// `b[b0..b1)`, with each side's lines and counts; an added or removed file
+// is diffed against ''. `ignoreWhitespace` is diff -b. `changes` are blocks
+// found elsewhere (the server's, its old side given the new one's names);
+// `marks` the blocks the server found to differ in renamed names alone,
+// those of these `marked` and counted apart (`renamed`).
 export function lineDiff(before, after, { ignoreWhitespace = false, changes = null, marks = null } = {}) {
   const a = textLines(before), b = textLines(after)
   const blocks = changes?.blocks ?? changeBlocks(before, after, ignoreWhitespace)
@@ -61,15 +51,12 @@ export function markedCounts(blocks, marks) {
   return { additions, deletions, renamed, marked }
 }
 
-// A file that changed in types alone but for what runs, as the server proves
-// it (type-only.js typeProof: its module loads, and the like), with its types
-// set aside: `before` and `after` the texts of each side's lines that hold
-// what runs (`runs`, `otherRuns`, `[from, to)` each), to be diffed in place of
-// the files'; `lineOf`, by side, each of their lines' line in its file, and
-// `lines` the file's count of them, for diffRows to show where its other
-// lines, of types alone, stand between them. Null where setting those aside would hide
-// no change (each side's lines of types the same, in order) or leave none to
-// show (its lines that run the same): its diff is drawn whole then.
+// A file that changed in types alone but for what runs (type-only.js
+// typeProof), its types set aside: `before` and `after` the texts of each
+// side's lines that run (`runs`, `otherRuns`, `[from, to)` each), diffed in
+// place of the files'; `lineOf` each of their lines' line in its file, and
+// `lines` the file's count, for diffRows to show where the types stand. Null
+// where that would hide no change or leave none to show.
 export function typeFolds(before, after, { runs, otherRuns }) {
   const side = (text, ranges) => {
     const lineOf = [], lines = textLines(text)
@@ -85,13 +72,11 @@ export function typeFolds(before, after, { runs, otherRuns }) {
   return { before: a.text, after: b.text, lineOf: { a: a.lineOf, b: b.lineOf }, lines: { a: a.lines, b: b.lines } }
 }
 
-// Rows of a diff of a file's lines that run (typeFolds), a `types` row before
-// each where lines of types alone stand before it on either side, and after
-// the last where they end the file: `a` and `b` those lines, `{ from, to }`
-// of its file, or null where that side has none there. Unified, a change's
-// removed lines come before its added ones: the types that stand before the
-// first added are told with those before the first removed, a row for both
-// ahead of the change, as split tells them, not one between its two halves.
+// Rows of a diff of a file's lines that run (typeFolds), with a `types` row
+// wherever lines of types alone stand before a row, or end the file: `a` and
+// `b` those lines, `{ from, to }`, or null. Unified, the types before a
+// change's first added line are told with those before its first removed,
+// one row ahead of the change, as split tells them.
 function withTypes(rows, { lineOf, lines }) {
   const next = { a: 0, b: 0 }, out = []
   const types = to => {
@@ -119,11 +104,8 @@ function withTypes(rows, { lineOf, lines }) {
   return out
 }
 
-// A file's lines added and removed between its two sides as they are, for a
-// tree to list beside it, as an npm dependency review's tree counts them:
-// none where a side is not text, nor for a file too large to count while a
-// tree draws (counted there as its diff draws, once drawn), an added or
-// removed one's lines counted without a diff.
+// A file's lines added and removed as published, for the tree: none where a
+// side is not text, nor for a file too large to count while a tree draws.
 const COUNT_CHARS = 2_000_000
 const COUNT_LINES = 20_000
 const lineCount = text => {
@@ -145,29 +127,23 @@ export function fileLineCounts(before, after) {
   return { additions, deletions }
 }
 
-// Whether hiding whitespace changes hides one between two texts: whether the
-// blocks a diff of them shows with those hidden, or diff -b's where none are
-// given, pair as unchanged lines that differ (blocksHold).
+// Whether hiding whitespace hides a change between two texts: whether
+// `blocks` (diff -b's by default) pair as unchanged lines that differ.
 export const hidesWhitespace = (before, after, blocks = changeBlocks(before, after, true)) => !blocksHold(before, after, blocks)
 
-// What diff -b would hide between two texts: whether it hides a change at all
-// (`hides`), and whether one it hides mixes kinds of blank (`mixed`), as spaces
-// turned to a tab, which no view hides (hidesMixedWhitespace).
+// What diff -b would hide between two texts: whether it hides a change
+// (`hides`), and whether one mixes kinds of blank (`mixed`), which no view hides.
 export function whitespaceHidden(before, after) {
   const blocks = changeBlocks(before, after, true)
   return { hides: hidesWhitespace(before, after, blocks), mixed: hidesMixedWhitespace(before, after, blocks) }
 }
 
 // Files whose whitespace means nothing but in their strings, the only ones in
-// which a view hides whitespace changes: JavaScript and TypeScript, JSON, CSS
-// and its preprocessors, HTML and XML, and the brace languages (C, C++, Java,
-// Kotlin, Go, Rust, C#, Swift, PHP) and shell. Anything else may hold its
-// meaning in its whitespace -- Python's, YAML's or Markdown's indentation, a
-// Makefile's tabs, a language no one listed -- and shows all of it. Told by
-// the format a stasis bundle records for the file, where it records one, of
-// the formats stasis knows (its own spelling of a file's language); else by
-// extension, or by a script's #! line, one of those known to run Node, Deno,
-// Bun or a shell, whole: none is read apart, so no option is taken for one.
+// which a view hides whitespace changes: JS/TS, JSON, CSS, HTML/XML, the
+// brace languages and shell. Anything else (Python's or YAML's indentation,
+// a Makefile's tabs) shows all of it. Told by the format a stasis bundle
+// records, else by extension, or by a whole #! line known to run Node, Deno,
+// Bun or a shell.
 const INSENSITIVE_FORMATS = new Set(['module', 'commonjs', 'module-typescript', 'commonjs-typescript', 'json', 'solidity', 'php', 'shell', 'rust',
   'java', 'kotlin', 'gradle', 'objc', 'objcpp', 'swift', 'c', 'cpp', 'c-header', 'cpp-header', 'xml', 'cmake', 'pbxproj'])
 const INSENSITIVE = /\.(?:[cm]?js|jsx|[cm]?ts|tsx|json5?|jsonc|css|scss|less|html?|xhtml|xml|svg|c|h|cc|cpp|cxx|hh|hpp|hxx|java|kts?|go|rs|cs|swift|php|sh|bash|zsh)$/u
@@ -181,17 +157,14 @@ export function whitespaceInsensitive(path, text = '', format = undefined) {
   return INSENSITIVE.test(path.toLowerCase()) || (typeof text === 'string' && INSENSITIVE_SCRIPTS.has(text.split('\n', 1)[0]))
 }
 
-// The rows of a diff: unchanged (`ctx`) lines, `fold` rows standing for the
-// unchanged lines between changes that are out of context, and each change
-// block's lines. A fold is keyed by the index of the unchanged run it sits
-// in; `expansion` maps that key to the lines revealed beyond the context at
-// the run's top and bottom, or `all`. Unified, a block is its removed
-// (`del`) lines and then its added (`add`) ones, a line paired with its
-// counterpart on the other side (see alignBlock) naming it as its `pair`.
-// Split, a block is `change` rows of a removed line `left` and an added
-// line `right`, either null where that side has run out. A diff of a file's
-// lines that run, its types set aside (typeFolds), folds none of them, a few
-// as they are, and shows where its types stand between them (withTypes).
+// The rows of a diff: unchanged (`ctx`) lines, `fold` rows for unchanged
+// lines out of context, and each change block's lines. A fold is keyed by
+// its unchanged run's index; `expansion` maps that to the lines revealed at
+// the run's top and bottom, or `all`. Unified, a block is its `del` lines
+// then its `add` ones, each naming its paired line (alignLines) as `pair`;
+// split, `change` rows of a removed `left` and added `right`, null where a
+// side ran out. With its types set aside (typeFolds), nothing folds and the
+// types show where they stand (withTypes).
 export function diffRows(model, expansion = new Map(), { context = model.typeFolds ? Infinity : DIFF_CONTEXT, split = false } = {}) {
   const { a, blocks } = model
   const rows = []
@@ -228,15 +201,9 @@ export function diffRows(model, expansion = new Map(), { context = model.typeFol
   return model.typeFolds ? withTypes(rows, model.typeFolds) : rows
 }
 
-// A block's lines as rows of [removed line, added line, paired]: each removed
-// line paired with the added line it was edited into (pairLines), the lines
-// left between pairs sharing rows by position, unpaired.
-function alignBlock(model, block) {
-  return alignLines(model.a, model.b, block)
-}
-
-// The same, of a block between two texts' lines `a` and `b`, as a split diff
-// draws its rows (and Compare's code search lists their hits).
+// A block between two texts' lines `a` and `b` as rows of [removed line,
+// added line, paired]: each removed line paired with the added line it was
+// edited into (pairLines), the lines between pairs sharing rows by position.
 export function alignLines(a, b, block) {
   const pairs = pairLines(a.slice(block.a0, block.a1), b.slice(block.b0, block.b1)).map(([i, j]) => [block.a0 + i, block.b0 + j])
   const rows = []
@@ -252,20 +219,18 @@ export function alignLines(a, b, block) {
   return rows
 }
 
-// Alignments are kept on the model: a fold opening re-lists every row, and
-// Compare's code search lists a block's hits in them. `model` any holder of
-// lines `a` and `b` and their `blocks`, `run` the block's index there.
+// Alignments are kept on the model (any holder of `a`, `b` and `blocks`,
+// `run` a block's index): a fold opening re-lists every row.
 export function alignedBlock(model, run) {
   model.aligned ??= new Map()
-  if (!model.aligned.has(run)) model.aligned.set(run, alignBlock(model, model.blocks[run]))
+  if (!model.aligned.has(run)) model.aligned.set(run, alignLines(model.a, model.b, model.blocks[run]))
   return model.aligned.get(run)
 }
 
 // Wrap the characters in `ranges` of one line's highlighted markup in
-// `<mark>`, the markup's own tags left as they are: a mark closes before a
-// tag and reopens after it, so the two never cross. The markup is Prism's
-// (see prism-highlight.js splitHighlightedLines): only tags and `&…;`
-// entities, each entity one character of the line.
+// `<mark>`: a mark closes before a tag and reopens after it, so the two never
+// cross. Prism's markup holds only tags and `&…;` entities, each entity one
+// character of the line.
 export function markHighlighted(markup, ranges, open = '<mark class="diff-word">', close = '</mark>') {
   if (!ranges || ranges.length === 0) return markup
   let marked = false, out = '', pos = 0, r = 0
@@ -295,8 +260,7 @@ export function markHighlighted(markup, ranges, open = '<mark class="diff-word">
   return marked ? out + close : out
 }
 
-// The same marks over a plain line, as segments a template can render
-// without touching markup.
+// The same marks over a plain line, as segments for a template.
 export function markSegments(text, ranges) {
   if (!ranges || ranges.length === 0) return [{ text, marked: false }]
   const segments = []

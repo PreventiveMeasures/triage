@@ -1,15 +1,8 @@
-// Per-finding deep links — headless half. Builds the finding URL
-// the `.mark-link` button copies, and works out what has to change in
-// `state` for a linked finding to be on screen. The DOM half (navigate
-// to the right report, scroll, flash) lives in `finding-link-nav.js`.
-//
-// The split mirrors `client/finding-lookup.js`: everything here is pure
-// state in / state out, so the resolution rules — which are the part
-// with real edge cases — are unit-testable without a browser, and the
-// nav module stays a thin shell around them.
-//
-// Links resolve within the recipient's local reports or accessible managed
-// teams. They carry a finding identity, never report contents or credentials.
+// Per-finding deep links, the headless half: the URL `.mark-link` copies,
+// and what must change in `state` for a linked finding to be on screen,
+// pure state so the rules are testable without a browser (the DOM half is
+// finding-link-nav.js). A link carries a finding's identity, never report
+// contents or credentials.
 import { buildFindingUrl, isLinkableFindingId, isManagedUiMode, knownLinkHint, state, workspacesHoldingReport } from '#client/index.js'
 import { managedRouteForIds, managedRoutePath } from '../../common/managed/routes.js'
 import { applyFilters, matchesConfirmed, resetFilters, shouldLockConfirmed } from './filters.js'
@@ -17,23 +10,13 @@ import { getMergedGroups, getShownGroups, groupKey, groupState, linkableGroups, 
 import { configureRevalidation, isRuledOut } from './format.js'
 import { cleanupGraph2 } from './graph/state.js'
 
-// Shareable URL for one finding, or null when the finding can't carry a
-// stable link (a session-local numeric `_id` — see
-// `isLinkableFindingId`). Callers render the Link affordance only for a
-// non-null result, so a link that would rot on the next reload is never
-// offered in the first place.
-//
-// Workspace links carry only the workspace hint. Report links carry the
-// report hint plus its parent workspace when known. Each is a 3-byte
-// digest, never the name itself. Neither includes a display mode: that
-// remains the viewer's choice.
-//
-// `knownLinkHint` is the SYNCHRONOUS memo read, because this runs inside
-// the Link button's click handler and the clipboard write must not be
-// preceded by an await. Ingest primes the memo for every report it
-// loads, so a miss means a report that arrived by some path that didn't
-// — in which case the hint is simply omitted and the receiver's scan
-// picks up the slack.
+// A finding's shareable URL, or null where its id is session-local
+// (isLinkableFindingId), which the next load would hand out again. A
+// workspace's carries its hint, a report's its own and its workspace's
+// where known, each a 3-byte digest of the name; no display mode. The hints
+// are read synchronously (`knownLinkHint`, primed by ingest): the clipboard
+// write in the click handler must not follow an await, and a miss leaves
+// the receiver's scan to find it.
 export function findingLinkFor(finding, { teamOnly = false, reportId: targetReportId } = {}) {
   if (!finding) return null
   const id = tabKey(finding)
@@ -61,105 +44,47 @@ export function reportWorkspaceFor(name, preferred = state.currentReportWorkspac
   return holders.length === 1 ? holders[0].id : null
 }
 
-// Locate a finding id in what's currently loaded. Walks the merged
-// group view (not `state.reports` directly) so a cross-report dedup
-// super-group resolves to the group the UI actually renders — selecting
-// the per-report group would stamp an active-tab / selection key no
-// rendered element carries.
-//
-// `linkableGroups`, not `getMergedGroups`: whether a finding is loaded
-// is not a question about the upstream lens, and a link answered
-// through it would report an app-side finding in an open report as
-// gone. `unhideFinding` takes the lens off for such a target, which is
-// also what keeps the group returned here the one that renders.
+// A finding id among what is loaded, by the merged groups the UI renders
+// (a per-report group's key would name nothing on screen): the visible copy
+// first, as a workspace may also hold a hidden, ruled-out one, then those
+// any lens hides (`linkableGroups`), which unhideFinding takes off.
 export function findLoadedFinding(id) {
-  // Prefer the visible copy: a workspace may also have a hidden, ruled-out
-  // answer for this id in another app. Raw rows remain the fallback for links
-  // to findings that the current lens hides entirely.
   for (const groups of [getMergedGroups(), linkableGroups()]) {
     for (const group of groups) {
-      for (const finding of group) {
-        if (tabKey(finding) === id) return { group, finding }
-      }
+      const finding = group.find((f) => tabKey(f) === id)
+      if (finding) return { group, finding }
     }
   }
   return null
 }
 
-// Make `group` reachable on screen, and point the view at `id` within
-// it. Pure state mutation — no render, no DOM — so the ordering rules
-// below are testable and the nav module stays a thin shell. Returns the
-// group's gid, which is what the nav module scrolls to.
-//
-// Three things can hide a finding that exists:
-//   1. Another top-level view (bundles / files / packages / …) is up.
-//   2. A toolbar filter excludes it. Only cleared when it actually
-//      excludes THIS group — a link shouldn't wipe a carefully built
-//      filter set it was already compatible with. `state.sortBy` is
-//      saved across the reset: `resetFilters` re-derives a default sort
-//      for a fresh ingest, which is not what arriving via a link means.
-//   3. The triage bucket. `commonTriage === state.shownTriage` in
-//      render.js is an EXCLUSIVE partition, so a finding in a bucket
-//      the reader isn't viewing isn't merely un-scrolled-to: it isn't
-//      rendered at all.
-//
-// (3) used to be left alone, on the reasoning that a link should focus
-// one finding rather than repartition the view around it. That was
-// wrong, and quietly so. The per-mode selection below still names the
-// target's gid, and no view holds it — so in the focus mode the queue
-// falls through to the previous index and centres a DIFFERENT finding,
-// and a link "to" an in-progress finding delivers somebody else's. A
-// link that lands on the wrong finding is worse than one that changes
-// which bucket is on screen, and the reader can see the bucket
-// selector move; they cannot see that the card they were handed is not
-// the one the link named.
-//
-// Kanban is exempt, and for the honest reason rather than by
-// exception: it renders every bucket as a column, so its board already
-// holds the target and `shownTriage` isn't consulted for it at all.
-//
-// Selecting the linked member (rather than just its group) matters for
-// a multi-tab dedup group: without it the group opens on whichever
-// sibling `activeTabFor` prefers, and the recipient reads a different
-// finding than the sender pointed at.
+// `group` made reachable on screen, the view pointed at `id` in it, by
+// state alone (no render, no DOM); its gid, for the nav module to scroll
+// to. What can hide a finding that exists: another view; the graph mode,
+// which draws no cards; the triage bucket, an exclusive partition, which
+// otherwise leaves the focus view centring a different finding (kanban
+// shows every bucket, but a fullscreen column hides the others); the
+// upstream lens, which reaches inside a group (workspace-groups.js
+// mergeReportGroups), kept where every member is upstream; a ruled-out or
+// folded copy; and a filter, reset only where it excludes this group, the
+// sort kept. The linked member is selected, not whichever sibling
+// activeTabFor prefers.
 export function unhideFinding(group, id) {
   state.currentView = 'findings'
-  // The graph view mode paints a canvas, not per-finding cards — there
-  // is nothing there to scroll to or select. Same fallback the graph's
-  // own "Findings →" jump uses.
   if (state.viewMode === 'graph') {
     state.viewMode = 'table'
     cleanupGraph2()
   }
-  // Which bucket the group sits in — the kanban branch needs it to
-  // name a column, every other mode to name the partition. One call
-  // for both.
   const bucket = groupState(group).commonTriage
   if (state.viewMode === 'kanban') {
-    // A fullscreen column drops every OTHER column from the board, so a
-    // link into one of them would land on a card that isn't rendered.
-    // Collapse it only when the target sits elsewhere — a link into the
-    // column the user already expanded shouldn't undo their layout.
     const column = bucket ?? 'untriaged'
     if (state.kanbanExpandedColumn !== null && state.kanbanExpandedColumn !== column) {
       state.kanbanExpandedColumn = null
     }
   } else if (bucket !== state.shownTriage) {
-    // Every other mode shows one bucket at a time; show the one the
-    // link is in. The two fields range over the same values — one of
-    // the five bucket names the selector offers, or null for the live
-    // list — so this is a direct assignment, including back to null
-    // for a link into the live set. Guarded on inequality because an
-    // equal write still wakes every autorun reading the field.
+    // Guarded: an equal write still wakes every autorun reading it.
     state.shownTriage = bucket
   }
-  // A fifth: the upstream lens, which unlike every filter above reaches
-  // INSIDE the group (workspace-groups.js mergeReportGroups) — so it can hide the
-  // target while still drawing its group, under a gid built from the
-  // members it kept. Off it comes, unless every member is upstream:
-  // there the lens hands the group back whole, the gid below is the one
-  // on screen, and a reader who arrived at an upstream finding through
-  // an upstream link has no reason to leave the lens they were in.
   if (state.upstreamOnly && !group.every((f) => f.isUpstream)) state.upstreamOnly = false
   configureRevalidation(state.showRevalidation, state.upstreamOnly)
   // Following a link explicitly asks to see its target, including a ruled-out
@@ -188,18 +113,10 @@ export function unhideFinding(group, id) {
   if (group.length > 1) {
     state.activeTabByGroup.set(gid, id)
   }
-  // Per-mode selection — each mode's own "this one" state. Table opens
-  // its details aside on the row, focus centres the card, and kanban
-  // opens the detail modal: a board card is a title and a badge, which
-  // is not what someone following a link to a specific finding came to
-  // read. Setting the gid directly (rather than going through events.js's
-  // `setKanbanPopoverGid`) matches what that helper does for a
-  // card-to-card switch — a plain render, no view transition. The morph
-  // animation only makes sense growing out of a card the user just
-  // clicked, and on arrival there was no such click.
-  //
-  // Grouped and list have no selection concept; there the scroll + flash
-  // in the nav module is the whole signal.
+  // Each mode's own selection: the table's details, the focus card, the
+  // kanban detail modal (set directly, as a card-to-card switch is: no
+  // morph without a card clicked). The lists have none; the nav module's
+  // scroll and flash are their signal.
   if (state.viewMode === 'table') state.tableSelectedGid = gid
   else if (state.viewMode === 'focus') state.focusGid = gid
   else if (state.viewMode === 'kanban') state.kanbanPopoverGid = gid

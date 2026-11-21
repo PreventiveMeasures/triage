@@ -1,20 +1,15 @@
-// One comparison model for Compare and Review (common/bundle-comparison.js
+// The comparison Compare and Review show (common/bundle-comparison.js
 // prepareComparison): two managed bundles', or a package version's against
-// another or none, as the server pairs their files
-// (server-managed/comparison.ts), the viewer pairing none of them; two
-// bundles opened here, which no server holds, as this viewer pairs them, in a
-// chunk loaded only for those (bundle-comparison-local.js). Kept for the last
-// few comparisons, for the session; a failure that may pass is asked again a
-// while after, its view painted again then.
+// another or none, paired by the server (server-managed/comparison.ts); two
+// bundles opened here, which no server holds, paired here, in a chunk loaded
+// only for them. The last few are kept; a failure that may pass is asked
+// again a while after, its view painted again then.
 import { fetchBundleComparison, fetchNpmComparison } from './client-managed.js'
+import { aborted, evict, later, retryWait, retryable, touch } from './server-asks.js'
 import { weakNotify } from './weak-notify.js'
 
 // Comparisons kept, the one read last last; each holds every file each side differs in.
 const KEPT_COMPARISONS = 4
-const RETRY_MS = 5_000
-const RETRY_MAX_MS = 5 * 60_000
-
-const retryable = status => !(status >= 400 && status < 500 && status !== 429)
 
 // Review's side for a package's first version, with no files (npm-review.js EMPTY_REVIEW_BASE).
 const empty = details => details?.integrity === '(empty)'
@@ -27,14 +22,8 @@ const empty = details => details?.integrity === '(empty)'
 // wait for it whole (bundleComparisonDiff), told once it comes; `retryAt`
 // where it failed for a reason that may pass; `failures` in a row before it.
 const comparisons = new Map()
-
-// Past KEPT_COMPARISONS, the least recent no longer coming.
-function evict() {
-  for (const [key, comparison] of comparisons) {
-    if (comparisons.size <= KEPT_COMPARISONS) break
-    if (comparison.state.status !== 'loading') comparisons.delete(key)
-  }
-}
+// Past KEPT_COMPARISONS, the least recent no longer coming are dropped.
+const settled = comparison => comparison.state.status !== 'loading'
 
 // Its view and those waiting for it, told.
 function tell(comparison) {
@@ -60,7 +49,7 @@ function pair(base, other, scope) {
     return fetchNpmComparison(name, version, base.npm?.version ?? '(empty)', { otherName: base.npm?.name ?? name, ...patch ? { patch } : {},
       ...base.npmPatch ? { otherPatch: base.npmPatch.patch } : {} })
   }
-  return import('./bundle-comparison-local.js').then(module => {
+  return import('../../common/bundle-comparison.js').then(module => {
     local = module
     return module.prepareComparison(base, other, scope)
   })
@@ -70,23 +59,23 @@ async function load(key, comparison, base, other, scope) {
   let state
   try { state = { status: 'ready', diff: await pair(base, other, scope) } }
   catch (err) {
-    // A session that changed asks again under the new one, as its view, told, asks.
-    if (err?.name === 'AbortError') {
+    // Asked again under the new session, as its view, told, asks.
+    if (aborted(err)) {
       if (comparisons.get(key) === comparison) comparisons.delete(key)
       tell(comparison)
       return
     }
     state = { status: 'error', message: err?.message ?? String(err) }
     if (retryable(err?.status)) {
-      const wait = Math.min(RETRY_MS * 2 ** comparison.failures, RETRY_MAX_MS)
+      const wait = retryWait(comparison.failures)
       Object.assign(comparison, { retryAt: Date.now() + wait, failures: comparison.failures + 1 })
-      setTimeout(() => { comparison.notify?.() }, wait)?.unref?.()
+      later(wait, () => { comparison.notify?.() })
     }
   }
   if (state.status === 'ready') comparison.failures = 0
   comparison.state = state
   tell(comparison)
-  evict()
+  evict(comparisons, KEPT_COMPARISONS, settled)
 }
 
 // A number for each details read, as comparisons worked out here are kept by.
@@ -102,16 +91,12 @@ const readOf = details => {
 // is due again, or any that failed where asked `again`; the one read last.
 function comparisonOf(base, other, scope, again = false) {
   const key = served(base, other) ? `${base.integrity}\0${other.integrity}\0${scope ?? ''}` : `${readOf(base)}\0${readOf(other)}\0${scope ?? ''}\0here`
-  let comparison = comparisons.get(key)
-  comparisons.delete(key)
-  if (!comparison || (again && comparison.state.status === 'error') || (comparison.retryAt !== undefined && Date.now() >= comparison.retryAt)) {
-    comparison = { state: { status: 'loading' }, notify: comparison?.notify ?? null, waiting: [], failures: comparison?.failures ?? 0 }
-    if (local && !served(base, other)) comparison.state = { status: 'ready', diff: local.prepareComparison(base, other, scope ?? '') }
-    else load(key, comparison, base, other, scope ?? '')
-  }
-  comparisons.set(key, comparison)
-  evict()
-  return comparison
+  return touch(comparisons, key, KEPT_COMPARISONS, settled, was => {
+    const made = { state: { status: 'loading' }, notify: was?.notify ?? null, waiting: [], failures: was?.failures ?? 0 }
+    if (local && !served(base, other)) made.state = { status: 'ready', diff: local.prepareComparison(base, other, scope ?? '') }
+    else load(key, made, base, other, scope ?? '')
+    return made
+  }, was => !was || (again && was.state.status === 'error') || (was.retryAt !== undefined && Date.now() >= was.retryAt))
 }
 
 // The comparison of `base` with `other`, within a reason `scope` (a Stasis

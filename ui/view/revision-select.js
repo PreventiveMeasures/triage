@@ -1,7 +1,7 @@
 // A revision of a repository: a branch, a tag or a commit, its kind switched
 // by the buttons before it, its name typed or picked among the repository's
 // (`refs`: `{ defaultBranch, branches, tags }`). Shared by Create a bundle
-// (ui/managed/repository-browser.js) and the code viewer's header
+// (ui/managed/create-bundle.js) and the code viewer's header
 // (repository-code.js). The host owns `kind` and `name`: each change is a
 // `revision-change` event, `detail.how` saying what made it: `kind` (a kind
 // picked, `name` the default branch for a branch, else ''), `input` (typed),
@@ -347,7 +347,7 @@ export class RevisionSelect extends LitElement {
 
   render() {
     const choices = this.entries()
-    const label = this.kind === 'commit' ? 'Commit SHA' : this.kind === 'tag' ? 'Tag' : 'Branch'
+    const label = REVISION_TYPES.find(type => type.kind === this.kind)?.label ?? 'Branch'
     const listed = this.kind !== 'commit'
     return html`<form class=${this._keyboard ? 'revision keyboard' : 'revision'} @pointerdown=${() => { this._pointer = true; this._keyboard = false }}
       @focusin=${() => { this._keyboard = !this._pointer }}

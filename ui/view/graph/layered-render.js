@@ -54,9 +54,7 @@ export function drawDependencyLayers(ctx, layout, { theme, scale, colorOf, label
   }
   ctx.globalAlpha = 1
   ctx.textBaseline = 'middle'
-  ctx.textAlign = 'right'
   ctx.fillStyle = theme.labelDefault
-  ctx.font = '11px system-ui, sans-serif'
   const layerRing = theme.edgeIntra(0.16)
   for (const row of layout.levels) {
     const cx = -112, cy = row.y + 26, radius = 18
@@ -80,7 +78,6 @@ export function drawDependencyLayers(ctx, layout, { theme, scale, colorOf, label
     ctx.fillText(row.level === null ? 'Unreached' : row.level === 0 ? 'App' : `Level ${row.level}`, -12, row.y + 19)
     ctx.font = '10px system-ui, sans-serif'
     ctx.fillText(row.proportional ? sizeLabel(row.size) : 'No size data', -12, row.y + 35)
-    ctx.font = '11px system-ui, sans-serif'
   }
   ctx.textAlign = 'left'
   for (const rect of layout.rects.values()) {
@@ -121,7 +118,6 @@ export function drawDependencyLayers(ctx, layout, { theme, scale, colorOf, label
     ctx.fillStyle = textColor
     ctx.font = '500 12px system-ui, sans-serif'
     ctx.fillText(labelOf(id), x + 9, y + 21)
-    ctx.fillStyle = textColor
     ctx.font = '10px system-ui, sans-serif'
     ctx.fillText(sizeLabel(id), x + 9, y + 38)
     ctx.restore()

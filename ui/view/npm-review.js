@@ -16,13 +16,14 @@ import './mode-switch.js'
 
 export const REVIEW_DISPLAY_LIMITS = { maxLines: 50_000, maxBytes: 2 * 1024 * 1024 }
 export const EMPTY_REVIEW_BASE = { integrity: '(empty)', kind: 'sourcemap', json: { version: 3, sources: [], sourcesContent: [] }, fileSizes: new Map() }
-// A review's context: its version, as `patch` changes it where given (its
-// hash, `patchHash`), against `base`, or none, that as its patch changes it,
-// where it is so (npm-package.js loadPatchedNpmVersion, `npmPatch`).
+// A review's context: its version, as `patch` changes it where given,
+// against `base` or none, each as its patch changes it where it is so
+// (npm-package.js loadPatchedNpmVersion, `npmPatch`).
 export const reviewContext = (entry, base, patch = null) => ({ ecosystem: 'npm', package: entry.npm.name, version: entry.npm.version, integrity: entry.integrity,
   patchHash: patch?.hash ?? null, basePackage: base?.npm?.name ?? null, baseVersion: base?.npm?.version ?? null,
   baseIntegrity: base?.npm ? base.npmPatch?.integrity ?? base.integrity : null, basePatchHash: base?.npmPatch?.patch.hash ?? null })
-const dependency = (name, spec) => `${name}@${spec ?? 'latest'}`
+// A review base as the route names it, `(empty)` for none.
+const targetOf = (name, spec) => name ? `${name}@${spec ?? 'latest'}` : '(empty)'
 
 export class NpmReview extends LitElement {
   static properties = {
@@ -57,16 +58,16 @@ export class NpmReview extends LitElement {
       ...(this._patch ? { patch: this._patch } : {}), ...(this._context.basePatchHash ? { basePatch: this._context.basePatchHash } : {}), started: true, user: this.session?.id }
   }
   get _writable() { return ['triage', 'manage', 'admin'].includes(this.session?.role) && !this.session?.viewer }
-  // The files reviewed: the version's as its patch changes them, where the
-  // review is of it patched (`_patched`), else its own.
+  // The files reviewed: the version's as its patch changes them, where the review is of it patched.
   get _other() { return this._patched ?? this.details }
-  // Writes and publishes reviews: writable, with a team to publish to, as
-  // the server says (dependency-reviews.ts reviewsIn). Their own published
-  // review revoked, and a draft discarded, writable alone.
+  // Writes and publishes reviews: writable, with a team to publish to (the
+  // server's dependency-reviews.ts reviewsIn); revoking and discarding need writable alone.
   get _reviewer() { return this._writable && this._teams.length > 0 }
-  get _activeReview() { return this._reviews.find(review => review.user === this.session?.id && review.publishedAt === null && sameReviewContext(review, this._context))
+  // The reader's own review of this context.
+  _ownHere(review) { return review.user === this.session?.id && sameReviewContext(review, this._context) }
+  get _activeReview() { return this._reviews.find(review => review.publishedAt === null && this._ownHere(review))
     ?? (this._continuation && this._continuation.review.user === this.session?.id ? this._continuation.review : null) }
-  get _ownPublished() { return this._reviews.filter(review => review.user === this.session?.id && review.publishedAt !== null && sameReviewContext(review, this._context)).toSorted((a, b) => b.publishedAt - a.publishedAt) }
+  get _ownPublished() { return this._reviews.filter(review => review.publishedAt !== null && this._ownHere(review)).toSorted((a, b) => b.publishedAt - a.publishedAt) }
   get _shownReview() { return this._selectedReview ? this._reviews.find(review => review.id === this._selectedReview) : this._activeReview ?? this._ownPublished[0] ?? null }
   get _canEdit() { return this._reviewer && !this._selectedReview && (this._activeReview !== null || this._ownPublished.length === 0) }
   _isDirty(file, editor) { return !this._nonTextFiles.includes(file) && (editor.comment !== (editor.edit?.comment ?? '') || editor.status !== (editor.edit?.status ?? '')) }
@@ -95,17 +96,15 @@ export class NpmReview extends LitElement {
       && this._selectedTeams.size > 0 && !this._unsaved && this._allowedVerdicts.includes(this._finalStatus)
   }
   // The route's location of a review against `target`, of this version as
-  // its patch changes it, where it is patched, but where `patched` is false,
-  // as another version's is; `target` as the patch `basePatch` names (its
-  // hash) changes it, by default the base's now where it is the same.
+  // patched where it is (unless `patched` is false), `target` as `basePatch`
+  // changes it, by default the base's now where it is the same.
   _location(target, patched = true, basePatch = target === this._target ? this._basePatch : null) {
     const parsed = target && target !== '(empty)' ? parseNpmPackageInput(target) : null
     return { ...parsed ? { reviewPackage: parsed.name, reviewSpec: parsed.spec } : {}, ...patched && this._patch ? { patch: this._patch } : {},
       ...parsed && basePatch ? { basePatch } : {} }
   }
   // `subject`'s context, the page's or a review's, as a change to it is
-  // asked: a patched one's with where its patch is read, a review's own,
-  // else the page's.
+  // asked: a patched one's with where its patch is read.
   _asked(subject = this._context) {
     const context = Object.fromEntries(Object.keys(this._context).map(field => [field, subject[field] ?? null]))
     const source = (subject === this._context ? null : subject.patchSource) ?? this._patch
@@ -121,23 +120,25 @@ export class NpmReview extends LitElement {
     if (this._unsaved && !await this._saveAll()) return
     if (key === this._key && navigation === this._navigation && !this._unsaved) await managedHistory?.navigate(route)
   }
-  // Its base as `target` names it, as its patch changes it where named so
-  // (`_basePatch`, by its hash alone, as kept), and, where the review is of
-  // this version as a patch changes it, its files so (npm-package.js
-  // loadPatchedNpmVersion, `_patched`).
+  // What a base load is for: the version, `target`, both patches and the session.
+  _baseKeyOf(target) { return JSON.stringify([this.entry.integrity, target, this._patch, this._basePatch, this.session?.id, this.session?.role]) }
+  // Pending requests and saves given up, for a new base or context.
+  _restart() { this._controller.abort(); this._cancelSaves(); this._controller = new AbortController() }
+  // Its base as `target` names it, as its patch (`_basePatch`, by its hash)
+  // changes it where named so, and this version's files as its patch changes
+  // them where the review is of it patched (`_patched`).
   async _loadBase(target, resume = false) {
-    const key = JSON.stringify([this.entry.integrity, target, this._patch, this._basePatch, this.session?.id, this.session?.role])
+    const key = this._baseKeyOf(target)
     if (this._baseKey === key) return
-    this._baseKey = key; this._base = null; this._baseError = null
-    this._controller.abort(); this._cancelSaves(); this._key = null
-    this._controller = new AbortController()
+    this._baseKey = key; this._base = null; this._baseError = null; this._key = null
+    this._restart()
     try {
       const signal = this._controller.signal
       const other = this._patch ? loadPatchedNpmVersion(this.entry, this._patch, { signal }) : Promise.resolve(this.details)
       other.catch(() => {})
       const latest = resume ? await latestDependencyReview(reviewContext(this.entry, null, this._patch), signal) : null
       if (this._baseKey !== key) return
-      if (latest) [target, this._basePatch] = [latest.basePackage ? dependency(latest.basePackage, latest.baseVersion) : '(empty)', latest.basePatchHash ?? null]
+      if (latest) [target, this._basePatch] = [targetOf(latest.basePackage, latest.baseVersion), latest.basePatchHash ?? null]
       const parsed = target === '(empty)' ? null : parseNpmPackageInput(target)
       const loaded = parsed ? await loadNpmVersion(parsed.name, parsed.spec ?? 'latest') : null
       const base = loaded && this._basePatch ? { ...await loadPatchedNpmVersion(loaded.entry, { hash: this._basePatch }, { signal }), npm: loaded.details.npm }
@@ -151,7 +152,7 @@ export class NpmReview extends LitElement {
         if (latest) selectReviewOnOpen(latest)
         this._target = target
         this.request = { bundle: this.entry.integrity, ...this._location(target) }
-        this._baseKey = JSON.stringify([this.entry.integrity, target, this._patch, this._basePatch, this.session?.id, this.session?.role])
+        this._baseKey = this._baseKeyOf(target)
       }
       this._patched = this._patch ? reviewed : null; this._base = base; this._ensureContext(base, diff)
     } catch (error) { if (this._baseKey === key) this._baseError = error.message }
@@ -159,8 +160,8 @@ export class NpmReview extends LitElement {
   _ensureContext(base, diff) {
     const context = reviewContext(this.entry, base, this._patch), key = JSON.stringify([this.session?.id, this.session?.role, context])
     if (key === this._key) return
-    this._controller.abort(); this._cancelSaves(); this._controller = new AbortController(); this._context = context
-    this._diff = diff
+    this._restart()
+    this._context = context; this._diff = diff
     const files = comparisonFileList(base, this._other, this._diff)
     this._files = orderedComparisonFiles(buildBundleSourceTree(files.map(file => file.path)))
     const nonText = new Set(files.filter(file => !isReviewableFile(file.before, file.after)).map(file => file.path))
@@ -171,11 +172,11 @@ export class NpmReview extends LitElement {
     this._resetEditor(this._path); this._saving = false
     void this._refresh(true)
     if (state.bundleDetailsTab === 'review' && state.selectedBundle === this.entry.integrity) {
-      const location = this._location(base.npm ? dependency(base.npm.name, base.npm.version) : '(empty)', true, base.npmPatch?.patch.hash ?? null)
+      const target = targetOf(base.npm?.name, base.npm?.version)
+      const location = this._location(target, true, base.npmPatch?.patch.hash ?? null)
       state.npmReview = { bundle: this.entry.integrity, ...location }
       // Pin tags to the exact bytes shown without loading the same base again.
-      this._baseKey = JSON.stringify([this.entry.integrity, base.npm ? dependency(base.npm.name, base.npm.version) : '(empty)', this._patch, this._basePatch, this.session?.id,
-        this.session?.role])
+      this._baseKey = this._baseKeyOf(target)
       managedHistory?.replaceRoute(npmPackageRoute(this.entry, 'review', location))
     }
   }
@@ -193,7 +194,7 @@ export class NpmReview extends LitElement {
       if (key === this._key) {
         const preserve = this._unsaved
         this._reviews = reviews; this._teams = teams
-        if (reviews.some(review => review.user === this.session?.id && review.publishedAt === null && sameReviewContext(review, this._context))) this._continuation = null
+        if (reviews.some(review => review.publishedAt === null && this._ownHere(review))) this._continuation = null
         this._rememberBase()
         const selection = takeReviewSelection(this._context)
         const selected = selection && reviews.find(review => review.id === selection.review.id)
@@ -202,17 +203,18 @@ export class NpmReview extends LitElement {
           else this._selectedReview = selected.id
         }
         this._selectedTeams = new Set(teams.filter(team => initializeTeams ? teams.length === 1 : this._selectedTeams.has(team.id)).map(team => team.id))
-        if (!preserve) { this._editors.clear(); this._resetEditor(this._file) }
+        if (!preserve) this._clearEditors(this._file)
       }
     } catch (error) { if (key === this._key && error.name !== 'AbortError') this._error = error.message }
     finally { dismiss(); if (key === this._key) this._loading = false }
   }
   _resetEditor(file = null) { this._publishRevision = null; this._file = file; this._editorState(file) }
+  _clearEditors(file = this._path) { this._editors.clear(); this._resetEditor(file) }
   _editorState(file) {
     let editor = this._canEdit ? this._editors.get(file) : null
     if (!editor) {
-      const edit = this._shownReview?.entries.find(row => row.file === file && row.status) ?? null
-      editor = { edit, revision: this._activeReview?.revision ?? null, comment: this._nonTextFiles.includes(file) ? '' : edit?.comment ?? '', status: this._nonTextFiles.includes(file) ? '' : edit?.status ?? '' }
+      const edit = this._shownReview?.entries.find(row => row.file === file && row.status) ?? null, nonText = this._nonTextFiles.includes(file)
+      editor = { edit, revision: this._activeReview?.revision ?? null, comment: nonText ? '' : edit?.comment ?? '', status: nonText ? '' : edit?.status ?? '' }
       if (this._canEdit) this._editors.set(file, editor)
     }
     return { ...editor, dirty: this._isDirty(file, editor) }
@@ -245,7 +247,7 @@ export class NpmReview extends LitElement {
     const key = this._key
     if (this._unsaved && !await this._saveAll() || key !== this._key) return
     selectReviewOnOpen(review, continueReview)
-    await this._navigate(review.basePackage ? dependency(review.basePackage, review.baseVersion) : '(empty)', review.basePatchHash ?? null)
+    await this._navigate(targetOf(review.basePackage, review.baseVersion), review.basePatchHash ?? null)
   }
   _closePanel() {
     if (this._blocked) return
@@ -274,7 +276,7 @@ export class NpmReview extends LitElement {
       if (signal.aborted || key !== this._key) return
       if (!local) this._reviews = this._reviews.filter(row => row.id !== review.id)
       if (sameReviewContext(review, this._context)) {
-        this._continuation = null; this._selectedReview = null; this._editors.clear(); this._resetEditor(this._path)
+        this._continuation = null; this._selectedReview = null; this._clearEditors()
         this._finalStatus = null; this._finalComment = ''; this._panel = null
         if (this._ownPublished.length === 0 && state.npmReview?.bundle === this.entry.integrity) delete state.npmReview.started
       }
@@ -283,11 +285,11 @@ export class NpmReview extends LitElement {
     finally { if (key === this._key) this._saving = false }
   }
   _continue(reviewId, revision) {
-    const source = this._reviews.find(review => review.id === reviewId && review.revision === revision && review.user === this.session?.id && review.publishedAt !== null && sameReviewContext(review, this._context))
+    const source = this._reviews.find(review => review.id === reviewId && review.revision === revision && review.publishedAt !== null && this._ownHere(review))
     if (!source || this._activeReview || !this._reviewer) return null
     this._continuation = { source, review: { ...source, publishedAt: null, revokedAt: null, status: null, teams: [] } }
     this._selectedTeams = new Set(this._teams.length === 1 ? this._teams.map(team => team.id) : [])
-    this._selectedReview = null; this._panel = null; this._editors.clear(); this._resetEditor(this._path)
+    this._selectedReview = null; this._panel = null; this._clearEditors()
     this._notice = 'A new draft will be saved when you make a change.'
     return this._activeReview
   }
@@ -314,8 +316,10 @@ export class NpmReview extends LitElement {
     if (this._pendingSaves.length === 1) void this._flushSaves()
     return save.promise
   }
+  // A review as the server answered it, in place of the one before.
+  _putReview(review) { this._reviews = [...this._reviews.filter(row => row.id !== review.id), review] }
   _acceptSave(review, change) {
-    this._reviews = [...this._reviews.filter(row => row.id !== review.id), review]
+    this._putReview(review)
     this._continuation = null
     // Rebase only our own edits; a revision changed in another tab still conflicts.
     for (const [file, buffer] of this._editors) {
@@ -369,7 +373,7 @@ export class NpmReview extends LitElement {
       const subject = this._reviews.find(review => review.id === change.reviewId) ?? this._context
       const { review } = await dependencyReviews(this._asked(subject), change, this.session.csrfToken, this._controller.signal)
       if (key !== this._key) return null
-      this._reviews = [...this._reviews.filter(row => row.id !== review.id), review]
+      this._putReview(review)
       if (change.action === 'publish' && change.finalStatus && sameReviewContext(review, this._context)) {
         this._selectedReview = review.id; this._panel = null
         this._editors.clear(); this._notice = 'Published. Verdicts and notes are now frozen.'
@@ -426,7 +430,7 @@ export class NpmReview extends LitElement {
   render() {
     if (!this.entry?.npm || !this.details) return nothing
     const request = this.request?.bundle === this.entry.integrity ? this.request : {}
-    this._target = request.reviewPackage ? dependency(request.reviewPackage, request.reviewSpec) : '(empty)'
+    this._target = targetOf(request.reviewPackage, request.reviewSpec)
     // One patch for as long as it names the same, as the route's is made anew.
     if (JSON.stringify(request.patch ?? null) !== JSON.stringify(this._patch)) this._patch = request.patch ?? null
     this._basePatch = request.basePatch ?? null

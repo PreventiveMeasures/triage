@@ -1,8 +1,5 @@
-// Render-time guard for the `kind`-discriminated components
-// (toolbar-search, entity-search, entity-sort, slide-triage-tabs,
-// sidebar-view-button): look the host's `kind` up in the component's
-// KIND table and, when it's missing, warn with the accepted values so a
-// mistyped or absent attribute surfaces in dev rather than silently
+// The `kind`-discriminated components' render-time lookup: a missing or
+// mistyped `kind` warns with the accepted values rather than silently
 // rendering nothing. Returns the config, or undefined.
 export function kindConfig(tag, table, kind) {
   const config = table[kind]

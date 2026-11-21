@@ -1,6 +1,4 @@
-/* Body layer for <storage-persist-dialog> (storage-persist-dialog.js):
-   the instruction list + the retry-denied status chip, on top of the
-   shared dialog-base chrome. */
+/* <storage-persist-dialog>: the instructions and the retry-denied status. */
 
 .spd-list {
   margin: 0 0 .8rem 1.15rem;
@@ -12,15 +10,12 @@
   & strong { color: var(--text); font-weight: 600; }
 }
 
-/* Footer status when an in-dialog retry was denied again — warning
-   hue matching the sidebar banner / encryption toggle's
-   locked-pending treatment. */
+/* A retry denied again, in the sidebar storage banner's warning hue. */
 .spd-denied {
   color: light-dark(#b25b00, #f0a060);
   font-size: .78rem;
 }
 
-/* Inline code bits (localhost / 127.0.0.1 in the dev note). */
 code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .92em;

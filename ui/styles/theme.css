@@ -1,102 +1,55 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-/* Default = dark. Other themes are opt-in via `body.theme-${name}`,
-   set by view/theme.js from a localStorage flag. The `<theme-toggle>`
-   button initially cycles between dark and light; the first press from dark
-   on or after the eighth press unlocks green, pink, and paper until reload, and the
-   toggle's third turn from green into pink adds w95 after pink. All themes
-   remain available through `DeepView.setTheme(name)` (see view/api.js). We deliberately do NOT honor
-   `prefers-color-scheme`:
-   dark-by-default is part of the product's identity (the report
-   viewer is meant to feel like an IDE panel, not a document). The
-   graph-tab canvas has its own per-theme palette baked into
-   view/graph/canvas.js (a CSS-var round-trip per draw frame would
-   cost too much); pink + light + w95 + paper land on light canvas palettes,
-   dark + green on the dark one.
-
-   Matte-glass aesthetic: the body holds a soft multi-color radial
-   gradient (per-theme stops via --gradient-stop-*); chrome panels use
-   `--surface` (which is now semi-transparent) plus
-   `backdrop-filter: var(--glass-blur)` so the gradient blurs through
-   them. `--surface-active` stays opaque — selected/active states need
-   to read as a deliberate tint, not a frost over the gradient. */
+/* Default = dark; other themes are `body.theme-${name}` (view/theme.js).
+   `prefers-color-scheme` is deliberately ignored: dark-by-default is part of
+   the product (an IDE panel, not a document). The graph canvas keeps its own
+   per-theme palette in view/graph/canvas.js (a CSS-var read per frame costs
+   too much).
+   Matte glass: the body holds a soft radial gradient (--gradient-stop-*);
+   chrome panels use the translucent `--surface` + `backdrop-filter:
+   var(--glass-blur)`. `--surface-active` stays opaque so selected states read
+   as a deliberate tint. */
 :root {
-  /* Neutral grays for the dark structural palette — bg / surface /
-     border / surface-active. The previous values (#0d1117 / #161b22 /
-     #30363d / #1a2233 — GitHub dark) carried a subtle blue cast that
-     added up to a noticeably bluish UI; pure grays read as a more
-     neutral panel surface and let the colored stops in the body
-     gradient do the chromatic work. The gradient itself stays — that's
-     the "glass" hue the design wants. */
+  /* Neutral grays: a blue cast added up to a bluish UI; the body gradient
+     carries the color. */
   --bg: #121212;
   --theme-bar: #1a1a1b;
   --surface: rgb(28 28 28 / .78);
   --border: #2c2c2c; --text: #e6edf3;
   --muted: #8b949e; --accent: #58a6ff; --critical: #d8413a;
   --high: #d57422; --medium: #d29922; --low: #8b949e; --green: #3fb950;
-  /* Node.js brand green, as Simple Icons gives it. The light and pink
-     themes darken it to the earlier logo's green to read on pale pages. */
+  /* Node.js brand green; pale themes use the older logo green. */
   --nodejs-green: #5fa04e;
-  /* Amber accent for the "In progress" triage state — distinct from the
-     green (fixed) / red (deleted) / blue (ignored) / muted (invalid)
-     bucket hues. Retuned per theme like --high / --medium: the dark +
-     green themes use this amber; light + pink darken it to #9a6700 so
-     the badge/label text stays legible on their pale surfaces. */
+  /* "In progress" triage amber, apart from the fixed / deleted / ignored /
+     invalid hues; pale themes darken it for legible text. */
   --warning: #d97706;
-  /* Yellow for the "partial" revalidation stamp — the pass narrowed a
-     finding rather than confirming or knocking it down, which sits
-     between the confirmed red and the refuted muted grey. Its own
-     token rather than `--medium` (the same hue) because that one is
-     painted as a badge FILL and the pale themes tune it for black
-     text on it; this one is TEXT, so it darkens on a pale surface the
-     way --warning above does. Kept clear of --warning's orange so the
-     two stamps don't read as one. So it is --medium's hue wherever that
-     is text, as Compare's changed chips and labels are. */
+  /* Yellow for the "partial" revalidation stamp. Its own token, not
+     `--medium`'s (same hue): that one is a badge FILL tuned for black text,
+     this one is TEXT and darkens on pale surfaces as --warning does. */
   --yellow: #d29922;
-  /* GitHub's purple, which it draws an IMPORTANT alert in (the
-     rendered prose's `> [!IMPORTANT]`, styles/md-quote.css): the one
-     alert colour no other token carries. Darkened on the pale themes,
-     as GitHub's own light palette does. */
+  /* GitHub's purple, for an IMPORTANT alert (md-quote.css). */
   --purple: #a371f7;
-  /* Triage marker palette — single source for the four colors
-     surfaced by the per-finding marker UI. Cross the shadow
-     boundary so both the `<color-marker>` shadow stylesheet and
-     the global `.workspace-conflict-dialog` swatches resolve to
-     the same hue. Mirrored under `body.theme-light` (below) when
-     the light theme needs to retune values. */
+  /* Triage marker palette; custom properties cross the shadow boundary, so
+     `<color-marker>` and the global swatches share it. */
   --marker-red:   oklch(.68 .20 25deg);
   --marker-blue:  oklch(.72 .15 240deg);
   --marker-green: oklch(.74 .15 145deg);
   --marker-gray:  oklch(.55 .01 260deg);
-  /* Bookmarks stay magenta independently of color labels and severity.
-     Pale themes lower its lightness for contrast against the surface. */
+  /* Bookmark magenta, darker on pale themes. */
   --bookmark-color: oklch(.74 .20 325deg);
-  /* Bug-class severities (DeepSec HIGH_BUG / BUG — non-vuln defects).
-     Earthy tones distinguish them from the saturated red/orange/amber
-     vuln palette: terracotta for high_bug (still draws attention),
-     warm taupe for bug (visible but quieter). White text on both. */
+  /* Bug-class severities (DeepSec HIGH_BUG / BUG): earthy tones apart from the
+     vuln palette, white text on both. */
   --high-bug: #a06c3f;
   --bug: #7a6d62;
-  /* Informational severity (codex / claude security). Saturated blue
-     with white text — readable on both dark and light backgrounds, so
-     the badge palette stays consistent across themes (the lighter
-     variant we tried first looked washed out and white-on-bright in
-     dark mode). Distinct from --accent / --low so the chip reads
-     unambiguously as "info". */
+  /* Informational severity: a saturated blue that holds white text in every
+     theme, apart from --accent / --low. */
   --info: #218bff;
   --surface-active: #262626;
   --action-bg: #2864d7;
   --action-text: #fff;
-  /* Prism syntax palette — the colours the token spans wear inside a
-     highlighted snippet: the bundle source viewer, the focus view's
-     Code panel, and the fenced code blocks in finding descriptions.
-     One-dark / dracula vein, tuned for the dark surfaces. It lives
-     here rather than beside the token rules (styles/report.css)
-     because the code blocks render in the finding-card SHADOW root,
-     which a light-DOM rule can't reach — custom properties inherit
-     across the boundary, so both trees read the same palette. The
-     light-background themes retune it: these are pastels, and a
-     pastel on a white page clears 2.5:1 at best. */
+  /* Prism syntax palette (code-tokens.css). Here, not beside the token rules,
+     because code also renders in the finding-card shadow root and custom
+     properties cross it. Pale themes retune these pastels. */
   --code-comment: #6b7c93;
   --code-string: #98c379;
   --code-number: #d19a66;
@@ -106,110 +59,61 @@
   --code-variable: #e06c75;
   --code-deleted: #ef596f;
   --code-inserted: #98c379;
-  /* Matte = no saturate boost (avoids the "glossy" punched-up look) */
+  /* Matte: no saturate boost. */
   --glass-blur: blur(10px);
-  /* Top-left blob — switched from accent blue to a soft violet so it
-     reads as a warmer chromatic counterpart to the top-right red and
-     doesn't tug the neutral-gray bg toward visibly blue. The red and
-     bottom green stops stay where they are. */
+  /* Violet top-left, warmer against the red top-right than accent blue. */
   --gradient-stop-a: rgb(159 122 234 / .07);
   --gradient-stop-b: rgb(248 81 73 / .05);
   --gradient-stop-c: rgb(63 185 80 / .04);
   --shadow-glass: 0 1px 2px rgb(0 0 0 / .18);
-  /* Graph palette — chrome around the canvas (toolbar, info sidebar,
-     tooltip, zoom controls) and the canvas's own fill. Lifting it
-     into vars lets the light theme override in one place. The canvas
-     JS reads --graph-canvas-* via the JS palette in graph2/canvas.js
-     (it can't share CSS vars without a getComputedStyle round-trip
-     per draw); the values mirror the ones below. */
+  /* Graph chrome and canvas fill. The canvas JS mirrors --graph-canvas-*
+     in graph/canvas.js rather than reading it every frame. */
   --graph-canvas-bg: #0c0c0c;
   --graph-hover-bg: rgb(255 255 255 / .04);
   --graph-divider: rgb(60 60 60 / .5);
 
-  /* User-applied marker backgrounds — consumed by `<finding-row>` /
-     `<finding-card>` / `<finding-table>` shadow DOMs. Custom
-     properties inherit through the shadow boundary, so a single
-     `:root` definition theme-tints every consumer; class-based
-     overrides on light DOM (`.finding-row.mark-red { background:
-     ... }`) couldn't reach inside the shadow trees and broke the
-     light-mode pastels after the table-view migration to a Lit
-     element. The `-tab-border` companion lets a tab's outline
-     differ from its fill in light mode (where the border picks up
-     a darker variant); in dark mode they match because the dark
-     pastels already read as outlined when the tab sits on the
-     surface. */
+  /* Marker backgrounds for the `<finding-row>` / `<finding-card>` /
+     `<finding-table>` shadow DOMs (light-DOM class rules can't reach in). The
+     `-tab-border` companion lets pale themes outline a tab darker than its
+     fill. */
   --mark-red-bg: #6b1820;   --mark-red-tab-border: #6b1820;
   --mark-blue-bg: #1a2f5a;  --mark-blue-tab-border: #1a2f5a;
   --mark-green-bg: #1a4a2a; --mark-green-tab-border: #1a4a2a;
   --mark-gray-bg: #2a2f37;  --mark-gray-tab-border: #2a2f37;
-  /* Low-severity badge text — same shadow-DOM-piercing trick. The
-     dark-mode `--low` (#8b949e medium gray) is light enough for
-     black text; the light-mode `--low` (#6e7781 dark slate) needs
-     white. The base finding-row / finding-card rule reads this var
-     so the rule survives across the shadow boundary. */
+  /* Low-severity badge text, crossing the shadow boundary the same way: black
+     on the dark themes' gray `--low`, white on the pale themes' slate. */
   --badge-low-text: #000;
 
-  /* Native form-control tint — checkboxes, radios, range thumbs,
-     progress bars all pick up the accent color from the UA without
-     each component having to opt in. Inherits into both themes via
-     the `--accent` swap below. */
+  /* Native controls (checkboxes, radios, range, progress) take the accent. */
   accent-color: var(--accent);
 
-  /* Tell the UA to render unstyled native chrome (`<select>` popups,
-     date pickers, etc.) in dark mode. Scrollbars are handled
-     explicitly below via `scrollbar-color`; without `color-scheme`
-     other UA widgets would still default to a light treatment.
-     body.theme-light flips it below. */
+  /* Dark native chrome (select popups, date pickers); pale themes flip it. */
   color-scheme: dark;
 
-  /* Global scrollbar tint — every scrollbar on the page inherits
-     these unless a descendant rule overrides them. The thumb pulls
-     from `--border`, which each theme retunes, so the page-level
-     scrollbar picks up the green wash in `theme-green`, the pink
-     wash in `theme-pink`, etc. */
+  /* Global scrollbar tint, inherited, off each theme's `--border`. */
   scrollbar-color: var(--border) transparent;
   scrollbar-width: thin;
 }
 
-body.theme-light,
-body.theme-paper {
+/* What the pale themes (light, paper, pink) share. */
+body:is(.theme-light, .theme-paper, .theme-pink) {
   color-scheme: light;
-  --bg: #fff;
-  --theme-bar: #f6f6fa;
-  --surface: rgb(246 248 250 / .72);
-  --border: #d1d9e0;
-  --text: #1f2328;
-  --muted: #59636e;
-  --accent: #0969da;
   --critical: #cf222e;
   --high: #bc4c00;
-  /* Lighter yellow than GitHub's #9a6700 dark olive — the badge
-     paints `var(--medium)` as fill with `color: #000` (the base
-     finding-row.css rule), so the bg has to be light enough that
-     black text stays legible. The dark olive earlier needed white
-     text, but the light-mode override of medium → white-text was
-     also a regression: white-on-olive is fine, black-on-light-yellow
-     is more conventional and matches the dark-mode treatment. */
+  /* Light enough for the badge's black text. */
   --medium: #f0c040;
-  --low: #6e7781;
-  --green: #1a7f37;
   --nodejs-green: #3c873a;
-  /* Darkened amber (vs :root #d97706) so the In-progress badge/label
-     text clears contrast on the light surface. */
+  /* Darkened for contrast on the pale surfaces. */
   --warning: #9a6700;
-  /* Same darkening for the yellow, and kept greener than the amber
-     above so `partial` and `unknown` still read apart here. */
+  /* And the yellow, kept greener than the amber so `partial` and `unknown`
+     still read apart. */
   --yellow: #7d6a00;
   --search-limit-text: var(--yellow);
   --purple: #8250df;
   --bookmark-color: oklch(.52 .20 325deg);
   --high-bug: #a85a14;
-  --bug: #6b5e52;
   --info: #218bff;
-  --surface-active: #ddf4ff;
-  /* Syntax palette darkened for a white page — the :root pastels
-     wash out on it (see the note there). GitHub's light syntax
-     colours: every one clears 4.5:1 on `--bg`. */
+  /* GitHub's light syntax colors: each clears 4.5:1 on `--bg`. */
   --code-comment: #6e7781;
   --code-string: #0a3069;
   --code-number: #0550ae;
@@ -219,28 +123,35 @@ body.theme-paper {
   --code-variable: #953800;
   --code-deleted: #82071e;
   --code-inserted: #116329;
-  --gradient-stop-a: rgb(124 58 237 / .10);
-  --gradient-stop-b: rgb(207 34 46 / .06);
-  --gradient-stop-c: rgb(26 127 55 / .05);
   --shadow-glass: 0 1px 2px rgb(0 0 0 / .04);
-  --graph-canvas-bg: #f6f8fa;
   --graph-hover-bg: rgb(0 0 0 / .04);
-  --graph-divider: rgb(208 215 222 / .7);
-
-  /* Re-tint user-applied marker backgrounds for light mode. The dark
-     palette was sized for `var(--text)`-as-light to remain readable
-     on the row tint; in light mode the text turns dark and would
-     vanish on those same backgrounds, so we drop in pastel fills
-     that read with black text instead.
-
-     The mark-dot / stat-dot fills (small color swatches, no text
-     inside) keep their dark palette — they're indicators, not text
-     containers, and the dark dots stay visible on a light surface. */
+  /* Pastel marker fills for dark text. The small mark / stat dots keep the
+     dark palette: indicators, not text containers. */
   --mark-red-bg: #ffc1bd;   --mark-red-tab-border: #ff8182;
   --mark-blue-bg: #a5d6ff;  --mark-blue-tab-border: #54aeff;
   --mark-green-bg: #aceebb; --mark-green-tab-border: #4ac26b;
   --mark-gray-bg: #d0d7de;  --mark-gray-tab-border: #8c959f;
   --badge-low-text: #fff;
+}
+
+body.theme-light,
+body.theme-paper {
+  --bg: #fff;
+  --theme-bar: #f6f6fa;
+  --surface: rgb(246 248 250 / .72);
+  --border: #d1d9e0;
+  --text: #1f2328;
+  --muted: #59636e;
+  --accent: #0969da;
+  --low: #6e7781;
+  --green: #1a7f37;
+  --bug: #6b5e52;
+  --surface-active: #ddf4ff;
+  --gradient-stop-a: rgb(124 58 237 / .10);
+  --gradient-stop-b: rgb(207 34 46 / .06);
+  --gradient-stop-c: rgb(26 127 55 / .05);
+  --graph-canvas-bg: #f6f8fa;
+  --graph-divider: rgb(208 215 222 / .7);
 }
 
 /* Paper shares the light palette, with white surfaces and black chrome. */
@@ -275,8 +186,8 @@ body.theme-paper {
   --mark-green-bg: #fff; --mark-green-tab-border: #000;
   --mark-gray-bg: #fff; --mark-gray-tab-border: #000;
   --shadow-glass: none;
-  /* Inherits into shadow roots; each control and panel keeps its own
-     fallback corner shape in the other themes. */
+  /* Inherits into shadow roots; each control keeps its own fallback corner
+     elsewhere. */
   --ui-radius: 0;
   /* Show native checkbox controls across shadow roots in Paper. */
   --switch-button-display: none;
@@ -309,10 +220,7 @@ body.theme-paper {
   & .bundle-issues { padding: 0; }
 
   & .bundle-issues-finding-link,
-  & .bundle-issues-file-header {
-    padding-left: 0;
-    padding-right: 0;
-  }
+  & .bundle-issues-file-header { padding-inline: 0; }
 
   & .bundle-code-rail-head,
   & .bundle-code-rail-body { padding-left: 0; }
@@ -369,12 +277,9 @@ body.theme-paper {
   /* A repository's Activity views run flush with the slide's header,
      as its Code tab does: their bar, scroll areas and the overlays
      and player along Replay's edges drop their side insets. */
-  & :is(.history-bar, .issues-scroll, .pulse-scroll, .replay-controls) {
-    padding-left: 0;
-    padding-right: 0;
-  }
+  & :is(.history-bar, .issues-scroll, .pulse-scroll, .replay-controls) { padding-inline: 0; }
   & .history-commit { padding-right: 0; }
-  & .history-note { margin-left: 0; margin-right: 0; }
+  & .history-note { margin-inline: 0; }
   & :is(.replay-day, .replay-commit) { left: 0; }
   & :is(.replay-key, .replay-commit) { right: 0; }
 
@@ -395,17 +300,8 @@ body.theme-paper {
   }
 }
 
-/* Green — easter-egg theme reachable only via
-   `DeepView.setTheme('green')`. Same dark-mode structural pattern
-   as the default (color-scheme: dark, dark-text-friendly mark-bgs
-   inherited from :root), but the text + accent + body gradient all
-   retune to the classic terminal-green palette so the whole page
-   reads as a Matrix-style shell — chrome panels, links, badges and
-   the body blob halos all pick up the green via the shared vars.
-   The font-family + text-shadow swap below leans further into the
-   shell aesthetic: every label / paragraph / heading shifts to a
-   mono stack and picks up a subtle phosphor glow. Code blocks
-   (which already declare their own mono family) are unaffected. */
+/* Green (`DeepView.setTheme('green')`): the dark structure with a
+   terminal-green palette, a mono font and a faint phosphor glow. */
 body.theme-green {
   color-scheme: dark;
   --bg: #050a05;
@@ -436,28 +332,16 @@ body.theme-green {
   --graph-canvas-bg: #020802;
   --graph-hover-bg: rgb(0 255 65 / .06);
   --graph-divider: rgb(65 255 65 / .25);
-  /* Mono stack. ui-monospace picks the platform's preferred mono
-     (SF Mono on macOS, Cascadia on Windows, Ubuntu Mono on Linux);
-     the fallbacks cover older browsers. Overrides the body rule
-     below via specificity (`body.theme-green` > `body`). */
+  /* Beats the bare `body` font rule by specificity. */
   font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', 'Source Code Pro', Menlo, Consolas, monospace;
-  /* Phosphor glow — kept low-opacity / small-radius so the text
-     stays sharp at small sizes; at higher values it smears the
-     glyph edges and hurts readability. Inherits everywhere, so
-     headings + body text + chrome labels all pick it up. */
+  /* Low radius and opacity, or it smears glyph edges at small sizes. */
   text-shadow: 0 0 6px rgb(0 255 65 / .25);
 
   & .drop-prompt-intro { font-size: .9rem; }
 }
 
-/* Pink — easter-egg theme reachable only via
-   `DeepView.setTheme('pink')`. Mirrors the light-theme structural
-   pattern (color-scheme: light, pastel mark-bgs sized for dark text)
-   but warmed all the way through: every neutral picks up a magenta
-   tilt and the body gradient stops shift to hot-pink / fuchsia /
-   blush so the glass panels frost a pink wash. */
+/* Pink: the light structure, every neutral tilted magenta. */
 body.theme-pink {
-  color-scheme: light;
   --bg: #ffebf4;
   --theme-bar: #ffe4ee;
   --surface: rgb(255 224 240 / .72);
@@ -465,77 +349,28 @@ body.theme-pink {
   --text: #5c0040;
   --muted: #a13a72;
   --accent: #ff1a85;
-  --critical: #cf222e;
-  --high: #bc4c00;
-  --medium: #f0c040;
   --low: #a13a72;
   --green: #1d8c3c;
-  --nodejs-green: #3c873a;
-  /* Darkened amber (vs :root #d97706) so the In-progress badge/label
-     text clears contrast on the pale pink surface. */
-  --warning: #9a6700;
-  /* And the yellow, darkened for the same reason. */
-  --yellow: #7d6a00;
-  --search-limit-text: var(--yellow);
-  --purple: #8250df;
-  --bookmark-color: oklch(.52 .20 325deg);
-  --high-bug: #a85a14;
   --bug: #8c5e6c;
-  --info: #218bff;
   --surface-active: #ffd1e8;
   --action-bg: #bd0d66;
   --action-text: #fff;
-  /* Same reason as `body.theme-light`: the :root syntax pastels are
-     unreadable on a pale page, so the darkened set is used here too. */
-  --code-comment: #6e7781;
-  --code-string: #0a3069;
-  --code-number: #0550ae;
-  --code-keyword: #cf222e;
-  --code-function: #8250df;
-  --code-operator: #0550ae;
-  --code-variable: #953800;
-  --code-deleted: #82071e;
-  --code-inserted: #116329;
   --gradient-stop-a: rgb(255 105 180 / .14);
   --gradient-stop-b: rgb(255 20 147 / .08);
   --gradient-stop-c: rgb(255 192 203 / .06);
-  --shadow-glass: 0 1px 2px rgb(0 0 0 / .04);
   --graph-canvas-bg: #fff0f7;
-  --graph-hover-bg: rgb(0 0 0 / .04);
   --graph-divider: rgb(208 132 178 / .5);
-  /* Same retint reason as `body.theme-light`: text turned dark so
-     the dark mark-bg palette from :root would swallow it; pastels
-     keep the row tint readable. */
-  --mark-red-bg: #ffc1bd;   --mark-red-tab-border: #ff8182;
-  --mark-blue-bg: #a5d6ff;  --mark-blue-tab-border: #54aeff;
-  --mark-green-bg: #aceebb; --mark-green-tab-border: #4ac26b;
-  --mark-gray-bg: #d0d7de;  --mark-gray-tab-border: #8c959f;
-  --badge-low-text: #fff;
-  /* Pink leans into the playful palette with Comic Sans — same
-     specificity trick as `body.theme-green`'s mono override (a
-     `body.theme-*` selector beats the bare `body` font-family rule
-     further down). Inherits across the shadow boundary into every
-     custom element that doesn't set its own font-family; the
-     sidebar's per-row mono overrides need their own opt-out
-     because they re-declare font-family on a specific descendant —
-     see view/sidebar.css's `:host-context(body.theme-pink)` block.
-     Code blocks, badges, monospace IDs etc. all set their own
-     family so they're unaffected. */
+  /* Comic Sans, by the same specificity as green's mono. The sidebar's mono
+     rows opt out in view/sidebar.css (`:host-context(body.theme-pink)`). */
   font-family: 'Comic Sans MS', 'Chalkboard SE', 'Comic Neue', cursive;
 }
-
-/* W95 — easter-egg theme, Windows 95 on its teal desktop: its palette
-   and its window live together in styles/w95.css. */
 
 body {
   /* Resolve against the body's active theme before inheriting into cards. */
   --surface-raised: color-mix(in srgb, var(--bg) 94%, var(--text));
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-  /* Layered radial gradients sit on top of --bg so the panels' glass
-     blur has something to refract. background-attachment: fixed pins
-     the gradient to the viewport — as #main-content scrolls, the same
-     gradient blurs through every card, which is what sells the
-     glass-floating-over-page effect. */
+  /* Radial gradients over --bg for the glass blur to refract, fixed to the
+     viewport so the same gradient blurs through every card as content scrolls. */
   background:
     radial-gradient(ellipse 90% 60% at 0% 0%, var(--gradient-stop-a), transparent 60%),
     radial-gradient(ellipse 70% 50% at 100% 0%, var(--gradient-stop-b), transparent 60%),
@@ -544,22 +379,15 @@ body {
   background-attachment: fixed;
   color: var(--text); line-height: 1.5;
   display: flex; height: 100vh; height: 100dvh; margin: 0; overflow: hidden;
-  /* Suppress the mobile/touch tap flash — there's no native analogue,
-     and the gray rectangle reads as a web artifact on a desktop app. */
+  /* No tap flash: it reads as a web artifact in a desktop app. */
   -webkit-tap-highlight-color: transparent;
-  /* Better kerning + ligature matching, especially at the small
-     metadata sizes (.65–.72rem) that crowd a finding row. */
   text-rendering: optimizelegibility;
-  /* Suppress the browser's elastic overscroll bounce at the viewport
-     edges — the bounce reads as "web page", not "native app". */
+  /* No elastic overscroll bounce at the viewport edges. */
   overscroll-behavior: none;
 }
 
-/* Antialiased text rendering on HiDPI screens only — the default
-   subpixel-AA looks crisp on 1x displays but blurry on Retina /
-   2x+ panels (where each logical px is already 4+ device px).
-   Antialiased matches what native macOS / iOS apps draw. On 1x
-   displays the subpixel-AA stays — it's the right call there. */
+/* Antialiased text on HiDPI only, as native macOS apps draw; subpixel AA
+   stays on 1x displays. */
 @media (resolution >= 2dppx) {
   body {
     -webkit-font-smoothing: antialiased;
@@ -567,18 +395,12 @@ body {
   }
 }
 
-/* Selection picks up the accent color at low alpha so highlighted
-   text reads as part of the theme instead of the OS-default blue
-   strip. Translucent fill lets the underlying text color carry. */
 ::selection {
   background: rgb(from var(--accent) r g b / .35);
 }
 
-/* Press feedback on chrome buttons / tabs — native controls dim
-   while the mouse is held down. Without this, click feels delayed
-   (no signal until release / hover-color swap). Keep it subtle so
-   the active-state styles (e.g. .tab.active background) still read
-   as the dominant signal. */
+/* Press feedback on chrome buttons and tabs, as native controls dim while
+   held; subtle so active states still dominate. */
 button:not(:disabled):active,
 [role='button']:not([aria-disabled='true']):active,
 [role='tab']:active,
@@ -586,17 +408,11 @@ button:not(:disabled):active,
   opacity: .7;
 }
 
-/* Native UI shows the arrow cursor (not the I-beam) over chrome and
-   labels, and doesn't let you select them by dragging. Light-DOM
-   scope only — shadow-DOM components (terminal, finding-row,
-   finding-card, theme-toggle) set their own user-select where they
-   need it. The suffix wildcards catch the project's convention for
-   chrome class names (-title / -meta / -label / -header / -section /
-   -chip(s) / -count / -bar / -tag(s) / -hint / -stat(s) / -name) so
-   new chrome inherits the treatment without having to touch this
-   rule. They are a heuristic over THIS project's naming, so anything
-   whose class names come from elsewhere has to be exempted below —
-   see `.token`. */
+/* Native UI shows the arrow cursor over chrome and labels and doesn't
+   drag-select them. Light DOM only; shadow components set their own. The
+   suffix wildcards follow this project's chrome class naming so new chrome
+   inherits it — a heuristic, so foreign class names need the exemption
+   below (`.token`). */
 button,
 summary,
 select,
@@ -674,29 +490,12 @@ h6,
   -webkit-user-select: none;
 }
 
-/* Reassert selectability + text cursor on the actual text-entry
-   elements and the content blocks users routinely copy (file paths
-   in `.mono`, pre/code snippets). UA stylesheets handle inputs in
-   Chrome/Safari, but the explicit rule guarantees the inherited
-   `none` from a wrapping `.toolbar` or `.packages-detail-meta`
-   doesn't reach the field across UAs — and re-enables text cursor
-   on the copyable blobs inside chrome-cursored containers.
-
-   `.token` is here because the chrome wildcards above read class
-   names the project does not write. Prism stamps `<span class="token
-   class-name">` around the `SyntaxError` in `throw new
-   SyntaxError(err)`, and `[class$='-name']` matches that attribute
-   as squarely as it matches `bundles-name` — so the identifier went
-   unselectable, and dragging across the line copied `throw new
-   (err)`. Nine of the bundled grammars' token kinds collide this way
-   (class-name, attr-name, macro-name, function-name, argument-name,
-   attribute-class-name, doctype-tag, table-header, type-hint), and a
-   new grammar can always add another, so the exemption is `.token`
-   itself rather than a patch per suffix. Reasserting on the token is
-   what it takes: the `pre` / `code` entries above only cover the
-   container, and a wildcard matching the span DIRECTLY beats an
-   inherited value. Equal specificity to the wildcards, so it is
-   source order that wins it — keep this rule below them. */
+/* Text entry and copyable content (paths in `.mono`, pre / code) get
+   selection and the text cursor back, even inside chrome containers.
+   `.token`: Prism writes class names the wildcards above match
+   (`token class-name`, `attr-name`, …; tests/code-token-select.test.js), and
+   a wildcard on the span beats `pre` / `code`'s inherited value. Same
+   specificity as the wildcards, so keep this rule below them. */
 input:not([type='checkbox'], [type='radio'], [type='button'], [type='submit'], [type='reset'],
   [type='color'], [type='range'], [type='file'], [type='image']),
 textarea,
@@ -744,73 +543,40 @@ a { color: var(--accent); text-decoration: none; cursor: default; }
 }
 #app-toast.warning { border-color: var(--warning); }
 
-/* Main column scrolls independently of the sidebar — body is height-
-   constrained + overflow hidden, so the report's tall finding lists
-   only push this column, not the sidebar's file list. */
+/* The main column scrolls on its own; body is height-bound with overflow
+   hidden. */
 #main-content {
   flex: 1; min-width: 0; display: flex; flex-direction: column;
   overflow-y: auto; overscroll-behavior: none; scrollbar-gutter: stable;
 }
 
-/* Hide every not-yet-upgraded custom element. Without this, hosts of
-   Lit components (e.g. `<theme-toggle>`) paint as unstyled inline
-   boxes for a frame between DOM parse and the `defer`red module
-   defining them. `:not(:defined)` only matches custom elements —
-   built-ins are always defined — so this is safe to apply globally. */
+/* Hide custom elements until upgraded, or Lit hosts paint unstyled for a
+   frame. `:not(:defined)` only matches custom elements. */
 :not(:defined) { display: none; }
 
-/* The corner holds the theme toggle alone. Print and download used to
-   stack under it as fixed chrome; both now start from one button in
-   the findings toolbar, where the controls that decide what is
-   exported already live (toolbar.css, view/download-button.js). */
-
-/* Standalone PWA mode (OS title bar above the page, header NOT
-   collapsed into the viewport): mirror the sidebar→main vertical
-   divider with a 1px horizontal divider on top of #main-content
-   so the report doesn't run flush against the OS chrome. The
-   sidebar already has `border-right: 1px solid var(--border)`
-   for the panel split — same colour here keeps the chrome's
-   inner corner reading as a single L-bracket.
-   `(display-mode: standalone)` also matches inside WCO via the
-   display-mode fallback chain; the WCO block below resets it. */
+/* Standalone PWA (OS title bar above the page): a top divider matching the
+   sidebar's right border. Standalone also matches inside WCO; reset below. */
 @media (display-mode: standalone) {
   #main-content { border-top: 1px solid var(--border); }
 }
 
-/* Window-controls-overlay PWA mode — when DeepView is installed and
-   the host OS supports WCO (Chromium desktop), the OS title bar
-   collapses into the viewport and the close / min / max buttons
-   paint on top of the page at the corner the platform prefers
-   (right on Windows / Linux, left on macOS). The sidebar stays
-   flushed to the top and `.sidebar-header` (sidebar.css) becomes
-   the surface the OS controls visually land on — its `--surface`
-   matte-glass already matches the rest of the sidebar so the
-   strip reads as one panel from top to bottom with no visible
-   seam. Here we hand the page background to the OS as a drag
-   handle (so even the empty space between findings can move the
-   window) and move the theme toggle down under the OS controls
-   strip so the native close button can take the corner. */
+/* Window controls overlay (installed PWA, Chromium desktop): the OS controls
+   paint over the page. The page background becomes a drag handle and the
+   theme toggle moves under the controls. */
 /* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
 @media (display-mode: window-controls-overlay) {
-  /* OS-controls cluster width on the side the platform paints them
-     (right on Win/Linux, left on Mac). Shared by:
-       - body::after blob's outer extent (with its own fade pad
-         added on top)
-       - any top-aligned bar that would otherwise run under the OS
-         controls (.bundles-slide-bar etc.) — used as a straight
-         inset, no fade pad needed. */
+  /* The OS controls' width on the right (Windows / Linux): the halo's extent
+     and the inset for top bars (.bundles-slide-bar etc.). */
   :root {
     --wco-right-toolbar: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
     --wco-titlebar-height: max(env(titlebar-area-height, 33px), 33px);
   }
 
-  /* Keep the page-wide drag rectangle on a childless background,
-     not body: Chromium's window-drag implementation makes app-region
-     inherit. On body, later containers and the halo inherit drag and
-     add rectangles over earlier no-drag controls, regardless of z-index.
-     ::before is collected before the content's no-drag exclusions and
-     cannot pass drag to them. Ignore DOM hit testing so it also leaves
-     ordinary clicks, selection and scrolling to the content beneath. */
+  /* The drag rectangle sits on a childless ::before, not body: Chromium makes
+     app-region inherit, so body's drag would spread to later containers and
+     cover earlier no-drag controls regardless of z-index. ::before is
+     collected before the content's no-drag exclusions, and ignores hit
+     testing. */
   body::before {
     content: '';
     position: fixed;
@@ -820,15 +586,9 @@ a { color: var(--accent); text-decoration: none; cursor: default; }
     app-region: drag;
   }
 
-  /* Content surfaces — opt out so wheel / clicks / selection
-     work inside them.
-
-     The findings views name their surfaces rather than the wrapper
-     around them: the wrapper spans the whole report so the toolbar can
-     run full width (report.css), while the list keeps a readability
-     cap, and opting the wrapper out took the strip beside a capped
-     list — empty page, and a drag handle before that cap moved — out
-     of the body-wide drag baseline with it. */
+  /* Content surfaces opt out so wheel, clicks and selection work. The findings
+     views name their surfaces, not the full-width wrapper, so the strip beside
+     a capped list stays draggable. */
   .toolbar,
   #findings-body-slot,
   #findings-graph-slot,
@@ -842,10 +602,7 @@ a { color: var(--accent); text-decoration: none; cursor: default; }
     app-region: no-drag;
   }
 
-  /* Interactive elements + their containers — also opt out so
-     clicks land on the element instead of starting a window drag.
-     Mostly relevant inside the page-head / .bundles-slide-bar
-     chrome bars that overlap the background drag rectangle. */
+  /* Interactive elements opt out so clicks don't start a window drag. */
   button,
   canvas,
   code,
@@ -871,46 +628,25 @@ a { color: var(--accent); text-decoration: none; cursor: default; }
     app-region: no-drag;
   }
 
-  /* Anchor the toggle just under the OS controls strip. It is the
-     only fixed corner control left — print and download moved into
-     the toolbar — so there is no row of offsets to cascade any more.
-
-     The 33px is a FLOOR, not just a fallback: the env() is defined in
-     this mode, so a host that reports a zero-height titlebar area (the
-     same case `.sidebar-header`'s `min-height` guards with a 0
-     fallback) would put the toggle inside the strip the OS paints its
-     controls on, where the window drag swallows every click on it. */
+  /* Under the OS controls strip. 33px is a floor, not just a fallback: a host
+     reporting a zero-height titlebar would put the toggle under the controls,
+     where the window drag swallows its clicks. */
   theme-toggle {
     top: calc(max(env(titlebar-area-height, 33px), 33px) + .35rem);
     right: .5rem;
   }
 
-  /* In WCO mode there's no OS-painted title-bar strip above the
-     viewport — the buttons land on top of the page itself — so the
-     standalone-mode top divider on #main-content would just paint a
-     stray line across the top of the report. The position:relative
-     + z-index promotes #main-content into its own stacking context
-     ABOVE body::after (which paints the seam-cover blob), so the
-     report's chips / header / toolbars stay fully opaque on top of
-     the blob — main-content has no background so the blob still
-     shows through wherever the report itself is transparent. */
+  /* No title bar above the viewport, so no top divider. Its own stacking
+     context lifts the report above the body::after halo. */
   #main-content {
     border-top: 0;
     position: relative;
     z-index: 1;
   }
 
-  /* Soft halo behind the Chromium-painted titlebar area. Pattern
-     lifted from the user-supplied Header_Chip demo: bleed on every
-     side of the OS-paint area, with bleed derived from the area's
-     dims (1.8x horizontal, 2.2x vertical) so the fade scales with
-     the panel. Top/right bleeds extend offscreen because the panel
-     sits at the viewport corner — harmless, the visible fade is
-     the left + bottom edges where the seam meets our page bg. The
-     radial gradient's 100% line lands exactly on the halo's edges
-     (panel-half + bleed on each axis); stops + blur match the demo
-     verbatim, only the color swaps to var(--theme-bar) (with
-     relative-color alphas for the mid stops). */
+  /* Soft halo behind the Chromium-painted titlebar area: it bleeds 1.8× / 2.2×
+     the area's size so the fade scales, and its gradient's 100% lands on the
+     halo's edges. */
   body::after {
     content: '';
     position: fixed;
@@ -939,11 +675,8 @@ a { color: var(--accent); text-decoration: none; cursor: default; }
 }
 /* stylelint-enable media-feature-name-value-no-unknown, length-zero-no-unit */
 
-/* Honor OS-level "reduce motion" — macOS, Windows, iOS, and Android
-   all surface this as an accessibility toggle, and native apps
-   respect it. Collapsing animations / transitions to a near-zero
-   duration (rather than 0) keeps JS that listens for `transitionend`
-   firing as expected. */
+/* Reduced motion: near-zero rather than 0 durations, so `transitionend`
+   listeners still fire. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: .01ms !important;

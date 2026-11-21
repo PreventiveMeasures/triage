@@ -4,20 +4,13 @@
 <base href="/">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<!-- `worker-src 'self'` is what lets the brotli fallback decoder run
-     off the main thread (view/brotli-decompress.js); `child-src` repeats
-     it for browsers that predate `worker-src` and resolve a worker
-     through `child-src` instead, and `frame-src 'none'` keeps that
-     repeat from admitting frames, which `default-src 'none'` blocked.
-     `require-trusted-types-for 'script'` has every sink that parses
-     HTML or loads a script refuse a plain string, and `trusted-types`
-     names the only policies that may bless one: Lit's `lit-html` for
-     its templates, and `deepview` (view/trusted-types.js) for the
-     markup and the worker URL the app sets outside Lit.
-     `style-src 'self'` takes no inline style: no `style` attribute in
-     markup and no style element. Styles come from the stylesheets,
-     Lit's adopted sheets, and the CSSOM (`styleMap`, `element.style`),
-     so markup that gets in can't restyle the page. -->
+<!-- `worker-src` runs the brotli fallback off the main thread; `child-src`
+     repeats it for browsers predating `worker-src`, and `frame-src 'none'`
+     keeps that repeat from admitting frames. Trusted types: only Lit's
+     `lit-html` and `deepview` (view/trusted-types.js) may bless HTML or a
+     script URL. `style-src 'self'` allows no inline style, only
+     stylesheets, adopted sheets and the CSSOM, so injected markup can't
+     restyle the page. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; require-trusted-types-for 'script'; trusted-types lit-html deepview; worker-src 'self'; child-src 'self'; frame-src 'none'; style-src 'self'; img-src 'self'; manifest-src 'self'; form-action 'none'; connect-src 'self'">
 <title>DeepView</title>
 <link rel="icon" href="./icon.svg" type="image/svg+xml" />
@@ -37,12 +30,8 @@
 
 <theme-toggle></theme-toggle>
 
-<!-- App sidebar — Lit component, owns its own shadow-DOM chrome
-     (brand header, search input, file list, sync button). The
-     brand wordmark inside is the click target that routes to
-     `goHome` via the sidebar's own click delegate; in WCO PWA
-     mode the same brand is what the OS controls strip overlays
-     onto (no light-DOM duplicate needed). -->
+<!-- Its own shadow DOM holds the brand, search, list and sync button;
+     window-controls-overlay mode overlays the OS controls on its brand. -->
 <app-sidebar role="complementary" aria-label="Reports and workspaces" inert></app-sidebar>
 
 <main id="main-content">
@@ -71,11 +60,8 @@
         </button>
         <p class="drop-import-hint">Or reopen a report from the sidebar.</p>
       </div>
-      <!-- Supported-formats list — each row's icon placeholder is
-           filled at boot by view/drop-supported-icons.js with the
-           same SVG markup the sidebar uses for its file / bundle /
-           workspace rows (see view/file-display.js + view/icons.js
-           for the source of truth). `data-icon` keys the lookup. -->
+      <!-- view/drop-supported-icons.js fills each `data-icon` with the
+           sidebar's own icon for it. -->
       <div class="drop-supported" aria-label="Supported formats">
         <section class="drop-supported-section">
           <h2>Reports</h2>
@@ -101,20 +87,15 @@
             <li><span class="drop-supported-icon" data-icon="workspace" aria-hidden="true"></span><span class="drop-supported-label">Workspace exports</span></li>
           </ul>
         </section>
-        <!-- Not a report: a links file says which findings in the
-             reports above are the same finding reported twice. Listed
-             here because it is something you drop, and the drop zone
-             is where the app says what it accepts. -->
+        <!-- Not a report: which findings of the reports are the same one. -->
         <section class="drop-supported-section">
           <h2>Links</h2>
           <ul>
             <li><span class="drop-supported-icon" data-icon="links" aria-hidden="true"></span><span class="drop-supported-label">Linked findings</span></li>
           </ul>
         </section>
-        <!-- Not saved: a lockfile dropped opens alone, its packages
-             graphed, and is gone once its view is (view/lockfile-drop.js).
-             One row per ecosystem, with the icon the Code tab's tree gives
-             its packages or files (view/lockfile-view.js reads them). -->
+        <!-- Not saved: a dropped lockfile opens alone (view/lockfile-drop.js).
+             One row per ecosystem, with its Code tab icon. -->
         <section class="drop-supported-section">
           <h2>Lockfiles</h2>
           <ul>
@@ -143,11 +124,8 @@
   <div id="report"></div>
 </main>
 
-<!-- Bundle source viewer overlay — rendered globally (sibling of
-     #main-content) so the [Code →] shortcut on a finding can pop
-     the same modal regardless of which view the user is on,
-     without having to switch them to the bundles view first.
-     Kept empty until render() puts the modal HTML in. -->
+<!-- The bundle source modal, outside #main-content so a finding's [Code →]
+     opens it from any view; empty until render() fills it. -->
 <div id="bundle-source-overlay-slot"></div>
 
 </body>

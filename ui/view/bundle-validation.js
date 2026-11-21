@@ -6,75 +6,42 @@ import { html, nothing, svg } from 'lit'
 import { state } from '#client/index.js'
 import { fetchBundleValidation, runBundleValidation } from './client-managed.js'
 import { icon } from './repository-tiles.js'
+import { KEEP_MS, aborted, heldAnswers } from './server-asks.js'
 
-const KEEP_MS = 2 * 60_000
-const RETRY_MS = 30_000
-
-const held = new Map()
-const opened = new Set()
-let keptFor = null
-let changed = () => {}
-
-function sessionHeld() {
-  const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
-  if (session !== keptFor) {
-    held.clear()
-    opened.clear()
-    keptFor = session
-  }
-  return held
-}
+// By bundle, where it is, and session; the bundles whose details are open.
+const validations = heldAnswers(state)
 
 // A bundle as what is held of it is named: by where it is too, as its own
 // code is checked there.
 const keyOf = bundle => `${bundle.managedId}\0${bundle.repoId ?? ''}\0${bundle.repoDirectory ?? ''}`
-// `next` held for `key` in place of `was`, none for null, unless something
-// else has been since; told where it is.
-function settle(data, key, was, next) {
-  if (data.get(key) !== was) return false
-  if (next) data.set(key, next)
-  else data.delete(key)
-  changed()
-  return true
-}
 const STATUSES = new Set(['valid', 'invalid', 'incomplete'])
 
 // A server's validation as it is shown, none where it isn't one.
-export const checkedValidation = told => STATUSES.has(told?.status) ? told : null
+const checkedValidation = told => STATUSES.has(told?.status) ? told : null
 
-// Bundle `bundle`'s validation as held, else asked: 'loading', then 'ready'
-// with its `validation` (null for none yet), or 'error'; `running` while one
-// is made, `runError` where that failed.
-export function bundleValidation(bundle) {
-  const data = sessionHeld()
-  const key = keyOf(bundle)
-  const entry = data.get(key)
-  if (entry && (entry.running || Date.now() < entry.until)) return entry
-  const loading = entry?.status === 'ready' ? { ...entry, until: Number.POSITIVE_INFINITY } : { status: 'loading', until: Number.POSITIVE_INFINITY }
-  data.set(key, loading)
-  fetchBundleValidation(bundle.managedId).then(told => ({ status: 'ready', until: Date.now() + KEEP_MS, validation: checkedValidation(told?.validation) }))
-    .catch(err => err?.name === 'AbortError' ? null : { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'It couldn’t be read.' })
-    .then(next => settle(data, key, loading, next))
-  return loading
-}
+// Bundle `bundle`'s validation as held (heldAnswers), its `validation` null
+// for none yet; held as it is while one is made (`running`), `runError`
+// where that failed.
+const bundleValidation = bundle => validations.ask(keyOf(bundle), () => fetchBundleValidation(bundle.managedId),
+  told => ({ validation: checkedValidation(told?.validation) }), { fresh: entry => entry.running || Date.now() < entry.until })
 
 // Bundle `bundle` validated anew, held as it is made and once it is.
-export async function validate(bundle) {
-  const data = sessionHeld()
+async function validate(bundle) {
+  const held = validations.current()
   const key = keyOf(bundle)
-  const before = data.get(key)
+  const before = held.get(key)
   if (before?.running || !state.managedSession?.csrfToken) return
   const running = { ...before?.status === 'ready' ? before : { status: 'ready', validation: null }, until: Number.POSITIVE_INFINITY, running: true }
-  data.set(key, running)
-  changed()
+  held.set(key, running)
+  validations.changed()
   let next
   try {
     const told = await runBundleValidation(bundle.managedId, state.managedSession.csrfToken)
     next = { status: 'ready', until: Date.now() + KEEP_MS, validation: checkedValidation(told?.validation) }
   } catch (err) {
-    next = err?.name === 'AbortError' ? null : { ...running, running: false, until: Date.now() + KEEP_MS, runError: err?.message || 'It couldn’t be validated.' }
+    next = aborted(err) ? null : { ...running, running: false, until: Date.now() + KEEP_MS, runError: err?.message || 'It couldn’t be validated.' }
   }
-  settle(data, key, running, next)
+  validations.settle(key, running, next)
 }
 
 const plural = (value, noun) => `${value.toLocaleString('en-US')} ${noun}${value === 1 ? '' : 's'}`
@@ -131,14 +98,13 @@ function details(validation) {
 // first read. `onChange` is called as what it tells changes (render.js render).
 export function bundleValidationFact(entry, onChange) {
   if (!entry?.managedId || entry.kind !== 'stasis' || !state.managedSession || state.managedSession.publicShare) return nothing
-  changed = onChange
+  validations.changed = onChange
   const read = bundleValidation(entry)
   if (read.status === 'loading') return nothing
   const { validation } = read
-  const id = keyOf(entry), open = opened.has(id)
+  const id = keyOf(entry), open = validations.opened.has(id)
   const toggle = () => {
-    if (opened.has(id)) opened.delete(id)
-    else opened.add(id)
+    validations.toggle(id)
     onChange()
   }
   const chip = read.running ? html`<span class="bundle-review-state" role="status">Validating…</span>`

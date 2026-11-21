@@ -2,8 +2,7 @@
   display: inline-flex;
   gap: 4px;
   align-items: center;
-  /* Part of the marks-row action cluster — never shrink (the dots would
-     otherwise overflow/clip when a long report-chip squeezes the row). */
+  /* Or a long report chip squeezes the dots until they clip. */
   flex-shrink: 0;
 }
 
@@ -20,21 +19,14 @@ button {
 button:not(:disabled):hover { opacity: 1; transform: scale(1.12); }
 button:disabled { opacity: .25; }
 
-/* Active = filled disc + 1px surface-colored gap + 1px outer colored
-   ring, via two stacked box-shadows: the gap reads as the dot
-   "floating" above the surface, the ring echoes the fill. var(--surface)
-   inherits through the shadow boundary so the gap matches whatever
-   surface the marker is rendered on. */
+/* Active: a filled disc, a gap in the surface's color, then a ring. */
 button.active {
   background: currentcolor;
   opacity: 1;
   box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px currentcolor;
 }
 
-/* Hues from the global `--marker-*` custom props (theme.css). They
-   cross the shadow boundary, so this shadow stylesheet stays in sync
-   with the workspace-conflict-dialog swatches and future consumers
-   without duplicating the oklch values. */
+/* theme.css's `--marker-*` hues, shared with the conflict dialog's swatches. */
 .color-red   { color: var(--marker-red); }
 .color-blue  { color: var(--marker-blue); }
 .color-green { color: var(--marker-green); }

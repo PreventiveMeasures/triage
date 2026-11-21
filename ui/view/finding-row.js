@@ -1,45 +1,25 @@
-// `<finding-row>` — one row of the table view, owned as a Lit
-// component nested inside `<finding-table>`'s shadow DOM. The host
-// element IS the row: classes derived from the dedup group
-// (`is-critical`, `mark-{red|blue|green|gray}`, `has-conflict`,
-// `triage-{inprogress|fixed|invalid|deleted|ignored}`) plus a `selected` class driven by the `selected`
-// property are reflected onto `this.classList`, and `this.dataset.gid`
-// carries the group key (events.js's `pathClosest('[data-gid]')`
-// walks the composedPath up through this host to identify the
-// targeted row from action-button clicks). Inner DOM (badge, title
-// + meta + optional tab strip, action buttons) is a Lit template
-// built by render-finding.js (`tableRowInnerTemplate`).
+// `<finding-row>` — one row of the table view, inside `<finding-table>`'s
+// shadow DOM. The host IS the row: the group-derived classes
+// (tableRowClasses) and `selected` go on `this.classList`, and
+// `data-gid` names the group for events.js's `pathClosest('[data-gid]')`.
+// The inner DOM is render-finding.js's `tableRowInnerTemplate`.
 //
-// The row's content is built only once the row is within a viewport
-// of being seen (view/lazy-render.js): the table holds a row per
-// dedup group, thousands for a big report, and building every row's
-// shadow tree up front was what made a mode switch or a cleared
-// search take seconds. Until then the row is an empty shell at about
-// a row's height.
+// A row's content is built only once it is within a viewport of being seen
+// (view/lazy-render.js): thousands of rows built up front made a mode
+// switch or a cleared search take seconds. Until then it is an empty shell
+// about a row high.
 //
-// Reactivity: extends StateElement, which wraps render() in an
-// observer-util reaction. Reads of `state.triage`,
-// `state.activeTabByGroup`, `state.shownTriage` during render — via
-// the helpers in render-finding.js + group.js — are auto-tracked, so
-// a mutation that invalidates the row re-renders just this element.
-// The classList stamping is intentionally inside render so its
-// `state.shownTriage` read joins the same tracked set; otherwise
-// switching triage view wouldn't update the host's `.triage-*` class.
-//
-// Click semantics: a click anywhere on the row that didn't land on
-// an action button / link / label dispatches a composed-bubbling
-// `row-select` CustomEvent with the gid; events.js listens on
-// `report` and toggles `state.tableSelectedGid`. Native button
-// clicks (`.tab`, `.mark-comment`, `.mark-fix`, `.triage-menu-item`,
-// the `<color-marker>` dots) bubble
-// out composed:true and reach events.js's `pathClosest`-based
-// delegate without intervention from this component.
+// StateElement tracks the state reads of render() — the class stamping
+// included, on purpose, so a triage view switch updates the host's
+// `.triage-*` class. A click outside an action button / link / label
+// dispatches a composed `row-select(detail.gid)`; the buttons' own clicks
+// reach events.js's delegate unaided.
 import { unsafeCSS } from 'lit'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { installShadowTooltipListener } from './tooltip.js'
-import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
+import { NearViewport } from './lazy-render.js'
 import { groupKey } from './group.js'
-import { tableRowClasses, tableRowInnerTemplate } from './render-finding.js'
+import { ROW_HOST_CLASSES, tableRowClasses, tableRowInnerTemplate } from './render-finding.js'
 import rowCSS from './finding-row.css'
 import marksCSS from './finding-marks.css'
 import tabsCSS from './finding-tabs.css'
@@ -47,20 +27,11 @@ import fileIconsCSS from '../styles/file-icon.css'
 import reportButtonCSS from '../styles/report-button.css'
 import actionsCSS from './finding-actions.css'
 
-// Every class this component might apply to the host. Listed
-// explicitly so `classList.toggle(c, …)` cleanly removes any that no
-// longer applies after the group's state changes (e.g. switching
-// colors mid-render). `selected` comes from the `selected` property;
-// the rest from tableRowClasses().
-const MANAGED_HOST_CLASSES = [
-  'is-critical',
-  'mark-red', 'mark-blue', 'mark-green', 'mark-gray',
-  'has-conflict',
-  'triage-inprogress', 'triage-fixed', 'triage-invalid', 'triage-deleted', 'triage-ignored',
-  'selected',
-]
+// Every class this component might put on the host, so a toggle removes
+// one that no longer applies.
+const MANAGED_HOST_CLASSES = [...ROW_HOST_CLASSES, 'selected']
 
-class FindingRow extends StateElement {
+class FindingRow extends NearViewport(StateElement) {
   static properties = {
     group: { attribute: false },
     selected: { type: Boolean },
@@ -68,11 +39,8 @@ class FindingRow extends StateElement {
 
   static styles = [unsafeCSS(fileIconsCSS), unsafeCSS(reportButtonCSS), unsafeCSS(marksCSS), unsafeCSS(rowCSS), unsafeCSS(actionsCSS), unsafeCSS(tabsCSS)]
 
-  // Whether the row's content is (to be) rendered — flipped by the
-  // observer's answer in `_onNear`, and back on a reconnect that lands
-  // the row out of range. Same shape as `<finding-card>`'s.
-  _near = false
-  _watching = false
+  // Always waits for the viewport (NearViewport).
+  lazy = true
 
   constructor() {
     super()
@@ -82,99 +50,45 @@ class FindingRow extends StateElement {
 
   render() {
     if (!this.group) return html``
-    // Stamp host attributes/classes inside render() so the state reads
-    // (e.g. state.shownTriage via tableRowClasses, state.triage /
-    // state.activeTabByGroup via tableRowInnerTemplate) join
-    // StateElement's tracked set and re-render on mutation. willUpdate
-    // would skip the autorun entirely, since StateElement only wraps
-    // render.
+    // Host stamping inside render(), so its state reads join the tracked
+    // set: StateElement wraps render alone, not willUpdate.
     this.dataset.gid = groupKey(this.group)
     if (!this._near) {
-      // Out of range: the row's chrome with nothing in it, at about a
-      // row's height (`.row-pending`, finding-row.css). The selection
-      // outline still applies — a deep link can select a row before
-      // it is built — but the group-derived classes wait for the body:
-      // reading the group's triage here would subscribe every unbuilt
-      // row to it for a colour nobody can see.
+      // The shell (`.row-pending`) keeps the selection outline — a deep
+      // link can select a row before it is built — but not the group's
+      // classes: reading its triage would subscribe every unbuilt row.
       this.classList.toggle('selected', this.selected)
       return html`<div class="row row-pending" aria-busy="true"></div>`
     }
     const next = new Set(tableRowClasses(this.group))
     if (this.selected) next.add('selected')
     for (const c of MANAGED_HOST_CLASSES) this.classList.toggle(c, next.has(c))
-    // Visual chrome lives on the inner `.row`, not the host, so
-    // theme.css's global `* { padding: 0 }` reset can't override our
-    // padding/border via the shadow boundary's outer-wins cascade
-    // rule. See finding-row.css.
+    // The chrome is on the inner `.row`: theme.css's global `* { padding: 0 }`
+    // would win over the host's across the shadow boundary.
     return html`<div class="row">${tableRowInnerTemplate(this.group)}</div>`
   }
 
   connectedCallback() {
     super.connectedCallback()
-    // The GitHub marks inside carry `data-tooltip`; the shared tooltip
-    // (view/tooltip.js) draws it. Its document-level listener can't see
-    // in here — `closest` stops at the boundary — so this root gets its
-    // own. Idempotent, and reconnects are how this component is used.
+    // The GitHub marks' `data-tooltip`s: the document-level listener can't
+    // see into this root. Idempotent across reconnects.
     installShadowTooltipListener(this.renderRoot)
     this.addEventListener('click', this._onClick)
-    // Ask where the row is, on every connect. The persistent
-    // <finding-table> stays connected across steady-state table
-    // renders, but a re-sort moves rows (Lit's keyed repeat detaches
-    // and re-inserts them) and a view-mode switch detaches the whole
-    // table and later re-inserts it: this element disconnects
-    // (StateElement disposes its autorun) then reconnects, and the
-    // observer's answer is what decides whether it renders again —
-    // re-registering a fresh autorun for a row in range, dropping the
-    // body of one that is not.
-    this._watching = true
-    watchNearViewport(this, (near) => this._onNear(near))
+    // Asked on every connect: a re-sort or a view-mode switch detaches and
+    // re-inserts rows (StateElement disposing the autorun), and the answer
+    // decides whether one renders again or drops back to its shell.
+    this._watchNear(this)
   }
 
   disconnectedCallback() {
     this.removeEventListener('click', this._onClick)
-    if (this._watching) {
-      unwatchNearViewport(this)
-      this._watching = false
-    }
     super.disconnectedCallback()
   }
 
-  // See `<finding-card>`'s `_onNear`: in range renders (and re-registers
-  // the autorun) and stops watching; out of range on a reconnect drops
-  // the body back to the shell.
-  _onNear(near) {
-    if (near) {
-      if (this._watching) {
-        unwatchNearViewport(this)
-        this._watching = false
-      }
-      this._near = true
-      this.requestUpdate()
-    } else if (this._near) {
-      this._near = false
-      this.requestUpdate()
-    }
-  }
-
-  // Render now whether or not the row is in range — for the deep-link
-  // reveal, which scrolls to the row and wants it at its real height.
-  // Resolves once the content is in the DOM. `sync` performs the update
-  // before returning, as on `<finding-card>` (see there for why).
-  ensureRendered({ sync = false } = {}) {
-    if (!this._near) this._onNear(true)
-    if (sync && this.isConnected && this.isUpdatePending) this.performUpdate()
-    return this.updateComplete
-  }
-
   _onClick = (e) => {
-    const path = e.composedPath()
-    if (path.some((el) => el?.matches?.('a, button, label'))) return
+    if (e.composedPath().some((el) => el?.matches?.('a, button, label'))) return
     if (!this.dataset.gid) return
-    this.dispatchEvent(new CustomEvent('row-select', {
-      detail: { gid: this.dataset.gid },
-      bubbles: true,
-      composed: true,
-    }))
+    this.dispatchEvent(new CustomEvent('row-select', { detail: { gid: this.dataset.gid }, bubbles: true, composed: true }))
   }
 }
 

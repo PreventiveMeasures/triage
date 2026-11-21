@@ -3,14 +3,11 @@
   align-items: center;
   width: 8.5rem;
   height: 16px;
-  /* Color hooks — host overrides via inline style or CSS vars on an
-     ancestor. Defaults derive from currentcolor: the rail, and the
-     fill (selected range / thumbs) which the host usually tints to
-     the page accent. */
+  /* Hooks a host or ancestor may override. */
   --rs-thumb-size: 14px;
   --rs-track-height: 3px;
   --rs-rail: rgb(from currentcolor r g b / .25);
-  --rs-fill: var(--accent, currentColor);
+  --rs-fill: var(--accent);
 }
 
 .track-wrap {
@@ -19,9 +16,8 @@
   height: var(--rs-thumb-size);
 }
 
-/* Single track; gradient paints --rs-fill between --low% and --high%,
-   rail elsewhere. var(--low)/var(--high) come from inline style on the
-   wrapper, set by render() each tick. */
+/* One track, filled between `--low` and `--high` (set on the wrapper by
+   render()). */
 .track {
   position: absolute;
   left: 0; right: 0;
@@ -38,9 +34,8 @@
       var(--rs-rail) var(--high, 100%));
 }
 
-/* Both inputs overlap the same area; pointer-events:none on the input
-   + auto on the thumb lets the user grab whichever thumb is closer
-   without one input's full-width hitbox blocking the other. */
+/* The two inputs overlap; only their thumbs take the pointer, so neither
+   input's full width blocks the other's thumb. */
 input[type='range'] {
   appearance: none; -webkit-appearance: none;
   position: absolute;

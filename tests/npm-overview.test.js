@@ -26,15 +26,16 @@ mock.module('../ui/view/client-managed.js', { exports: {
       ...answers.versions[name]?.teamScoped && { minimumReleaseAge: 0, downloads: null } })),
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: async (name, version) => { socketAsked.push(`${name}@${version}`); return { socket: await answers.socket[`${name}@${version}`] ?? null } }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoriesColumn, npmAdvisoryStatus, npmBinaryColumn, npmCompareBadges, npmFilesRead, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmFilesFilter, npmReadabilityWarning, npmReviewLimit, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmStatsRow, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { npmAdvisoriesColumn, npmAdvisoryStatus, npmBinaryColumn, npmCompareBadges, npmFilesRead, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmFilesFilter, npmReadabilityWarning, npmReviewLimit, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmStatsRow } = await import('../ui/view/npm-overview.js')
+const { npmTakenDown } = await import('../common/dependency-reviews.js')
 const { npmFileFlagTags, npmFileReadabilityOf, npmObfuscationFound, npmReadabilityFlags } = await import('../ui/view/file-readability.js')
 const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmFileReadability, npmLargeCode, npmObfuscation, npmReadabilityLabels } = await import('../risk/files/readability.js')
 const { npmTextEncoding } = await import('../risk/files/characters.js')
-const { computeBundleDiff } = await import('../ui/view/bundle-compare-diff.js')
+const { computeBundleDiff } = await import('../common/bundle-compare-diff.js')
 const { npmRisk } = await import('../ui/view/npm-risk.js')
 // A version the server tells risk of, as the viewer holds one (_npm-risk.js).
 const held = version => holdVersion(version, npmRisk)
-const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
+const { bundleFilesAsMap } = await import('../common/bundle-sources.js')
 // Template text, its values spelled out, `nothing` as none.
 // Code an obfuscator wrote, with `count` names of its own, from `from` on.
 const obfuscated = (count, from = 0x1a2b) => Array.from({ length: count }, (_, i) => `var _0x${(from + i).toString(16)}=_0x${from.toString(16)}[${i}];`).join('')

@@ -1,12 +1,10 @@
 // A repository directory's Compare (render-bundle.js): the same directory at
-// another revision, compared with the one shown as an npm version is with
-// another (bundle-compare.js `source`): the files each adds, removes and
-// changes, and Code's diff of them, without a package's risk, alerts or
-// dependencies. Each side is picked as the header picks the revision shown
-// (revision-select: a branch, a tag or a commit); a pick on the second opens
-// the directory there, compared with the same first. What is compared with
-// is read as the directory is (GET /api/admin/repositories/code), and then
-// named by the commit read, as the route names it: `/compare/<commit>`.
+// another revision, compared as npm versions are (bundle-compare.js
+// `source`), without a package's risk, alerts or dependencies. Each side is
+// picked as the header picks a revision; a pick on the second opens the
+// directory there against the same first. The other side is read as the
+// directory is (GET /api/admin/repositories/code), then named by the commit
+// read, as the route does: `/compare/<commit>`.
 import { LitElement, html } from 'lit'
 import { fetchRepositoryCode } from './client-managed.js'
 import { navigateToRepositoryCode, rememberRevision, repositoryCodeDetails, repositoryCodeEntry, repositoryRefs, revisionNamed, revisionPicked,
@@ -76,9 +74,9 @@ export function repositoryCompareSource(entry) {
   }
 }
 
-// One side of a repository's Compare: its revision as the header picks one,
-// what is typed kept until a revision is picked (`revision-pick`, its
-// `detail` the revision) or another shown.
+// One side of a repository's Compare, picked as the header picks a
+// revision, what is typed kept till one is picked (`revision-pick`) or
+// another shown.
 class RepositoryRevisionPick extends LitElement {
   static properties = { refs: { attribute: false }, revision: { attribute: false }, label: {}, _edit: { state: true } }
 

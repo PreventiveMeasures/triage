@@ -3,13 +3,18 @@
    shadow roots render the same way. Each component lists this sheet
    ahead of its own, so a component rule still wins a tie. */
 
-/* Resolved/dismissed buckets dim when their bucket view is shown.
-   In-progress is intentionally NOT dimmed — it's active work, not a
-   settled state, so it reads at full strength like the live view. */
+/* Settled buckets dim when their bucket view is shown; in-progress is
+   active work and stays at full strength. */
 :host(.triage-fixed),
 :host(.triage-invalid),
 :host(.triage-deleted),
 :host(.triage-ignored) { opacity: .75; }
+
+/* The deep-link arrival ring (see finding-card.css / finding-row.css). */
+@keyframes link-target-flash {
+  0%, 30% { box-shadow: inset 0 0 0 2px var(--accent); }
+  100% { box-shadow: inset 0 0 0 2px rgb(from var(--accent) r g b / 0); }
+}
 
 .badge {
   display: inline-block; font-size: .7rem; font-weight: 600; text-transform: uppercase;
@@ -24,25 +29,16 @@
   &.informational { background: var(--info); color: #fff; }
 }
 
-/* Corrected-severity dual badge — see severityBadge() in render-finding.js.
-   The primary chip reuses `.badge`; the companion shows the OTHER severity
-   (struck original when showing corrected; outlined corrected target when
-   showing original) plus a ▲/▼ direction glyph, so the corrected/original
-   distinction carries a shape cue, never color alone. The full / compact
-   variants stack the companion under the primary so the fixed-width score
-   column never widens. Outline tints reuse the per-theme severity tokens
-   via relative-color syntax, so all four themes retune automatically. */
+/* Corrected-severity dual badge (severityBadge() in render-finding.js):
+   the companion shows the OTHER severity plus a ▲/▼ glyph, so the
+   distinction never rests on color alone. The full / compact variants
+   stack it under the primary so the score column never widens. */
 .badge-pair { display: inline-flex; align-items: center; gap: .25rem; }
-
 .badge-pair-full,
 .badge-pair-compact { flex-direction: column; gap: .15rem; }
-
 .badge-orig-wrap { display: inline-flex; align-items: center; gap: .15rem; line-height: 1; }
-
 .badge-arrow, .badge-corr-mark { font-size: .6rem; line-height: 1; color: var(--muted); }
-
 .badge-arrow.up, .badge-corr-mark.up { color: var(--high); }
-
 .badge-pre { font-size: .55rem; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
 
 .badge-orig {
@@ -60,12 +56,26 @@
   &.informational { border-color: rgb(from var(--info) r g b / .55); }
 }
 
-/* "varies across reports" chip — a deduped finding whose correction
-   differs between the reports it appeared in (workspace view). */
+/* "varies across reports": a deduped finding whose correction differs
+   between its reports (workspace view). */
 .badge-varies {
   font-size: .55rem; font-weight: 600; text-transform: uppercase; letter-spacing: .03em;
   padding: .08rem .3rem; border-radius: 3px; line-height: 1;
   background: transparent; color: var(--muted); border: 1px dashed var(--border);
+}
+
+/* The GitHub mark after a location (and the card's `</>`): marks on a line
+   of text, muted until the pointer is on that mark. The hit zone spans the
+   line via a pseudo-element (padding would grow the line box); the two
+   marks split the gap between them. */
+:is(.code-preview-btn, .gh-ref-btn) {
+  position: relative;
+  padding: 0 .15rem;
+  color: var(--muted);
+
+  &::before { content: ''; position: absolute; inset: -.25rem -2px; }
+  &:hover { color: var(--accent); }
+  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: var(--ui-radius, 2px); }
 }
 
 .mark-action-group {
@@ -91,9 +101,7 @@
   &:not(:disabled):hover { color: var(--accent); background: var(--surface-active); }
 }
 
-/* Outside signed-in managed workspaces, the issue action is an <a>,
-   so drop the default underline + link color the icon/label would
-   otherwise pick up — it inherits the muted button color above. */
+/* Outside signed-in managed workspaces the issue action is an <a>. */
 .mark-issue { text-decoration: none; }
 
 .mark-comment.has-comment,
@@ -102,22 +110,17 @@
 
 .mark-flag svg { display: block; }
 
-/* Pulse the copy / link / claude button briefly after a successful
-   click — class set + cleared by events.js around the action (clipboard
-   write for copy and link, claude:// nav for claude). Buttons share the
-   group's border, so the pulse paints cell background + icon color, not
-   border-color. */
+/* Brief pulse after a successful copy / link / claude action (events.js).
+   The buttons share the group's border, so it paints the cell instead. */
 .mark-copy.copied,
 .mark-link.copied,
 .mark-claude.copied {
-  color: var(--green, #4ade80);
-  background: color-mix(in srgb, var(--green, #4ade80) 14%, transparent);
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 14%, transparent);
 }
 
-.mark-comment.has-comment .bubble { fill: var(--accent); fill-opacity: .15; }
-
-.mark-fix.has-fix .wrench { fill: var(--accent); fill-opacity: .15; }
-
+.mark-comment.has-comment .bubble,
+.mark-fix.has-fix .wrench,
 .mark-flag.flagged .flag-cloth { fill: var(--accent); fill-opacity: .15; }
 
 .triage-menu-wrap {
@@ -136,7 +139,6 @@
   gap: .25rem;
   font: inherit;
 }
-
 .mark-triage-menu:not(:disabled):hover { color: var(--text); border-color: var(--accent); }
 
 .mark-comment:disabled,
@@ -148,24 +150,17 @@
 .mark-triage-menu.with-label {
   padding: 0 .35rem 0 .5rem;
   font-size: .72rem;
-  height: 1.5rem;
 }
-
 .mark-triage-menu .mark-triage-label {
   text-transform: uppercase;
   letter-spacing: .05em;
   font-weight: 600;
 }
-
 .mark-triage-menu.triage-state-deleted    { border-color: var(--critical); color: var(--critical); }
-
-.mark-triage-menu.triage-state-fixed      { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
-
-.mark-triage-menu.triage-state-inprogress { border-color: var(--warning, #d97706); color: var(--warning, #d97706); }
-
+.mark-triage-menu.triage-state-fixed      { border-color: var(--green); color: var(--green); }
+.mark-triage-menu.triage-state-inprogress { border-color: var(--warning); color: var(--warning); }
 .mark-triage-menu.triage-state-invalid    { border-color: var(--muted); color: var(--text); }
-
-.mark-triage-menu.triage-state-ignored    { border-color: var(--accent, #2563eb); color: var(--accent, #2563eb); }
+.mark-triage-menu.triage-state-ignored    { border-color: var(--accent); color: var(--accent); }
 
 .triage-menu[popover] {
   position: fixed;
@@ -177,17 +172,13 @@
   border-radius: var(--ui-radius, 4px);
   padding: .25rem;
   box-shadow: 0 4px 12px rgb(0 0 0 / .25);
-  display: flex; flex-direction: column;
+  flex-direction: column;
   gap: 1px;
-  /* WCO: the popover sits in the top layer above body's drag baseline.
-     Menu-item buttons are no-drag via the central `button` selector,
-     but the popover's own padding / gap pixels would inherit drag and
-     eat clicks landing on the chrome between items. */
+  /* WCO: the top-layer popover's own padding / gap would inherit the
+     body's drag region and eat clicks between items. */
   -webkit-app-region: no-drag; app-region: no-drag;
 }
-
 .triage-menu[popover]:not(:popover-open) { display: none; }
-
 .triage-menu[popover]:popover-open { display: flex; }
 
 .triage-menu-item {
@@ -201,20 +192,41 @@
   border-radius: var(--ui-radius, 3px);
   font-family: inherit;
 }
-
 .triage-menu-item:not(:disabled):hover { background: var(--surface); }
-
 .triage-menu-item.active::before { content: '✓ '; color: var(--accent); }
-
-.triage-menu-inprogress:not(:disabled):hover { color: var(--warning, #d97706); }
-
-.triage-menu-fixed:not(:disabled):hover   { color: var(--green, #4ade80); }
-
+.triage-menu-inprogress:not(:disabled):hover { color: var(--warning); }
+.triage-menu-fixed:not(:disabled):hover   { color: var(--green); }
 .triage-menu-invalid:not(:disabled):hover { color: var(--muted); }
-
 .triage-menu-deleted:not(:disabled):hover { color: var(--critical); }
 
 .line-num a:hover { color: var(--accent); }
+
+/* Print (styles/print.css can't reach the shadow roots): theme-independent
+   badge swatches kept by `print-color-adjust`, correction marks as plain
+   gray text, no dimming and no action row. */
+@media print {
+  :host(.triage-fixed),
+  :host(.triage-invalid),
+  :host(.triage-deleted),
+  :host(.triage-ignored) { opacity: 1; }
+  .marks { display: none !important; }
+  .badge {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    &.critical      { background: #a30b0f !important; color: #fff !important; }
+    &.high          { background: #b8400a !important; color: #fff !important; }
+    &.medium        { background: #855107 !important; color: #fff !important; }
+    &.low           { background: #374151 !important; color: #fff !important; }
+    &.high_bug      { background: #7a3e0c !important; color: #fff !important; }
+    &.bug           { background: #4d4538 !important; color: #fff !important; }
+    &.informational { background: #0550ae !important; color: #fff !important; }
+  }
+  .badge-orig {
+    background: transparent !important; color: #555 !important; border-color: #999 !important;
+  }
+  .badge-varies { color: #555 !important; border-color: #999 !important; }
+  .badge-arrow, .badge-corr-mark, .badge-pre { color: #555 !important; }
+}
 
 /* W95 (styles/w95.css): these controls are Windows 95 buttons — each
    raised on its own, sunk while pressed — and their labels drop the

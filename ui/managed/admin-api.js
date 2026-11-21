@@ -9,10 +9,28 @@ async function readJson(path, signal) {
   return res.json()
 }
 
-function postJson(path, csrfToken, body) {
+// The CSRF token is sent where there is one, or always (`token`).
+function postJson(path, csrfToken, body, { signal, token = Boolean(csrfToken) } = {}) {
   const headers = { 'content-type': 'application/json' }
-  if (csrfToken) headers['x-csrf-token'] = csrfToken
-  return managedFetch(path, { method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify(body) })
+  if (token) headers['x-csrf-token'] = csrfToken
+  return managedFetch(path, { method: 'POST', credentials: 'same-origin', ...signal ? { signal } : {}, headers, body: JSON.stringify(body) })
+}
+
+async function post(path, csrfToken, body) {
+  const res = await postJson(path, csrfToken, body)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res
+}
+
+// A JSON endpoint's requests (`path` and a `suffix`), failures named by
+// `messages` for the error code the server answers.
+export function jsonEndpoint(path, messages) {
+  return async (suffix = '', options = {}) => {
+    const response = await managedFetch(`${path}${suffix}`, { credentials: 'same-origin', ...options })
+    const body = await response.json()
+    if (!response.ok) throw new Error(messages[body?.error] ?? `HTTP ${response.status}`)
+    return body
+  }
 }
 
 // A 403 means the team access check refused the location only when the
@@ -27,6 +45,14 @@ async function deleteItem(collection, id, csrfToken) {
   const headers = csrfToken ? { 'x-csrf-token': csrfToken } : {}
   const res = await managedFetch(`/api/admin/${collection}/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin', headers })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
+}
+
+// An upload's raw bytes, its display name in `x-<kind>-filename`; repository,
+// directory and analyzer metadata come from the file itself.
+function uploadFile(kind, file, csrfToken, contentType) {
+  const headers = { 'content-type': contentType, [`x-${kind}-filename`]: encodeURIComponent(file.name) }
+  if (csrfToken) headers['x-csrf-token'] = csrfToken
+  return managedFetch(`/api/admin/${kind}s`, { method: 'POST', credentials: 'same-origin', headers, body: file })
 }
 
 export async function fetchHistory(signal, page, kind, query, repo, actor) {
@@ -45,30 +71,25 @@ export async function fetchUsers(signal) {
 }
 
 export async function setRole(userId, role, csrfToken) {
-  const res = await postJson('/api/admin/set-role', csrfToken, { userId, role })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  await post('/api/admin/set-role', csrfToken, { userId, role })
 }
 
 // The connected list is served from stored configuration; discovery runs only
 // for the installed/public pickers. Search and organization filters use the full catalogue.
-export async function fetchRepositories(scope, showAll, refresh, signal) {
+export function fetchRepositories(scope, showAll, refresh, signal) {
   const params = new URLSearchParams({ scope })
   if (scope === 'installed') params.set('showAll', String(showAll))
   if (refresh) params.set('refresh', 'true')
-  return await readJson(`/api/admin/repositories?${params}`, signal)
+  return readJson(`/api/admin/repositories?${params}`, signal)
 }
 
-// Toggle whether a repo is active (the server verifies access + records the read
-// context when activating, and deactivates without deleting stored data).
+// Activating verifies access and records the read context; deactivating keeps stored data.
 export async function selectRepository(repoId, selected, csrfToken) {
-  const res = await postJson('/api/admin/repositories/select', csrfToken, { repoId, selected })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  await post('/api/admin/repositories/select', csrfToken, { repoId, selected })
 }
 
-// A repository's dependency review: `enabled`, the reviews each version
-// needs (`required`), the commit whose lockfiles' versions need none
-// (`since`, or null), and the lockfiles it holds to (`lockfiles`, kept as
-// they are where none are given).
+// `required` reviews per version; `since`, the commit whose lockfiles' versions
+// need none (or null); `lockfiles` kept as they are where none are given.
 export async function setRepositoryDependencyReview(repoId, { enabled, required, since, lockfiles }, csrfToken) {
   const res = await postJson('/api/admin/repositories/dependency-review', csrfToken, { repoId, enabled, required, since, ...lockfiles ? { lockfiles } : {} })
   if (!res.ok) {
@@ -78,30 +99,24 @@ export async function setRepositoryDependencyReview(repoId, { enabled, required,
   return (await res.json()).dependencyReview
 }
 
-// The lockfiles of a repository's default branch its dependency review
-// reads (`paths`), and its stasis.config.json files, which it may hold to in
-// their place (`configs`), by their paths, for its settings to name.
+// The default branch's lockfiles its dependency review reads (`paths`), and
+// its stasis.config.json files (`configs`), which it may hold to instead.
 export async function fetchRepositoryLockfiles(repoId, signal) {
   const body = await readJson(`/api/admin/repositories/lockfiles?repoId=${encodeURIComponent(repoId)}`, signal)
   return { paths: Array.isArray(body?.lockfiles) ? body.lockfiles.flatMap(one => typeof one?.path === 'string' ? [one.path] : []) : [],
     configs: Array.isArray(body?.configs) ? body.configs.filter(path => typeof path === 'string') : [] }
 }
 
+const PUBLIC_REPOSITORY_ERRORS = {
+  400: 'Enter a repository as owner/repo or a GitHub repository URL.',
+  403: 'You do not have permission to add arbitrary public repositories.',
+  404: 'No public repository was found at that address.',
+  409: 'Choose a public, non-archived repository.',
+}
+
 export async function addPublicRepository(repository, csrfToken) {
-  const res = await managedFetch('/api/admin/repositories/add-public', {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify({ repository }),
-  })
-  if (!res.ok) {
-    const messages = {
-      400: 'Enter a repository as owner/repo or a GitHub repository URL.',
-      403: 'You do not have permission to add arbitrary public repositories.',
-      404: 'No public repository was found at that address.',
-      409: 'Choose a public, non-archived repository.',
-    }
-    throw new Error(messages[res.status] ?? `GitHub lookup failed (HTTP ${res.status}). Try again.`)
-  }
+  const res = await postJson('/api/admin/repositories/add-public', csrfToken, { repository }, { token: true })
+  if (!res.ok) throw new Error(PUBLIC_REPOSITORY_ERRORS[res.status] ?? `GitHub lookup failed (HTTP ${res.status}). Try again.`)
 }
 
 export async function fetchRepositoryImpact(repoId, signal) {
@@ -111,105 +126,89 @@ export async function fetchRepositoryImpact(repoId, signal) {
   return impact
 }
 
+const CONNECT_APP_ERRORS = {
+  'github-app-not-configured': 'The GitHub App is not configured on this server.',
+  'repo-identity-changed': 'The repository has changed on GitHub. Refresh and check its connection.',
+  'repo-connection-changed': 'The connection or your permissions changed. Refresh and try again.',
+  'repo-not-connected': 'This repository is no longer connected.',
+  'forbidden': 'Administrator access is required to connect the GitHub App.',
+}
+
 export async function connectRepositoryApp(repoId, csrfToken) {
-  const res = await managedFetch('/api/admin/repositories/connect-app', {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify({ repoId }),
-  })
+  const res = await postJson('/api/admin/repositories/connect-app', csrfToken, { repoId }, { token: true })
   const data = await res.json()
-  if (!res.ok) {
-    const messages = {
-      'github-app-not-configured': 'The GitHub App is not configured on this server.',
-      'repo-identity-changed': 'The repository has changed on GitHub. Refresh and check its connection.',
-      'repo-connection-changed': 'The connection or your permissions changed. Refresh and try again.',
-      'repo-not-connected': 'This repository is no longer connected.',
-      'forbidden': 'Administrator access is required to connect the GitHub App.',
-    }
-    throw new Error(messages[data.error] ?? `Could not connect the GitHub App (HTTP ${res.status}). Try again.`)
-  }
+  if (!res.ok) throw new Error(CONNECT_APP_ERRORS[data.error] ?? `Could not connect the GitHub App (HTTP ${res.status}). Try again.`)
   if (data.connected === true) return data
   if (data.connected !== false || typeof data.installUrl !== 'string' || !/^https:\/\/github\.com\/apps\/[^/?#]+\/installations\/new$/u.test(data.installUrl)) throw new Error('Invalid GitHub installation response.')
   return data
 }
 
 export async function removeRepository(repoId, fullName, deleteTriage, csrfToken) {
-  const res = await postJson('/api/admin/repositories/remove', csrfToken, { repoId, fullName, acknowledge: true, deleteTriage })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json()
+  return (await post('/api/admin/repositories/remove', csrfToken, { repoId, fullName, acknowledge: true, deleteTriage })).json()
 }
 
-export async function fetchReports(signal) {
-  return await readJson('/api/admin/reports', signal)
+export function fetchReports(signal) {
+  return readJson('/api/admin/reports', signal)
+}
+
+const CREATE_BUNDLE_ERRORS = {
+  'unsupported-entries': 'Select JavaScript/TypeScript files (including JSX/TSX) or Solidity files. Stasis cannot mix languages or use JSON or Rust as remote entry points.',
+  'bad-conditions': 'Check the export conditions and selected platforms.',
+  'metro-conditions': 'Stasis’s Metro preset requires the react-native condition without manual changes.',
+  'config-invalid': 'Stasis can’t read the stasis.config.json these entry points are under, build them with the options it sets, or lay out the lockfiles it names. Check it at this revision.',
+  'config-mixed': 'Entry points listed in a stasis.config.json are built with its options, alone. Select only those it lists, or only other files.',
+  'config-conditions': 'These entry points are listed in stasis.config.json, which sets their options, so they take no conditions. Reload the directory and try again.',
+  'config-runs-code': 'stasis.config.json sets an option for these entry points that runs the repository’s code, such as babel. Bundles built here never run it.',
+  'config-policy': 'The bundle holds a path or package that stasis.config.json’s allowedPaths, disallowedPaths, allowedModules or disallowedModules refuses, or that its excludeModules excludes.',
+  'stasis-lock': 'The build doesn’t agree with the repository’s stasis.lock.json, or stasis.config.json’s lock = frozen needs one that isn’t there. Update it at this revision.',
+  'commit-not-own': 'Stasis can’t find this commit in the history of the repository’s branches or tags: it may be a fork’s, which GitHub serves through the repository too. Pick a commit of its default branch, a branch or a tag.',
+  'build-lockfile': 'Stasis needs a supported lockfile: pnpm-lock.yaml, yarn.lock (Yarn 1), package-lock.json, or soldeer.lock.',
+  'build-scope': 'Your team needs access to the bundle’s project root, including its lockfile and dependencies.',
+  'build-busy': 'A bundle is already being built, or the server is busy. Try again shortly.',
+  'build-timeout': 'The bundle build timed out. Try a smaller selection or retry.',
+  'too-large': 'This bundle exceeds the server’s size limit.',
+  'build-memory': 'Building this selection needs more memory than the server gives a build. Select fewer entry points, or build it with stasis github-bundle and upload the bundle.',
+  'github-rate-limited': 'GitHub’s API rate limit has been reached. Retry after the limit resets.',
+  'github-build-failed': 'Could not fetch the repository from GitHub. Check access and retry.',
+  'repository-changed': 'The repository connection changed during the build. Reload and try again.',
+  'bundle-conflict': 'This bundle already exists but is outside your current access.',
+  'build-failed': 'Stasis could not build this selection. Check that its lockfile is supported and all entry points and imports exist at this commit.',
 }
 
 export async function createBundle(input, csrfToken, signal) {
-  const res = await managedFetch('/api/admin/bundles/create', {
-    method: 'POST', credentials: 'same-origin', signal,
-    headers: { 'content-type': 'application/json', 'x-csrf-token': csrfToken }, body: JSON.stringify(input),
-  })
+  const res = await postJson('/api/admin/bundles/create', csrfToken, input, { signal, token: true })
   const data = await res.json()
   if (!res.ok) {
-    const messages = {
-      'unsupported-entries': 'Select JavaScript/TypeScript files (including JSX/TSX) or Solidity files. Stasis cannot mix languages or use JSON or Rust as remote entry points.',
-      'bad-conditions': 'Check the export conditions and selected platforms.',
-      'metro-conditions': 'Stasis’s Metro preset requires the react-native condition without manual changes.',
-      'config-invalid': 'Stasis can’t read the stasis.config.json these entry points are under, build them with the options it sets, or lay out the lockfiles it names. Check it at this revision.',
-      'config-mixed': 'Entry points listed in a stasis.config.json are built with its options, alone. Select only those it lists, or only other files.',
-      'config-conditions': 'These entry points are listed in stasis.config.json, which sets their options, so they take no conditions. Reload the directory and try again.',
-      'config-runs-code': 'stasis.config.json sets an option for these entry points that runs the repository’s code, such as babel. Bundles built here never run it.',
-      'config-policy': 'The bundle holds a path or package that stasis.config.json’s allowedPaths, disallowedPaths, allowedModules or disallowedModules refuses, or that its excludeModules excludes.',
-      'stasis-lock': 'The build doesn’t agree with the repository’s stasis.lock.json, or stasis.config.json’s lock = frozen needs one that isn’t there. Update it at this revision.',
-      'commit-not-own': 'Stasis can’t find this commit in the history of the repository’s branches or tags: it may be a fork’s, which GitHub serves through the repository too. Pick a commit of its default branch, a branch or a tag.',
-      'build-lockfile': 'Stasis needs a supported lockfile: pnpm-lock.yaml, yarn.lock (Yarn 1), package-lock.json, or soldeer.lock.',
-      'build-scope': 'Your team needs access to the bundle’s project root, including its lockfile and dependencies.',
-      'build-busy': 'A bundle is already being built, or the server is busy. Try again shortly.',
-      'build-timeout': 'The bundle build timed out. Try a smaller selection or retry.',
-      'too-large': 'This bundle exceeds the server’s size limit.',
-      'build-memory': 'Building this selection needs more memory than the server gives a build. Select fewer entry points, or build it with stasis github-bundle and upload the bundle.',
-      'github-rate-limited': 'GitHub’s API rate limit has been reached. Retry after the limit resets.',
-      'github-build-failed': 'Could not fetch the repository from GitHub. Check access and retry.',
-      'repository-changed': 'The repository connection changed during the build. Reload and try again.',
-      'bundle-conflict': 'This bundle already exists but is outside your current access.',
-      'build-failed': 'Stasis could not build this selection. Check that its lockfile is supported and all entry points and imports exist at this commit.',
-    }
-    throw new Error(messages[data.error] ?? (res.status === 401 ? 'Sign in again to create a bundle.'
+    throw new Error(CREATE_BUNDLE_ERRORS[data.error] ?? (res.status === 401 ? 'Sign in again to create a bundle.'
       : res.status === 403 || res.status === 404 ? 'Repository access is required to create this bundle.' : 'Could not create the bundle. Try again.'))
   }
   return data
 }
 
-// Upload one report file: the raw bytes as the body and the display name in the
-// X-Report-Filename header. Repository, directory, and analyzer metadata come
-// from the report header; CSRF rides the double-submit token. The server stores
-// the bytes + records the metadata/attribution + auto-links the bundle. Throws
-// with the status word the row surfaces (e.g. 413 → too large).
-export async function uploadReport(file, csrfToken, repoId = null, directory = '') {
+// The server stores the bytes, records the attribution and links the bundle
+// the report names. Throws the word the row shows (e.g. 413 → too large).
+export async function uploadReport(file, csrfToken) {
   const maxBytes = (await readJson('/api/config')).managed?.uploadMaxBytes?.reports
   if (Number.isSafeInteger(maxBytes) && maxBytes > 0) {
     if (file.size > maxBytes) throw new Error('too large')
   } else if (file.size > 3 * 1024 * 1024) {
     // Without an advertised bound, leave large files on the raw upload path.
-    return uploadSingleReport(file, csrfToken, repoId, directory)
+    return uploadSingleReport(file, csrfToken)
   }
   const products = splitMarkdownImport(await file.text(), file.name)
-  if (!products) return uploadSingleReport(file, csrfToken, repoId, directory)
+  if (!products) return uploadSingleReport(file, csrfToken)
   // One failed product does not stop the others; name every failure after all were tried.
   const failures = [], results = []
   for (const { name, content } of products) {
-    try { results.push(await uploadSingleReport(new File([content], name, { type: 'application/json' }), csrfToken, repoId, directory)) }
+    try { results.push(await uploadSingleReport(new File([content], name, { type: 'application/json' }), csrfToken)) }
     catch (err) { failures.push(`${name}: ${String(err?.message ?? err)}`) }
   }
   if (failures.length > 0) throw new Error(`${failures.length} of ${products.length} products failed (${failures.join('; ')})`)
   return results.at(-1)
 }
 
-async function uploadSingleReport(file, csrfToken, repoId, directory) {
-  const headers = { 'content-type': file.type || 'application/json', 'x-report-filename': encodeURIComponent(file.name) }
-  if (csrfToken) headers['x-csrf-token'] = csrfToken
-  if (repoId != null) headers['x-repo-id'] = String(repoId)
-  if (directory !== '') headers['x-repo-directory'] = encodeURIComponent(directory)
-  const res = await managedFetch('/api/admin/reports', { method: 'POST', credentials: 'same-origin', headers, body: file })
+async function uploadSingleReport(file, csrfToken) {
+  const res = await uploadFile('report', file, csrfToken, file.type || 'application/json')
   if (!res.ok) {
     if (res.status === 413) throw new Error('too large')
     if (res.status === 403) throw new Error(await refusal(res))
@@ -226,8 +225,7 @@ async function uploadSingleReport(file, csrfToken, repoId, directory) {
 }
 
 export async function setReportVisible(id, visible, csrfToken) {
-  const res = await postJson('/api/admin/reports/set-visible', csrfToken, { reportId: id, visible })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  await post('/api/admin/reports/set-visible', csrfToken, { reportId: id, visible })
 }
 
 // Switch a report to open on Confirmed whatever Confirmed hides, or back to
@@ -255,24 +253,18 @@ export async function fetchReportLocation(id, signal) {
   return (await res.json())?.location ?? null
 }
 
-export async function deleteReport(id, csrfToken) {
-  await deleteItem('reports', id, csrfToken)
+export function deleteReport(id, csrfToken) {
+  return deleteItem('reports', id, csrfToken)
 }
 
-export async function fetchBundles(signal) {
-  return await readJson('/api/admin/bundles', signal)
+export function fetchBundles(signal) {
+  return readJson('/api/admin/bundles', signal)
 }
 
-// Upload one bundle file: raw bytes as the body, name in X-Bundle-Filename, an
-// optional location in X-Repo-Id / X-Repo-Directory, CSRF token. The server content-addresses it
-// (sha512) — re-uploading identical bytes dedupes — and auto-links any reports
-// that declared its integrity.
-export async function uploadBundle(file, csrfToken, repoId, directory = '') {
-  const headers = { 'content-type': 'application/octet-stream', 'x-bundle-filename': encodeURIComponent(file.name) }
-  if (csrfToken) headers['x-csrf-token'] = csrfToken
-  if (repoId != null) headers['x-repo-id'] = String(repoId)
-  if (directory) headers['x-repo-directory'] = encodeURIComponent(directory)
-  const res = await managedFetch('/api/admin/bundles', { method: 'POST', credentials: 'same-origin', headers, body: file })
+// The server content-addresses it (sha512), so identical bytes dedupe, and
+// links any reports that declared its integrity.
+export async function uploadBundle(file, csrfToken) {
+  const res = await uploadFile('bundle', file, csrfToken, 'application/octet-stream')
   if (!res.ok) throw new Error(res.status === 413 ? 'too large' : res.status === 403 ? await refusal(res) : `HTTP ${res.status}`)
   return res.json()
 }
@@ -286,28 +278,26 @@ export async function fetchBundleUsage(id, signal) {
   return usage
 }
 
-export async function deleteBundle(id, csrfToken) {
-  await deleteItem('bundles', id, csrfToken)
+export function deleteBundle(id, csrfToken) {
+  return deleteItem('bundles', id, csrfToken)
 }
 
 export async function setBundleVisible(id, visible, csrfToken) {
-  const res = await postJson('/api/admin/bundles/set-visible', csrfToken, { bundleId: id, visible })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  await post('/api/admin/bundles/set-visible', csrfToken, { bundleId: id, visible })
 }
 
-// Set a stored bundle's repository and directory, or detach it (null). CSRF token.
+// A stored bundle's repository and directory, or detached (null).
 export async function setBundleRepo(id, repoId, directory, csrfToken) {
   const res = await postJson('/api/admin/bundles/set-repo', csrfToken, { bundleId: id, repoId, directory })
   if (!res.ok) throw new Error(res.status === 403 ? await refusal(res) : res.status === 400 ? 'invalid repository or directory' : `HTTP ${res.status}`)
 }
 
-export async function fetchTeams(signal) {
-  return await readJson('/api/admin/teams', signal)
+export function fetchTeams(signal) {
+  return readJson('/api/admin/teams', signal)
 }
 
-// POST a team mutation (create / delete / link / unlink). CSRF via the
-// double-submit token. Surfaces 409 (duplicate name) as a friendly word.
+// A team change (`path` under /api/admin/teams); 409 is a duplicate name.
 export async function postTeam(path, csrfToken, body) {
-  const res = await postJson(path, csrfToken, body)
+  const res = await postJson(`/api/admin/teams${path}`, csrfToken, body)
   if (!res.ok) throw new Error(res.status === 409 ? 'name already taken' : `HTTP ${res.status}`)
 }

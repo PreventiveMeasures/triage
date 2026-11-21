@@ -1,10 +1,11 @@
 // A quiet overview with direct connections emphasized on hover/selection.
 // Everything stays on canvas: 1,000 packages do not create 1,000 DOM nodes.
-function dependencyNodeRadius(scale) { return Math.max(2.5, Math.min(6, 4.5 * Math.sqrt(scale))) }
+export const DEPENDENCY_FONT = '11px SFMono-Regular, Consolas, "Liberation Mono", monospace'
+export const dependencyLabel = (n) => n.label.length > 38 ? `${n.label.slice(0, 36)}…` : n.label
 
 export function drawPackageDependencies(ctx, layout, pg, { theme, viewport, width, height, colorOf, dimmed, selected, hovered, query }) {
   const { k, tx, ty } = viewport
-  const r = dependencyNodeRadius(k)
+  const r = Math.max(2.5, Math.min(6, 4.5 * Math.sqrt(k)))
   const focus = hovered ?? selected
   const neighbors = new Set([focus, ...(layout.links.get(focus) ?? []), ...(layout.incoming.get(focus) ?? [])])
   const points = new Map()
@@ -77,7 +78,7 @@ export function drawPackageDependencies(ctx, layout, pg, { theme, viewport, widt
     }
     occupy({ x: p.x - r - 2, y: p.y - r - 2, w: r * 2 + 4, h: r * 2 + 4 })
   }
-  ctx.font = '11px SFMono-Regular, Consolas, "Liberation Mono", monospace'
+  ctx.font = DEPENDENCY_FONT
   ctx.textBaseline = 'top'
   ctx.textAlign = 'center'
   visible.sort((a, b) => {
@@ -89,7 +90,7 @@ export function drawPackageDependencies(ctx, layout, pg, { theme, viewport, widt
     const important = p.n.file === focus || p.n.file === selected
     if (!important && p.dim < .5) continue
     if (!important && !query && !focus && k < 1 && ordinary >= 24) continue
-    const label = p.n.label.length > 38 ? `${p.n.label.slice(0, 36)}…` : p.n.label
+    const label = dependencyLabel(p.n)
     const w = ctx.measureText(label).width + 8
     const b = { x: p.x - w / 2, y: p.y + r + 5, w, h: 16 }
     if (b.x < 4 || b.x + b.w > width - 4 || b.y + b.h > height - 24) continue

@@ -1,29 +1,18 @@
 // Characters a code viewer shows as a labelled box, since as text they show
-// as nothing, or as something they are not: Unicode's other characters (C),
-// which are the controls (Cc: C0 but tab and newline, DEL, C1), the format
-// characters (Cf: the zero-width ones, the bidi controls that reorder what a
-// line reads as, tags), lone surrogates (Cs), private use characters (Co),
-// whose glyph is whatever a font puts there, and unassigned code points and
-// noncharacters (Cn); the line and paragraph separators, which end a line
-// in JavaScript but not in the viewer; and what reads as a space, or as
-// nothing, though it is another character: Unicode's other spaces (no-break,
-// en and em, thin, ideographic), the default-ignorable characters (Hangul
-// fillers, variation selectors, the grapheme joiner), each a different name
-// in code from the one it looks like, and the Braille blank. A CR stays as
-// it is where it ends a line with the LF after it, and so do the joiners,
-// tags and variation selectors that spell an emoji.
-//
-// The box is a label in place of the character, which leaves the DOM: in
-// highlighted markup the HTML parser drops a NUL and reads a lone CR as a
-// newline, so it could not be relied on to be there anyway. The label is not
-// selectable, so a copy leaves these out rather than copying their labels.
+// as nothing or as something they are not (characters.js UNSEEN): controls
+// but tab and newline, format characters (zero-width, bidi, tags), lone
+// surrogates, private use and unassigned code points, the line and
+// paragraph separators, the other spaces, and default-ignorables. A CR
+// ending a line before its LF stays, as do the joiners, tags and variation
+// selectors spelling an emoji (characters.js passed). The box replaces the
+// character — in highlighted markup the HTML parser drops a NUL and reads
+// a lone CR as a newline anyway — and is not selectable, so a copy leaves
+// these out.
 import { html } from 'lit'
 import { UNSEEN, passed } from '../../risk/files/characters.js'
 
-// The characters (characters.js UNSEEN), each a candidate, not yet one to
-// show: see shown.
-const CANDIDATE = UNSEEN
-const CANDIDATES = new RegExp(CANDIDATE.source, 'gu')
+// Each match a candidate, not yet one to show: see shown.
+const CANDIDATES = new RegExp(UNSEEN.source, 'gu')
 
 // Labels and names of the ones a viewer meets, the rest labelled by number.
 const NAMED = new Map(`
@@ -191,10 +180,9 @@ function shown(text, lineEnd) {
   return found
 }
 
-// Whether `text` may have any to show: a quick test, before the work of
-// finding which.
+// Whether `text` may have any to show: a quick test, before finding which.
 export function hasControls(text) {
-  return CANDIDATE.test(text)
+  return UNSEEN.test(text)
 }
 
 const box = code => {
@@ -219,12 +207,11 @@ export function controlParts(text, lineEnd = false) {
 
 const escape = text => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
 
-// Highlighted markup with the same boxes. The markup is Prism's, or the
-// viewers' own built on it (prism-source-links.js, bundle-compare-code-model.js
-// markHighlighted): every
-// `<` in its text escaped, so each one starts a tag. Its text is searched
-// with the tags left out, so a CR is read as ending its line by the newline
-// after a tag, and a tag's attributes are never searched.
+// Highlighted markup with the same boxes. The markup is Prism's, or built on
+// it (prism-source-links.js, bundle-compare-code-model.js markHighlighted),
+// so every `<` starts a tag. Only the text between tags is searched: a CR
+// before a newline after a tag still ends its line, and attributes are
+// never boxed.
 export function controlMarkup(markup, lineEnd = false) {
   if (!hasControls(markup)) return markup
   // The text, and where each run of it between tags starts, in it and in

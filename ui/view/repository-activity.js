@@ -1,13 +1,11 @@
-// The code viewer's Activity (render-bundle.js): what happens around a
-// repository's code, in six views, each a tab of its own in its route: its
-// commits (repository-history.js), its issues and pull requests
-// (repository-issues.js), its agents' sessions (repository-agents.js), its
-// pulse (repository-pulse.js), and its commits replayed, as Gource plays
-// them (repository-replay.js), a play button. The strip shows them as one tab,
-// Activity, opening on the view last shown; each view's bar starts with
-// their picker, an icon each, which switches between them as the strip's
-// tabs do (events.js, `data-bundle-tab`). A view's sub-tab past its first
-// is in its route too (routes.js isActivitySubtab), as `/pulse/year`.
+// The code viewer's Activity (render-bundle.js): six views of what happens
+// around a repository's code, each a tab of its own in its route: commits
+// (repository-history.js), issues and pull requests (repository-issues.js),
+// agents' sessions (repository-agents.js), pulse (repository-pulse.js) and
+// replay (repository-replay.js). The strip shows them as one tab, opening on
+// the view last shown, each view's bar led by their picker (events.js,
+// `data-bundle-tab`); a sub-tab past the first is in the route too
+// (routes.js isActivitySubtab), as `/pulse/year`.
 import { html, svg } from 'lit'
 import { isActivitySubtab } from '../../common/managed/routes.js'
 import { managedHistory } from './managed-history.js'
@@ -39,10 +37,9 @@ export function activityTab(tab) {
   return lastShown
 }
 
-// Each view's sub-tab, by its tab, as its route named it last or the reader
-// last picked it, none for its first: kept, as the view last shown is, as
-// the reader goes between views, directories and repositories, whose routes
-// name it in turn; and the views shown, told as one changes.
+// Each view's sub-tab, by its tab, as its route or the reader last named it,
+// none for its first, kept across views, directories and repositories; and
+// those told as one changes.
 const subtabs = new Map()
 const subtabListeners = new Set()
 
@@ -53,8 +50,7 @@ export const activitySubtabField = tab => subtabs.has(tab) ? { subtab: subtabs.g
 // `listener(tab)` told as view `tab` comes to show another sub-tab.
 export const watchActivitySubtabs = listener => { subtabListeners.add(listener) }
 
-// View `tab` showing `subtab`, its first where that is none past it, as a
-// route opening names it.
+// View `tab` showing `subtab` as a route names it, its first where none.
 export function showActivitySubtab(tab, subtab) {
   const shown = isActivitySubtab(tab, subtab) ? subtab : null
   if (shown === activitySubtab(tab)) return
@@ -63,14 +59,13 @@ export function showActivitySubtab(tab, subtab) {
   for (const listener of subtabListeners) listener(tab)
 }
 
-// Pulse's periods, each its weeks, its name, its sub-tab's lowercased, and
-// the same days a period earlier; and the weeks of the one shown, a month
-// where its route names none.
+// Pulse's periods, each its weeks, name (its sub-tab's, lowercased) and the
+// same days a period earlier; and the one shown's weeks, a month by default.
 export const PULSE_PERIODS = [[1, 'Week', 'the week before'], [4, 'Month', 'the month before'], [13, 'Quarter', 'the quarter before'], [52, 'Year', 'the year before']]
 export const pulseWeeks = () => PULSE_PERIODS.find(([, name]) => name.toLowerCase() === activitySubtab('pulse'))?.[0] ?? 4
 
-// `subtab` of view `tab` picked for the directory shown (`repository`, an
-// entry's): shown, at its address, an entry of its own.
+// `subtab` of view `tab` picked for the directory shown: shown, and its
+// address an entry of its own.
 export function pickActivitySubtab({ repoId, commit, path }, tab, subtab) {
   showActivitySubtab(tab, subtab)
   managedHistory?.pushRoute({ view: 'repository-code', repoId, commit, path, bundleTab: tab, ...activitySubtabField(tab) })

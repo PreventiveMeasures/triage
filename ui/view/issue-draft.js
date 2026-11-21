@@ -15,17 +15,14 @@ const FIELD_IDS = new Map([...FIELDS.map(([id, label]) => [sectionKey(label), id
   ['reproductionsteps', 'reproduction'], ['recommendedfix', 'recommendation']])
 // GitHub's issue body limit, which the server enforces before creating one.
 const MAX_BODY = 65_536
-// A GitHub link to a line or lines at a full commit hash: on a line of its
-// own in an issue of that repository, GitHub draws the code it points at.
-// The finding's source, at the revision the report read, then opens the
-// issue as that snippet; at HEAD, at a short hash or without lines it
-// stays `File: [path:lines](url)`. Evidence links never do: a list of
-// snippets would bury the notes between them.
+// A GitHub link to lines at a full commit hash, which on a line of its own
+// GitHub draws as the code: the source opens the issue so; at HEAD, a short
+// hash or no lines it stays `File: [path:lines](url)`. Evidence links never
+// do, lest snippets bury their notes.
 const PERMALINK_RE = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/blob\/(?:[0-9a-f]{40}|[0-9a-f]{64})\/[^\s#]+#L\d+(?:-L\d+)?$/iu
-// A section is its label over its text. Three read as GitHub alerts, the
-// label kept inside: the impact, `[!CAUTION]` on a security finding (the
-// one the issue's `security` label marks) and `[!IMPORTANT]` otherwise,
-// the reproduction, `[!NOTE]`, and the recommendation, `[!TIP]`.
+// A section is its label over its text; three are GitHub alerts, the label
+// inside: impact `[!CAUTION]` on a security finding, else `[!IMPORTANT]`,
+// reproduction `[!NOTE]`, recommendation `[!TIP]`.
 const quoted = text => text.split('\n').map(line => line ? `> ${line}` : '>').join('\n')
 function sectionText({ id, label, parts }, finding) {
   const text = `**${label}:**\n${parts.join('\n\n')}`
@@ -34,15 +31,13 @@ function sectionText({ id, label, parts }, finding) {
   return alert ? `> [!${alert}]\n${quoted(text)}` : text
 }
 
-// Keep optional narrative sections separate from the description, including
-// formats that put labelled sections in the description instead of fields.
-// The caller formats source links and evidence (format.js), so this module
-// needs only @preventive/report and code-span.js: the card builds the GitHub
-// form's body with it up front, and the lazily loaded managed issue dialog its
-// draft. A source that links nowhere is a code span, as its evidence rows are,
-// so GitHub reads no `@scope` in it as a mention. Only Impact
-// starts selected unless `allSections`; `findingLink` ends the body, and
-// sections toggled on later go above it.
+// An issue's draft: the description, and the narrative sections apart from
+// it, whether fields or labelled paragraphs. The caller formats the source
+// and evidence (format.js), so this needs only @preventive/report and
+// code-span.js, for the card's GitHub form and the lazy managed dialog alike.
+// A source linking nowhere is a code span, so no `@scope` reads as a mention.
+// Only Impact starts selected unless `allSections`; `findingLink` ends the
+// body, sections toggled on later going above it.
 export function createIssueDraft(finding, { sourceUrl, evidence = '', showRevalidation = true, findingLink, allSections = false } = {}) {
   const blocks = [], content = new Map()
   const add = (id, label, text) => {
@@ -126,12 +121,7 @@ export function toggleIssueDraftSection(draft, id, selected) {
     const head = draft.body.slice(0, at)
     const separator = !head || head.endsWith('\n\n') ? '' : head.endsWith('\n') ? '\n' : '\n\n'
     const start = at + separator.length
-    const end = start + section.text.length
-    const delta = end - at
-    const shift = item => ({ ...item, start: item.start + delta, end: item.end + delta })
-    const sections = draft.sections.map(item => item === section ? { ...item, selected, separator, start, end }
-      : item.selected && item.start >= at ? shift(item) : item)
-    return { body: head + separator + section.text + draft.body.slice(at), sections, footer: footer && footer.start >= at ? shift(footer) : footer }
+    return spliced(draft, section, { ...section, selected, separator, start, end: start + section.text.length }, at, at, separator + section.text)
   }
   // Remove only the section and its separating blank line, leaving surrounding
   // free text and the other sections untouched.
@@ -140,12 +130,15 @@ export function toggleIssueDraftSection(draft, id, selected) {
   const separatorStart = section.start - separator.length
   const ownsSeparator = draft.body.slice(separatorStart, section.start) === separator
     && !draft.sections.some(item => item !== section && item.selected && item.start < section.start && item.end > separatorStart)
-  const start = ownsSeparator ? separatorStart : section.start
-  const body = draft.body.slice(0, start) + draft.body.slice(section.end)
-  const delta = start - section.end
+  return spliced(draft, section, { ...section, text, selected, start: 0, end: 0 }, ownsSeparator ? separatorStart : section.start, section.end, '')
+}
+
+// The body with [from, to) replaced by `text`, `section` made `own`, and the
+// selected sections and footer from `to` on shifted along.
+function spliced(draft, section, own, from, to, text) {
+  const delta = text.length - (to - from)
   const shift = item => ({ ...item, start: item.start + delta, end: item.end + delta })
-  const sections = draft.sections.map(item => item === section
-    ? { ...item, text, selected, start: 0, end: 0 }
-    : item.selected && item.start >= section.end ? shift(item) : item)
-  return { body, sections, footer: footer && footer.start >= section.end ? shift(footer) : footer }
+  const sections = draft.sections.map(item => item === section ? own : item.selected && item.start >= to ? shift(item) : item)
+  const footer = draft.footer ?? null
+  return { body: draft.body.slice(0, from) + text + draft.body.slice(to), sections, footer: footer && footer.start >= to ? shift(footer) : footer }
 }

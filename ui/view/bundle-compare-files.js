@@ -1,4 +1,4 @@
-import { bundleFileByteLength, bundleFilesAsMap } from './bundle-sources.js'
+import { bundleFileByteLength, bundleFilesAsMap } from '../../common/bundle-sources.js'
 
 // Every differing file, including its original path, rename and metadata
 // changes. `modified: false` distinguishes a pure rename or metadata change.

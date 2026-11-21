@@ -1,33 +1,18 @@
 // The Treemap of a directory too large to open (render-bundle.js
 // renderRepositoryCodeOpening): its files as its commit's tree lists them,
-// each by its bytes (GET /api/admin/repositories/tree, as Replay reads it),
-// drawn as the Treemap of a directory opened draws its files
-// (bundle-treemap.js), but with none of their text read: a file's cell opens
-// nothing, and its packages are told by their paths alone. Where the listing
-// leaves files out (those deepest, past as many as the server answers), it
-// says so. What was read is kept for the session that read it, the last
-// KEPT_TREES directories read, each a whole commit's listing at most.
+// each by its bytes (GET /api/admin/repositories/tree), drawn as an opened
+// directory's are (bundle-treemap.js) with none of their text read; where
+// the listing leaves files out, it says so. Kept for the session that read
+// it, the last KEPT_TREES directories read, each a whole commit's listing at most.
 import { LitElement, html, nothing } from 'lit'
-import { state } from '#client/index.js'
 import { fetchRepositoryTree } from './client-managed.js'
+import { number, readingBody, sessionKept, shownElements } from './activity-reads.js'
 import { readKept, trimKept } from './kept-entries.js'
 import './bundle-treemap.js'
 
 const KEPT_TREES = 4
-const trees = new Map()
-const shownElements = new Set()
-let keptFor = null
-
-function sessionTrees() {
-  const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
-  if (session !== keptFor) {
-    trees.clear()
-    keptFor = session
-  }
-  return trees
-}
-
-const repaint = () => { for (const element of shownElements) element.requestUpdate() }
+const sessionTrees = sessionKept(new Map())
+const { Shown, repaint } = shownElements(LitElement)
 
 // The files of the directory `repository` shows, at its commit, as held,
 // else read: 'loading', then 'ready' with the `details` the Treemap draws
@@ -35,7 +20,8 @@ const repaint = () => { for (const element of shownElements) element.requestUpda
 // 'error' with its `error`.
 function treeRead({ repoId, commit, path }) {
   const key = `${repoId}\0${commit}\0${path}`
-  const held = readKept(sessionTrees(), key)
+  const trees = sessionTrees()
+  const held = readKept(trees, key)
   if (held) return held
   const loading = { key, status: 'loading' }
   trees.set(key, loading)
@@ -59,35 +45,12 @@ function treeRead({ repoId, commit, path }) {
   return loading
 }
 
-class RepositoryTreemap extends LitElement {
-  static properties = { repository: { attribute: false } }
-
-  createRenderRoot() { return this }
-
-  constructor() {
-    super()
-    this.repository = null
-  }
-
-  connectedCallback() {
-    super.connectedCallback()
-    shownElements.add(this)
-  }
-
-  disconnectedCallback() {
-    shownElements.delete(this)
-    super.disconnectedCallback()
-  }
-
+class RepositoryTreemap extends Shown {
   render() {
     if (!this.repository?.commit) return nothing
     const entry = treeRead(this.repository)
-    if (entry.status === 'error') {
-      return html`<div class="bundles-slide-placeholder is-error"><p role="alert">${entry.error}</p>
-        <button type="button" @click=${() => { trees.delete(entry.key); repaint() }}>Retry</button></div>`
-    }
-    if (entry.status !== 'ready') return html`<div class="bundles-slide-placeholder" role="status">Reading its files…</div>`
-    return html`${entry.cut ? html`<p class="history-note">Only the ${entry.details.fileSizes.size.toLocaleString('en-US')} files nearest its root are drawn.</p>` : nothing}
+    if (entry.status !== 'ready') return readingBody(entry, 'Reading its files…', () => { sessionTrees().delete(entry.key); repaint() })
+    return html`${entry.cut ? html`<p class="history-note">Only the ${number(entry.details.fileSizes.size)} files nearest its root are drawn.</p>` : nothing}
       <bundle-treemap .details=${entry.details}></bundle-treemap>`
   }
 }

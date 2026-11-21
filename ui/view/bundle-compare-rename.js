@@ -9,6 +9,9 @@ export function renameTemplate(from, to) {
   return html`${head}{<span class="bundle-compare-rename-from">${before}</span> → <span class="bundle-compare-rename-to">${after}</span>}${tail}`
 }
 
+// `path` without the display `prefix` the rows drop.
+export const withoutPrefix = (path, prefix) => prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path
+
 // Where the base bundle's files sit and where the other's do, as rootLabel
 // reads them: `./ → ./src/`, the old place red, the new green.
 export function rootTemplate({ from, to }) {

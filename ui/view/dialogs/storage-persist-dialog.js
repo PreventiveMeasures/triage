@@ -1,30 +1,15 @@
-// `<storage-persist-dialog>` — "how do I actually get persistent
-// storage" instructions, opened by the sidebar's storage-at-risk
-// banner when a `persist()` request comes back denied. The denial is
-// silent on Chromium and structural on Safari, so without this the
-// banner click looks broken; the dialog says what the browser
-// actually wants, per engine:
-//
-//   chromium — never prompts; grants silently to origins its
-//              important-sites ranking accepts (installed app,
-//              bookmark, engagement). Re-evaluated on every request,
-//              so a Try-again button is meaningful after the user
-//              installs/bookmarks.
-//   firefox  — the only engine with a real permission prompt; a
-//              dismissed/blocked prompt is remembered, so the fix is
-//              clearing the old answer, then Try again.
-//   webkit   — Safari + every iOS browser (all WebKit): persist()
-//              does not exempt a normal tab from ITP's 7-day
-//              cleanup; only installing the app does. No Try-again —
-//              retrying can't help.
-//
-// Single-acknowledge dialog: extends `AppDialog` for the shared
-// shadow-DOM <dialog> chrome (focus-trap + Esc-to-close). The open
-// helper settles on `modal-conflict` too (mirrors
-// persistence-degraded-dialog) so a conflicting modal can't leak the
-// element or hang the caller.
+// "How do I actually get persistent storage", from the sidebar's
+// storage-at-risk banner when a `persist()` request comes back denied. The
+// denial is silent on Chromium and structural on Safari, so the dialog says
+// what each engine wants:
+//   chromium — never prompts; grants silently to sites its importance ranking
+//              accepts (installed, bookmarked, engaged), re-evaluated on every
+//              request, so Try again helps after the user installs/bookmarks.
+//   firefox  — a real prompt, whose dismissal is remembered until cleared.
+//   webkit   — Safari and every iOS browser: persist() doesn't exempt a normal
+//              tab from ITP's 7-day cleanup, only installing does. No Try again.
 import { html, nothing, unsafeCSS } from 'lit'
-import { AppDialog } from './app-dialog.js'
+import { AppDialog, openAppDialog } from './app-dialog.js'
 import { requestPersistentStorage } from '#client/index.js'
 import { persistGrantFlavor } from '../storage-status.js'
 import storagePersistCSS from './dialog-storage-persist.css'
@@ -32,38 +17,23 @@ import storagePersistCSS from './dialog-storage-persist.css'
 class StoragePersistDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(storagePersistCSS)]
 
-  static properties = {
-    _retryDenied: { state: true },
-  }
+  static properties = { _retryDenied: { state: true } }
 
   constructor() {
     super()
     this._retryDenied = false
   }
 
-  // No input field; the base `focusInitial()` default falls through
-  // to `button.primary` (Got it), so Enter/Esc both just dismiss.
-
-  _onConfirm = () => this._finish(null)
-
-  // Re-request under the dialog's user gesture. Granted → resolve
-  // 'granted' so the opener refreshes the banner away; denied →
-  // inline status instead of silently doing nothing (the exact
-  // failure mode this dialog exists to end).
+  // Asks again under this dialog's user gesture: 'granted' lets the opener
+  // drop the banner, a denial says so rather than seeming to do nothing.
   _onRetry = async () => {
-    const granted = await requestPersistentStorage()
-    if (granted) {
-      this._finish('granted')
-      return
-    }
-    this._retryDenied = true
+    if (await requestPersistentStorage()) this._finish('granted')
+    else this._retryDenied = true
   }
 
   _chromiumBody() {
-    // Plain `localhost` can never pass Chromium's importance check —
-    // it ranks sites by registerable domain (IP literals excepted)
-    // and localhost has none — so instructions that can't work there
-    // get replaced by the one that can.
+    // Chromium ranks sites by registrable domain (IP literals excepted), which
+    // plain `localhost` lacks, so it can never qualify.
     const localhostNote = location.hostname === 'localhost'
       ? html` Plain <code>localhost</code> can never qualify — for local
           testing open the app via <code>127.0.0.1</code> instead.`
@@ -124,9 +94,7 @@ class StoragePersistDialog extends AppDialog {
 
   render() {
     const flavor = persistGrantFlavor()
-    const body = flavor === 'webkit' ? this._webkitBody()
-      : flavor === 'firefox' ? this._firefoxBody()
-      : this._chromiumBody()
+    const body = flavor === 'webkit' ? this._webkitBody() : flavor === 'firefox' ? this._firefoxBody() : this._chromiumBody()
     return html`<dialog @close=${this._onClose}>
       <header>
         <h3>Protect stored data</h3>
@@ -147,7 +115,7 @@ class StoragePersistDialog extends AppDialog {
         ${flavor === 'webkit'
           ? nothing
           : html`<button type="button" @click=${this._onRetry}>Try again</button>`}
-        <button type="button" class="primary" @click=${this._onConfirm}>Got it</button>
+        <button type="button" class="primary" @click=${this._onClose}>Got it</button>
       </footer>
     </dialog>`
   }
@@ -155,18 +123,8 @@ class StoragePersistDialog extends AppDialog {
 
 customElements.define('storage-persist-dialog', StoragePersistDialog)
 
-// Own open helper (not the shared `openAppDialog`) so `modal-conflict`
-// settles too: if `showModal()` fails outright, only a `modal-conflict`
-// listener keeps this promise from hanging and the element from
-// leaking. (It's opened from a click, so it isn't `exclusive` — over
-// another modal it stacks; see app-dialog.js.) Resolves 'granted' when
-// the in-dialog retry succeeded, null otherwise.
+// Resolves 'granted' when Try again succeeded, else null. Opened from a click,
+// so it stacks over another modal; one that can't show resolves null.
 export function openStoragePersistDialog() {
-  return new Promise((resolve) => {
-    const el = document.createElement('storage-persist-dialog')
-    const settle = (result) => { el.remove(); resolve(result) }
-    el.addEventListener('resolve', (e) => settle(e.detail))
-    el.addEventListener('modal-conflict', () => settle(null))
-    document.body.append(el)
-  })
+  return openAppDialog('storage-persist-dialog', {}, { conflict: () => null })
 }

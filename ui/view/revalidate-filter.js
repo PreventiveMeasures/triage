@@ -1,87 +1,45 @@
-// `<revalidate-filter>` — toolbar dropdown that narrows the findings to
-// one outcome of the revalidation pass, sitting right of the Confidence
-// range. Native single-select with an implicit "no filter" entry.
+// `<revalidate-filter>` — the dropdown narrowing the findings to one
+// outcome of the revalidation pass, inside `<conf-filter>`'s block. The
+// parent hands down only the options the loaded set reaches (format.js
+// reachableRevalidateFilters) and clears a selection that stops being
+// reachable, which is why the value binding is `live()`: without it the
+// native select would keep showing the cleared option. `?selected=` on the
+// options carries the FIRST paint, which `live()` can't reach: Lit commits
+// the `<select>`'s bindings before its options exist, and the filter
+// outlives the element (the chrome is rebuilt on cross-view entry).
 //
-// The option list is DATA-DRIVEN and reachable-only: the parent scans
-// the loaded set for the `revalidate` values present and hands down the
-// options those reach (format.js REVALIDATE_FILTERS /
-// reachableRevalidateFilters), so the dropdown never offers an outcome
-// that would filter to nothing — and the whole component is dropped by
-// the toolbar when that list comes back empty. The parent also clears a
-// selection that stops being reachable (a report unloaded out from
-// under it), which is why the value binding is `live()`: without it the
-// native select would keep showing the cleared option.
+// Dispatches `revalidate-change(detail.value)`; events.js writes the state.
+// A dedup group shows in full when any of its rows carries the outcome.
 //
-// `?selected=` on the options carries the other end — the FIRST paint,
-// which `live()` can't reach: Lit commits the `<select>`'s own
-// bindings before its options exist, so the value lands on an empty
-// select, the browser drops what it can't match, and the options
-// arriving after leave it on the first one. `state.filterRevalidate`
-// outlives the element (the findings chrome is rebuilt from
-// `report.replaceChildren` on cross-view entry), so without the attribute a
-// return trip painted an empty arrow slot over findings the outcome
-// filter was still narrowing. Only the BLANK twin below takes the
-// attribute for the empty value — see the note there.
-//
-// Reactivity: extends StateElement, so the read of
-// `state.filterRevalidate` during render() is tracked.
-//
-// Dispatches `revalidate-change(detail.value)` on native change;
-// events.js writes the state and re-renders. Matching is per finding
-// and group-wide (filters.js applyFilters runs every predicate through
-// `g.some(...)`), so a dedup group shows in full when any of its rows
-// carries the selected outcome — the same rule severity, color and
-// analyzer follow.
-//
-// CONFIRMED carries a second question inside it. That option takes the
-// partial confirmations along with the full ones (format.js
-// REVALIDATE_FILTERS), and a reader looking at what survived often
-// wants to draw that line: everything standing, the full
-// confirmations only, or the partial ones only (format.js
-// activeRevalidateKinds has the three kind lists). It is not a second
-// filter — it has no meaning under any other outcome — so it isn't a
-// second control either. It's a chip INSIDE the Confirmed row, cycling `+ Partial` →
-// `− Partial` → `only Partial` on click, riding the block the select
-// already spans. Shown only when Confirmed is up AND the loaded set
-// has partial rows to sort; `_onPartial` dispatches
-// `partial-change(detail.value)` and events.js does the write.
-//
-// The three read green / red / yellow — in, out, and only — so the
-// state is legible before the label is.
-//
-// It sits at the RIGHT of the row, before the chevron, rather than
-// tucked against the word "Confirmed": the select spans the whole
-// block so its value can start at the left edge, and anchoring the
-// chip to that edge would mean measuring the rendered width of a word
-// in whatever font the theme is using. The block has the room, and the
-// two ends read as label and modifier.
+// CONFIRMED carries a second question: it takes the partial confirmations
+// along with the full ones (format.js REVALIDATE_FILTERS), and a chip
+// INSIDE that option cycles `+ Partial` → `− Partial` → `only Partial`
+// (format.js activeRevalidateKinds), shown only when Confirmed is up and the
+// set has partial rows. It dispatches `partial-change(detail.value)`. It sits
+// at the row's right end, before the chevron: anchoring it to the word
+// "Confirmed" would mean measuring that word in the theme's font.
 import { nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { classMap } from 'lit/directives/class-map.js'
-import { StateElement, html } from '@rray/frontend/state-element'
+import { html } from '@rray/frontend/state-element'
+import { ToolbarControl } from './toolbar-control.js'
 import { PARTIAL_MODES } from './format.js'
 import { state } from '#client/index.js'
 
-// The chip's face for each mode. The sign carries the meaning, so the
-// three read as one control in three positions rather than three
-// labels; `−` is the MINUS SIGN, not a hyphen, so it balances the `+`.
-// Every mode is a STATE, including the default one — `+ Partial` says
-// those rows are in and on screen, which is a fact worth showing, not
-// the absence of a setting — so each gets its own class and its own
-// colour (toolbar.css) rather than one of them reading as "off".
+// The chip's face per mode — green / red / yellow for in, out and only
+// (toolbar.css): every mode is a state, the default included. `−` is the
+// MINUS SIGN, balancing the `+`.
 const PARTIAL_FACES = {
   '':      { cls: 'included', label: '+ Partial',            title: 'Confirmed, partial and revalidation rows — click for full confirmations only' },
-  exclude: { cls: 'excluded', label: '\u2212 Partial',       title: 'Full confirmations only — click to show the partial ones only' },
+  exclude: { cls: 'excluded', label: '− Partial',       title: 'Full confirmations only — click to show the partial ones only' },
   only:    { cls: 'only',     label: 'only Partial',         title: 'Partial confirmations only — click to show all of them again' },
 }
 
-class RevalidateFilter extends StateElement {
+class RevalidateFilter extends ToolbarControl {
   static properties = {
     options: { attribute: false },
     hasPartial: { type: Boolean, attribute: 'has-partial' },
   }
-
-  createRenderRoot() { return this }
 
   constructor() {
     super()
@@ -96,22 +54,13 @@ class RevalidateFilter extends StateElement {
       .value=${live(state.filterRevalidate)}
       @change=${this._onChange}
     >
-      <!-- Two entries for "no outcome", sharing a value on purpose
-           (and written without backticks — this is inside a template
-           literal). A native select paints its SELECTED option's text,
-           and idle this is the selection — but idle the control is an
-           arrow slot barely wider than its chevron, so any text there
-           comes out as a clipped sliver of a glyph. The blank one
-           leads, so setting the value to the empty string lands on it
-           and the closed control is truly empty; hidden keeps it out
-           of the menu, where the named one stands for it. That name is
-           what clearing gets you back: the confidence range this
-           dropdown replaced.
-
-           Which is also why only the blank twin is marked selected
-           below: marking both would leave the browser's reset on the
-           LAST one selected, painting the name into the arrow slot —
-           the same thing _onChange rewinds after a clear. -->
+      <!-- Two entries for "no outcome", sharing a value on purpose. Idle,
+           the control is an arrow slot barely wider than its chevron, so
+           the selected option's text would show as a clipped sliver: the
+           blank one leads, so the empty value lands on it, and hidden keeps
+           it out of the menu, where the named one stands for it (the range
+           this dropdown replaced). Only the blank twin is marked selected:
+           marking both would leave the browser's reset on the LAST one. -->
       <option value="" hidden ?selected=${state.filterRevalidate === ''}></option>
       <option value="">Confidence</option>
       ${this.options.map((o) => html`<option value=${o.value} ?selected=${state.filterRevalidate === o.value}>${o.label}</option>`)}
@@ -127,32 +76,19 @@ class RevalidateFilter extends StateElement {
       type="button"
       class=${classMap({ 'partial-cycle': true, [face.cls]: true })}
       data-tooltip=${face.title}
-      @click=${this._onPartial}
+      @click=${() => this.emit('partial-change', {
+        value: PARTIAL_MODES[(PARTIAL_MODES.indexOf(state.filterPartial) + 1) % PARTIAL_MODES.length],
+      })}
     >${face.label}</button>`
-  }
-
-  _onPartial = () => {
-    const at = PARTIAL_MODES.indexOf(state.filterPartial)
-    const next = PARTIAL_MODES[(at + 1) % PARTIAL_MODES.length]
-    this.dispatchEvent(new CustomEvent('partial-change', {
-      detail: { value: next },
-      bubbles: true,
-      composed: true,
-    }))
   }
 
   _onChange = (e) => {
     const { value } = e.target
-    // Clearing lands on the NAMED half of the pair above, which would
-    // then paint its name into the arrow slot. The re-render can't
-    // correct it — live() compares VALUES, and both halves carry the
-    // empty one — so put the selection back on the blank twin here.
+    // Clearing lands on the NAMED twin, which would paint its name into the
+    // arrow slot, and live() can't correct it (both twins carry the empty
+    // value): put the selection back on the blank one.
     if (!value) e.target.selectedIndex = 0
-    this.dispatchEvent(new CustomEvent('revalidate-change', {
-      detail: { value },
-      bubbles: true,
-      composed: true,
-    }))
+    this.emit('revalidate-change', { value })
   }
 }
 

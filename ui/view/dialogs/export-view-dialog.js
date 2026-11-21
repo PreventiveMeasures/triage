@@ -1,46 +1,18 @@
-// `<export-view-dialog>` — the read-only look at what Download would
-// write. Reached from the export confirm dialog's View button, which
-// closes and hands off to this: same selection, same Markdown, just
-// shown instead of saved.
+// A read-only look at what the export confirm dialog's Download would write,
+// from its View: the exact Markdown, a line to a row against a number gutter,
+// Prism-highlighted. Lines wrap, unlike the code panels: this is prose, and
+// wrapping is why there is a row per line (a gutter beside one block would
+// drift).
 //
-// Read-only on purpose. It is a preview of a file, not an editor: the
-// exact bytes `downloadReportsAsMarkdown` would put in the blob, laid
-// out a line to a row against a number gutter and Prism-highlighted as
-// Markdown, so headings, links and the fenced snippets inside a
-// finding's description are legible at a glance.
-//
-// Lines WRAP here, unlike the source panel in the focus view. That one
-// shows code, where a wrapped line is a lie about the file's shape and
-// scrolling sideways is the honest answer. This shows prose — findings,
-// impacts, recommendations — in paragraphs written to be read, and a
-// document you have to drag sideways to finish a sentence is not a
-// preview of anything. Wrapping is also what forces a row per line:
-// with one logical line spanning several visual ones, a gutter beside a
-// single block would drift out of step by the end of the first
-// paragraph.
-//
-// The document is shown in CHUNKS of a few hundred lines
-// (export-view-chunks.js decides where one ends), and the chunk is the
-// unit of everything expensive. A big report is tens of thousands of
-// lines; as one flat grid, with every line coloured up front, it took
-// ten seconds to open and stuttered on every scroll. Now each chunk is
-// its own box under `content-visibility: auto`, so the ones off screen
-// cost no layout and no paint, and a chunk starts as nothing but its
-// text — one text node, so the whole document is in the DOM from the
-// first paint for find-in-page to read, without the parse of a row per
-// line. Its rows — gutter number, line, Prism's colour — are built
-// only once it comes within a viewport of being seen, by the same
-// observer the finding lists use (view/lazy-render.js), and built
-// straight into the element: Lit renders the shells and never looks
-// inside them again, so colouring a chunk costs that chunk and nothing
-// else. The cuts fall where Markdown allows, so a chunk coloured on its
-// own reads as it would in the whole.
-//
-// Sibling of `<export-confirm-dialog>`: extends `AppDialog` for the
-// shared shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel).
+// A big report is tens of thousands of lines, so it's shown in CHUNKS
+// (export-view-chunks.js picks where they end, where Markdown allows a cut),
+// each its own box under `content-visibility: auto`. A chunk starts as one
+// text node, so find-in-page sees the whole document from the first paint;
+// its rows are built straight into it once it nears the viewport
+// (view/lazy-render.js). Lit renders only the shells and never looks inside.
 import { html, nothing, unsafeCSS } from 'lit'
 import { styleMap } from '../style-map.js'
-import { AppDialog } from './app-dialog.js'
+import { AppDialog, openAppDialog } from './app-dialog.js'
 import { highlight, splitHighlightedLines } from '../prism-highlight.js'
 import { unwatchNearViewport, watchNearViewport } from '../lazy-render.js'
 import { chunkLines, escapeHtml, tableLead } from '../export-view-chunks.js'
@@ -48,29 +20,16 @@ import { trustedHTML } from '../trusted-types.js'
 import codeTokensCSS from '../../styles/code-tokens.css'
 import exportViewCSS from './dialog-export-view.css'
 
-// The copy button's glyph — the same two-rect clipboard at the same
-// stroke weight the finding card and the Code slide use for their own
-// copy actions, so the icon means the same thing everywhere it
-// appears. It keeps its label beside it here (see render), which is
-// what says how the last click went.
+// The clipboard glyph the finding card and Code slide copy with.
 const COPY_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
   <rect x="3" y="2.5" width="8" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
   <rect x="5.5" y="5" width="8" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
 </svg>`
 
-// One chunk's rows as HTML — the gutter number and the line, for each
-// line of `[start, end)`. `rows` is Prism's markup per line; without
-// it the lines go in as they are, escaped. One string per chunk rather
-// than a template per line: a template is a parse, and a document of
-// forty thousand lines is forty thousand of them.
-//
-// Each line ends in its own newline, inside the cell. The cells are
-// grid items, so a copy of a selection serialises them as blocks, and
-// an empty block — a blank line — serialises as nothing: a copied
-// paragraph break would vanish. The newline puts it back, and the
-// browser's own line break for the block folds into it rather than
-// doubling it. It draws nothing: a break at the end of a block ends
-// the line, it doesn't open an empty one.
+// The rows of lines [start, end) as one HTML string (a template per line would
+// be a parse per line): `rows` is Prism's markup per line, else the lines
+// escaped. Each line keeps its newline inside the cell: copied cells serialise
+// as blocks, and an empty block (a blank line) would otherwise vanish.
 function rowsHtml(lines, start, end, rows = null) {
   let out = ''
   for (let i = start; i < end; i++) {
@@ -81,23 +40,16 @@ function rowsHtml(lines, start, end, rows = null) {
 }
 
 class ExportViewDialog extends AppDialog {
-  // The token palette is the same file `<finding-card>` adopts, so a
-  // snippet reads identically here and on the card it came from.
+  // The palette `<finding-card>` adopts, so a snippet reads the same here.
   static styles = [...AppDialog.styles, unsafeCSS(codeTokensCSS), unsafeCSS(exportViewCSS)]
 
   static properties = {
-    // The exact text the download would write.
     markdown: { attribute: false },
-    // How the last copy went: '' (nothing yet), 'done' or 'failed',
-    // the last two for a moment after a click — the copy button's
-    // label and its tint say which.
+    // '', or 'done' / 'failed' for a moment after a copy.
     _copied: { state: true },
   }
 
-  // Derived from `markdown` (see willUpdate): its lines, its size in
-  // KB for the header, and one record per chunk — the line range, and
-  // whether its rows have been asked for. Plain fields rather than
-  // reactive state: nothing here re-renders the template.
+  // Derived from `markdown` in willUpdate; nothing renders from them reactively.
   _lines = []
   _kb = '0.0'
   _chunks = []
@@ -109,8 +61,7 @@ class ExportViewDialog extends AppDialog {
     this._copied = ''
   }
 
-  // Nothing to type into, so focus the way out. Also what Enter should
-  // land on here: the dialog has no committing action.
+  // Nothing to type into or commit: focus the way out.
   focusInitial() {
     this.renderRoot.querySelector('button[data-role="cancel"]')?.focus()
   }
@@ -118,9 +69,7 @@ class ExportViewDialog extends AppDialog {
   willUpdate(changed) {
     if (!changed.has('markdown')) return
     const raw = this.markdown.split('\n')
-    // A trailing newline terminates the last line rather than opening an
-    // empty one — how an editor counts, and one fewer empty row at the
-    // bottom of every report (they all end in one).
+    // A trailing newline ends the last line rather than opening an empty one.
     const count = raw.length > 1 && raw.at(-1) === '' ? raw.length - 1 : raw.length
     this._lines = raw.slice(0, count)
     this._kb = (new TextEncoder().encode(this.markdown).length / 1024).toFixed(1)
@@ -129,22 +78,12 @@ class ExportViewDialog extends AppDialog {
 
   render() {
     const count = this._lines.length
-    // The copy button carries its own result, in the label it already
-    // has: Copy, then how the click went for a moment after it. That
-    // leaves the hover text nothing to add in the ordinary case — only
-    // the refused clipboard needs a way out, so that is the only state
-    // that sets one (`nothing` drops the attribute entirely).
+    // Only a refused clipboard needs hover text: the way out.
     const copyLabel = this._copied === 'done' ? 'Copied' : this._copied === 'failed' ? 'Copy failed' : 'Copy'
     const copyHint = this._copied === 'failed' ? 'Select the text and copy it by hand' : nothing
-    // The chunks are shells here: `updated` fills them. `--evd-chunk-
-    // lines` sizes a chunk's stand-in while it is skipped; `--evd-
-    // lineno-width` is the gutter every chunk's rows share (see
-    // dialog-export-view.css).
-    //
-    // Close comes FIRST in the source, before the header, because it
-    // is pinned to the dialog's corner rather than laid out in a row:
-    // that puts it where a reader tabbing in meets it first, matching
-    // where the eye finds it.
+    // Close leads the source, pinned in the corner where a reader tabbing in
+    // meets it. The chunks are shells `updated` fills; `--evd-chunk-lines`
+    // sizes one while skipped (dialog-export-view.css).
     return html`<dialog @close=${this._onClose}>
       <button
         type="button"
@@ -176,27 +115,17 @@ class ExportViewDialog extends AppDialog {
     </dialog>`
   }
 
-  // Give each new chunk shell its text and watch it for its approach
-  // to the viewport, from here rather than the template because the
-  // elements exist only after a render. Each is filled once
-  // (`data-watched`), and unwatched the moment it has been near: a
-  // chunk gets its rows once and keeps them.
-  //
-  // Not when the host is already out of the document. `showModal()`
-  // failing in `firstUpdated` dispatches `modal-conflict`, whose
-  // listener removes the element on the spot — and Lit still runs this
-  // hook after it, on a tree that disconnectedCallback has already
-  // swept. Registering those chunks would hand the shared observer a
-  // detached copy of the whole report that nothing ever unwatches.
+  // Each new shell gets its text, and is watched until it nears the viewport,
+  // once. Not on a host already removed (a `modal-conflict` removes it before
+  // Lit runs this), which would hand the shared observer a detached copy of
+  // the report nothing unwatches.
   updated() {
     if (!this.isConnected) return
     for (const el of this.renderRoot.querySelectorAll('.evd-chunk:not([data-watched])')) {
       el.dataset.watched = ''
       const index = Number(el.dataset.chunk)
       const chunk = this._chunks[index]
-      // Every line terminated, as the rows' cells are (rowsHtml): a
-      // select-all takes chunks in this state too, and a block whose
-      // last line is blank would otherwise lose it to the block break.
+      // Every line terminated, as in rowsHtml, for a select-all of this state.
       el.textContent = `${this._lines.slice(chunk.start, chunk.end).join('\n')}\n`
       watchNearViewport(el, (near) => {
         if (!near) return
@@ -212,13 +141,8 @@ class ExportViewDialog extends AppDialog {
     super.disconnectedCallback()
   }
 
-  // The whole file to the clipboard — every byte the download would
-  // write, not the lines on screen, and without a select-all that
-  // would have the browser lay out every line first. The button says
-  // how it went for a moment, in its label and its tint. Failure (no
-  // clipboard permission, an insecure origin) is said too, and the
-  // text stays there to select and copy by hand. Close may fire while the write is pending, so
-  // nothing is set on a removed element.
+  // The whole file, not the lines on screen, without a select-all laying out
+  // every line. Close may land while the write is pending.
   _onCopy = async () => {
     let state = 'done'
     try {
@@ -235,19 +159,12 @@ class ExportViewDialog extends AppDialog {
     }, 1500)
   }
 
-  // One chunk's rows, in Prism's colour where it answers. Prism loads
-  // on demand (see prism-highlight.js), so the first chunk asked pays
-  // the download and stays as text until it lands; every later one
-  // answers in a microtask. A chunk cut out of a table's body goes to
-  // Prism with the table's header and delimiter lines put back in
-  // front (see `tableLead`), so its rows are coloured as table rows;
-  // the two lines are dropped from the answer. Prism's markup is cut
-  // back into lines and trusted only when it splits into exactly as
-  // many as the chunk has — anything else means the two have drifted,
-  // and plain text against correct numbers beats colour against wrong
-  // ones. Guarded on `isConnected`: a reader who closes the dialog
-  // before the grammar lands would otherwise have a removed element
-  // built into.
+  // One chunk's rows in Prism's colour (Prism loads on demand, so the first
+  // chunk stays text until it lands). A chunk cut from a table's body goes to
+  // Prism with the table's header and delimiter lines in front (`tableLead`),
+  // dropped from the answer. The markup is trusted only when it splits into as
+  // many lines as the chunk has: plain text against right numbers beats colour
+  // against wrong ones. Not into a removed element.
   async _paint(el, index) {
     const chunk = this._chunks[index]
     if (!chunk || chunk.asked) return
@@ -264,22 +181,8 @@ class ExportViewDialog extends AppDialog {
 
 customElements.define('export-view-dialog', ExportViewDialog)
 
-// Public entry point. Takes the already-serialized Markdown so this
-// module stays a viewer — what to show is the caller's decision, the
-// same text it would hand to the download.
-//
-// Custom open helper rather than the shared `openAppDialog`, for the
-// reason `openExportConfirmDialog` documents: if `showModal()` fails
-// outright it dispatches `modal-conflict` instead of `resolve`, which
-// the shared helper never hears — leaving the await hanging and the
-// element leaked.
+// Takes the serialized Markdown, the text the download would write: what to
+// show is the caller's. Resolves, to nothing, on close, or when it can't show.
 export function openExportViewDialog(markdown) {
-  return new Promise((resolve) => {
-    const el = document.createElement('export-view-dialog')
-    el.markdown = markdown
-    const settle = () => { el.remove(); resolve() }
-    el.addEventListener('resolve', settle)
-    el.addEventListener('modal-conflict', settle)
-    document.body.append(el)
-  })
+  return openAppDialog('export-view-dialog', { markdown }, { conflict: () => undefined }).then(() => undefined)
 }

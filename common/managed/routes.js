@@ -336,7 +336,7 @@ export function resolveManagedRoute(route, teams, adminBundles = []) {
   // where it was copied, and its reader may hold the finding elsewhere: each
   // resolves where its slug names one alone, the report in any team, and
   // else to null, for the finding's lookup to prefer
-  // (ui/view/managed-finding-link.js). `teamOnly` tells a link to a team's
+  // (ui/view/finding-link-route.js). `teamOnly` tells a link to a team's
   // own findings from one whose report resolved to none.
   if (rest.finding) return { ...rest, teamId: team?.id ?? null, reportId, teamOnly: reportSlug == null }
   if (!team) return null

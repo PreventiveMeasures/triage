@@ -1,19 +1,16 @@
 import { LitElement, html, nothing } from 'lit'
-import { appMarkup } from './markup.js'
 import { managedRoutePath } from '../../common/managed/routes.js'
 import { isPatchHash } from '../../common/managed/npm-packages.js'
 import { discardDependencyReview, myDependencyReviews, teamDependencyReviews } from './client-managed.js'
 import { openDiscardReviewDialog } from './lazy-dialogs.js'
 import { managedHistory } from './managed-history.js'
-import { DELETE_ICON_SVG } from './icons.js'
-import { sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
+import { sourcePackageIcon } from './source-file-icon.js'
 import { showToast } from './toast.js'
-import { reviewAuthor, reviewBadge, reviewNote, reviewTitle, selectReviewOnOpen, verdictLabel } from './npm-review-presentation.js'
+import { discardButton, notesSaid, reviewAuthor, reviewBadge, reviewCoverage, reviewFile, reviewNote, reviewTitle, selectReviewOnOpen, verdictLabel } from './npm-review-presentation.js'
 
-// A review's page: of its version against its base, as patched where it is
-// a patched one's, the patch read where it was, and against its base as
-// patched, as kept; one of a patch pnpm 9 named by an md5, which is read no
-// more, its version's.
+// A review's page: of its version against its base, each as patched where
+// it was, the patch read where it was; one of a patch pnpm 9 named by an
+// md5, which is read no more, its version's.
 export const dependencyReviewRoute = review => ({ view: 'npm', packageName: review.package, packageSpec: review.version, bundleTab: 'review',
   ...(review.basePackage === null ? {} : { reviewPackage: review.basePackage, reviewSpec: review.baseVersion }),
   ...(isPatchHash(review.patchHash) && review.patchSource ? { patch: { hash: review.patchHash, ...review.patchSource } } : {}),
@@ -27,13 +24,9 @@ const compactDate = time => {
 }
 
 // The reader's own reviews, drafts and published, as My reviews lists them;
-// or, given a team (`team`, its id), those published to it, the latest
-// first, by whom, as its Dependencies tab lists them, none to copy: copying
-// the comment the server's host formats of a dependency review
-// (dependency-review-copy.js) is for one's own. Each a line: its ecosystem's
-// icon and what it is of, its verdict, how much of it was checked, who and
-// which teams (a team's list, the others alone), when; its notes and files
-// opened under it by how much of it was checked, a button.
+// or, given a team (`team`, its id), those published to it, by whom, as its
+// Dependencies tab lists them, none to copy (copying is for one's own). Each
+// a line, its notes and files opened under it by its coverage button.
 export class DependencyReviewList extends LitElement {
   static properties = { session: { attribute: false }, team: { attribute: false }, _reviews: { state: true }, _loading: { state: true }, _error: { state: true },
     _next: { state: true }, _discarding: { state: true }, _expanded: { state: true } }
@@ -72,7 +65,7 @@ export class DependencyReviewList extends LitElement {
   }
   _toggleDetails(id) {
     const expanded = new Set(this._expanded)
-    if (expanded.has(id)) expanded.delete(id); else expanded.add(id)
+    if (!expanded.delete(id)) expanded.add(id)
     this._expanded = expanded
   }
   _details(review) {
@@ -80,7 +73,7 @@ export class DependencyReviewList extends LitElement {
     return html`<section id=${`review-details-${review.id}`} class="dependency-review-details" aria-label=${`Details for ${reviewTitle(review)}`}>
       ${review.comment ? html`<div class="dependency-review-final-note" role="note" aria-label="Final note">${reviewNote(review.comment)}</div>` : nothing}
       ${entries.length > 0 ? html`<ul class="dependency-review-entries">${entries.map(entry => html`<li>
-        <span class="dependency-review-entry-file">${sourceFileIcon(entry.file)}<span>${entry.file}</span></span>
+        ${reviewFile(entry.file)}
         ${verdictLabel(entry.status)}
         <div>${reviewNote(entry.comment)}</div></li>`)}</ul>` : html`<p class="npm-review-muted">No file reviews yet.</p>`}
     </section>`
@@ -94,9 +87,9 @@ export class DependencyReviewList extends LitElement {
     const others = review.teams.filter(team => team.id !== this.team).map(team => team.name).join(', ')
     const teams = others && this.team ? `also ${others}` : others
     const open = event => {
-        if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && managedHistory?.active) {
-          event.preventDefault(); selectReviewOnOpen(review); void managedHistory.navigate(route)
-        }
+      if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && managedHistory?.active) {
+        event.preventDefault(); selectReviewOnOpen(review); void managedHistory.navigate(route)
+      }
     }
     return html`<li class=${`dependency-review-row${expanded ? ' is-expanded' : ''}${review.revokedAt === null ? '' : ' is-revoked'}`}><div class="dependency-review-row-main">
       <a class="dependency-review-title" href=${managedRoutePath(route)} @click=${open}>${sourcePackageIcon(review.ecosystem)}
@@ -106,18 +99,16 @@ export class DependencyReviewList extends LitElement {
       <span class="dependency-review-result">${published ? verdictLabel(review.status) : html`<span class="dependency-review-checked">${checked} ${checked === 1 ? 'file' : 'files'} checked</span>`}</span>
       <button type="button" class="dependency-review-coverage" aria-expanded=${expanded} aria-controls=${`review-details-${review.id}`}
         data-tooltip=${published ? `${review.checkedFiles} of ${review.totalFiles} files checked` : nothing} @click=${() => this._toggleDetails(review.id)}>${published
-          ? html`${review.coverage === 'full' ? 'Full' : html`<span class="dependency-review-partial">Partial</span>`} · ${review.checkedFiles}/${review.totalFiles}`
-          : notes ? `${notes} ${notes === 1 ? 'note' : 'notes'}` : 'No notes'}</button>
+          ? html`${reviewCoverage(review)} · ${review.checkedFiles}/${review.totalFiles}` : notes ? notesSaid(notes) : 'No notes'}</button>
       ${this.team ? html`<span class="dependency-review-author">${reviewAuthor(review)}</span>` : nothing}
       <span class="dependency-review-meta">
         ${published && teams ? html`<span class="dependency-review-teams" data-tooltip-truncated data-tooltip=${teams}>${teams}</span>` : nothing}
-        ${published && notes > 0 ? html`<span class="dependency-review-note-count">${notes} ${notes === 1 ? 'note' : 'notes'}</span>` : nothing}
+        ${published && notes > 0 ? html`<span class="dependency-review-note-count">${notesSaid(notes)}</span>` : nothing}
         ${review.revokedAt === null ? nothing : reviewBadge(review)}</span>
       ${compactDate(review.publishedAt ?? review.time)}
       <div class="dependency-review-row-actions">
         ${this.team ? nothing : html`<dependency-review-copy .text=${review.formatted}></dependency-review-copy>`}
-        ${this._canDiscard(review) ? html`<button type="button" class="dependency-review-discard" aria-label="Discard review" ?disabled=${this._loading || Boolean(this._discarding)}
-          @click=${() => this._discard(review)}>${appMarkup(DELETE_ICON_SVG)}</button>` : nothing}
+        ${this._canDiscard(review) ? discardButton(this._loading || Boolean(this._discarding), () => this._discard(review)) : nothing}
         <a class="dependency-review-open" href=${managedRoutePath(route)} @click=${open} aria-label=${`${published ? 'Open' : 'Continue'} review for ${reviewTitle(review)}`}><span aria-hidden="true">→</span></a></div></div>
       ${expanded ? this._details(review) : nothing}
     </li>`
@@ -134,25 +125,29 @@ export class DependencyReviewList extends LitElement {
       this._expanded = new Set()
       void this._load()
     }
+    const error = this._error ? html`<p role="alert">${this._error}</p>` : nothing
+    const none = !this._loading && !this._error && this._reviews.length === 0
+    const more = this._next ? html`<button type="button" class="npm-review-button" ?disabled=${this._loading || !this.team && Boolean(this._discarding)}
+      @click=${() => this._load(true)}>Load more</button>` : nothing
     if (this.team) {
       return html`<section class="dependency-review-list is-team">
-        ${this._error ? html`<p role="alert">${this._error}</p>` : nothing}
-        ${!this._loading && !this._error && this._reviews.length === 0 ? html`<p class="npm-review-muted">No reviews are published to this team yet.</p>` : nothing}
+        ${error}
+        ${none ? html`<p class="npm-review-muted">No reviews are published to this team yet.</p>` : nothing}
         <ol>${this._reviews.map(review => this._row(review))}</ol>
-        ${this._next ? html`<button type="button" class="npm-review-button" ?disabled=${this._loading} @click=${() => this._load(true)}>Load more</button>` : nothing}
+        ${more}
       </section>`
     }
     return html`<section class="dependency-review-list">
       <header><h1>My reviews</h1></header>
       <p>Your private work and the reviews you’ve shared with teams.</p>
-      ${this._error ? html`<p role="alert">${this._error}</p>` : nothing}
-      ${!this._loading && !this._error && this._reviews.length === 0 ? html`<p>No reviews yet. Open a package’s Review tab to begin.</p>` : nothing}
+      ${error}
+      ${none ? html`<p>No reviews yet. Open a package’s Review tab to begin.</p>` : nothing}
       ${[['Drafts', false], ['Published reviews', true]].map(([label, published]) => {
         const reviews = this._reviews.filter(review => (review.publishedAt !== null) === published)
         return html`<section class="dependency-review-section"><h2>${label}<span class="npm-review-count">${reviews.length}</span></h2>
           <ol>${reviews.map(review => this._row(review))}</ol>${reviews.length === 0 && !this._loading ? html`<p class="npm-review-muted">${published ? 'No published reviews yet.' : 'No drafts.'}</p>` : nothing}</section>`
       })}
-      ${this._next ? html`<button type="button" class="npm-review-button" ?disabled=${this._loading || Boolean(this._discarding)} @click=${() => this._load(true)}>Load more</button>` : nothing}
+      ${more}
     </section>`
   }
 }

@@ -1,12 +1,6 @@
-// `<triage-export-dialog>` — full triage backup / restore dialog
-// invoked from the console via `DeepView.export()`. Bundles all
-// persisted-id triage entries plus all saved repo URLs into a
-// single gzipped JSON file, and accepts the same shape back for
-// import with three merge modes.
-//
-// Sibling of `<triage-conflict-dialog>` — extends `AppDialog` for
-// the shared shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel)
-// plus a public `open*` Promise wrapper.
+// Full triage backup and restore, from the console's `DeepView.export()`:
+// every persisted-id triage entry and saved repo URL in one gzipped JSON file,
+// imported back under one of three merge modes.
 import { html, nothing, unsafeCSS } from 'lit'
 import {
   applyTriageImport,
@@ -34,18 +28,13 @@ class TriageExportDialog extends AppDialog {
     super()
     this.parsed = null
     this.parseError = null
-    // Default to 'prefer-current' — least destructive option;
-    // user has to pick a stronger mode to overwrite anything.
+    // The least destructive mode; overwriting takes a stronger pick.
     this.mode = 'prefer-current'
     this.busy = false
     this.status = null
   }
 
-  // Focus the primary Download button (the base default would grab
-  // the import file input instead). Base `firstUpdated` (showModal),
-  // `_finish` (close + resolve) and `_onClose` (Esc / backdrop) are
-  // inherited; this dialog resolves with no value — callers just
-  // await the close.
+  // Download, not the import's file input the base would pick.
   focusInitial() {
     this.renderRoot.querySelector('button.primary')?.focus()
   }
@@ -85,23 +74,14 @@ class TriageExportDialog extends AppDialog {
     this.status = null
     try {
       const result = await applyTriageImport(this.parsed, this.mode)
-      // Re-render so adopted markers / triage states light up the
-      // current view immediately. Bail-safe when nothing's loaded.
+      // Light up adopted markers and states in the current view.
       renderApp()
-      // Triage import is authoritative; a repo-URL write failure
-      // (e.g. the vault got locked mid-import) is reported separately
-      // so the message reflects what actually persisted.
+      // The triage import stands; a repo-URL write failure (the vault locked
+      // mid-import) is said apart, so the message is what persisted.
       this.status = result.repoUrlError
-        ? {
-          kind: 'err',
-          text: `Applied ${result.triageEntries} triage entries (${this.mode}), but saving repo URLs failed: ${result.repoUrlError.message}`,
-        }
-        : {
-          kind: 'ok',
-          text: `Applied ${result.triageEntries} triage entries and ${result.repoUrls} repo URLs (${this.mode}).`,
-        }
-      // Clear parsed so the file picker resets — user can pick
-      // another file or close.
+        ? { kind: 'err', text: `Applied ${result.triageEntries} triage entries (${this.mode}), but saving repo URLs failed: ${result.repoUrlError.message}` }
+        : { kind: 'ok', text: `Applied ${result.triageEntries} triage entries and ${result.repoUrls} repo URLs (${this.mode}).` }
+      // Reset the picker, for another file or a close.
       this.parsed = null
       const input = this.renderRoot.querySelector('input[type="file"]')
       if (input) input.value = ''
@@ -143,6 +123,11 @@ class TriageExportDialog extends AppDialog {
   // nobody else sees, so it offers the export alone.
   _importTemplate() {
     const p = this.parsed
+    const mode = (value, label, hint) => html`<label>
+      <input type="radio" name="te-mode" value=${value}
+        .checked=${this.mode === value} @change=${this._onMode}>
+      <span>${label} <em>(${hint})</em></span>
+    </label>`
     return html`<hr>
 
       <section class="section">
@@ -160,21 +145,9 @@ class TriageExportDialog extends AppDialog {
           </div>
           <fieldset class="mode">
             <legend>Merge mode</legend>
-            <label>
-              <input type="radio" name="te-mode" value="prefer-current"
-                .checked=${this.mode === 'prefer-current'} @change=${this._onMode}>
-              <span>Merge — keep current on conflict <em>(safest, only fills gaps)</em></span>
-            </label>
-            <label>
-              <input type="radio" name="te-mode" value="prefer-imported"
-                .checked=${this.mode === 'prefer-imported'} @change=${this._onMode}>
-              <span>Merge — prefer imported on conflict <em>(overwrites where both have a value)</em></span>
-            </label>
-            <label>
-              <input type="radio" name="te-mode" value="replace"
-                .checked=${this.mode === 'replace'} @change=${this._onMode}>
-              <span>Replace all <em>(drops every current persisted entry first — destructive)</em></span>
-            </label>
+            ${mode('prefer-current', 'Merge — keep current on conflict', 'safest, only fills gaps')}
+            ${mode('prefer-imported', 'Merge — prefer imported on conflict', 'overwrites where both have a value')}
+            ${mode('replace', 'Replace all', 'drops every current persisted entry first — destructive')}
           </fieldset>
           <button type="button" class="primary" @click=${this._onApply} ?disabled=${this.busy}>
             ${this.busy ? 'Applying…' : 'Apply import'}
@@ -186,10 +159,7 @@ class TriageExportDialog extends AppDialog {
 
 customElements.define('triage-export-dialog', TriageExportDialog)
 
-// Public entry point. Returns a Promise that resolves when the
-// dialog closes (cancel or after a successful action). Caller
-// doesn't get the import result — the dialog already re-rendered
-// the app and showed a confirmation; nothing more to do here.
+// Resolves on close; the dialog itself re-renders the app and reports what it did.
 export function openTriageExportDialog() {
   return openAppDialog('triage-export-dialog')
 }

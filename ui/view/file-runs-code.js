@@ -33,16 +33,14 @@ export const npmRunsCodeSaid = (found, added = null) => [...Map.groupBy([...foun
   return `${said} (${linesNote(lines, kinds.some(([, of]) => of.length >= NPM_MAX_FOUND))}${kinds.some(([kind]) => added?.has(kind)) ? ', new' : ''})`
 }).join(', ')
 
-// The one line a tag's lines (each kind's, or service's) are, undefined for
-// several: where a click on the tag opens its file.
-export const onlyLine = lineLists => {
-  const lines = new Set(lineLists.flat())
-  return lines.size === 1 ? [...lines][0] : undefined
+// A tag's attributes opening `path` in the code viewer
+// (`data-bundle-view-source`, events.js) on the one line its `lineLists`
+// (each kind's, or service's) hold: none without a path, or for several.
+export const opensAt = (path, lineLists) => {
+  const lines = new Set(path === undefined ? [] : lineLists.flat())
+  const [line] = lines
+  return lines.size === 1 && line !== undefined ? { path, line } : { path: nothing, line: nothing }
 }
-
-// A tag's attributes opening `path` in the code viewer at `line`
-// (`data-bundle-view-source`, events.js), scrolled to it: none without one.
-export const opensAt = (path, line) => line === undefined ? { path: nothing, line: nothing } : { path, line }
 
 // The kinds reaching for credentials a file holds, each by its own name with
 // its lines, those new to it (`added`) so said: `.npmrc, .ssh or .aws (line
@@ -63,7 +61,7 @@ export function npmRunsCodeTags(found, was, path) {
     const rows = kinds.map(([kind, lines]) => [RUNS_CODE.get(kind).name, linesNote(lines)])
     const added = was === undefined ? [] : kinds.filter(([kind]) => !was?.has(kind)).map(([kind]) => RUNS_CODE.get(kind).name)
     const notice = added.length === 0 ? null : added.length === kinds.length ? 'New in this version' : `New in this version: ${added.join(', ')}`
-    const at = opensAt(path, path === undefined ? undefined : onlyLine(kinds.map(([, lines]) => lines)))
+    const at = opensAt(path, kinds.map(([, lines]) => lines))
     return html`<span data-bundle-view-source=${at.path} data-bundle-view-line=${at.line}
       class=${`npm-runs-code${mark ? ` is-${mark}` : ''}`} data-tooltip=${[`${note}: ${rows.map(row => row.join(', ')).join('; ')}`, notice].filter(Boolean).join(' · ')}
       .tooltipContent=${html`<div class="compare-tip">

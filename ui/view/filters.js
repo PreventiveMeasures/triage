@@ -1,102 +1,28 @@
 import { automaticFixFor, managedIssueFor } from './managed-issues.js'
 import { isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, activeRevalidateKinds, displayedSeverity, findingText, isModule, isRevalidation, isRuledOut, prettyModel, revalidateKind, voidsConfidence } from './format.js'
+import { SEVERITY_ORDER, displayedSeverity, findingText, isModule, isRevalidation, isRuledOut, prettyModel, revalidateKind } from './format.js'
 import { drawnTabs, getMergedGroups, primaryTab, tabKey, triageEntry, underlyingFindingsShown } from './group.js'
-import { defaultConfidenceFloor as confidenceFloor, confidenceOnScale, confirmedCoverage, confirmedIsDefault, canLockConfirmed as lockConfirmed, rangeApplies } from '../../common/finding-filters.js'
-export { confidenceOnScale, rangeApplies } from '../../common/finding-filters.js'
+import { activeRevalidateKinds, canLockConfirmed, defaultConfidenceFloor as confidenceFloor, confidenceOnScale, confirmedCoverage, confirmedIsDefault, rangeApplies } from '../../common/finding-filters.js'
+export { rangeApplies } from '../../common/finding-filters.js'
 import { reportDuplicateIds } from './report-duplicates.js'
 import { ignoresOwnRepo } from '../../common/finding-repo.js'
 
-// Stand-in for the "no analyzer" bucket in the analyzer dropdown.
-// Plain `'null'` would collide with a legitimate analyzer literally
-// named `"null"` (a valid name) — both would render as
-// `<option value="null">` and conflate. A NUL character won't be a
-// real analyzer name and roundtrips through HTML option values +
-// state.filterAnalyzer fine. Written as the `\u0000` escape (NOT a
-// literal NUL byte): a literal NUL trips git's / GitHub's binary-file
-// heuristic, which then suppresses textual diffs for this whole file.
+// Dropdown stand-ins for "no value", each a distinct control character so
+// they can't collide with a real name (an analyzer may be called `null`)
+// or couple two dropdowns through a shared value. Written as escapes: a
+// literal NUL makes git treat the file as binary.
+// The analyzer dropdown's "no analyzer".
 export const NULL_ANALYZER_SENTINEL = '\u0000'
-
-// Same idea for the workspace-view repo dropdown — stands in for
-// findings whose repo can't be derived (no `repo.github` AND no
-// `_repoFallback` URL). Deliberately a different control character
-// from NULL_ANALYZER_SENTINEL so the two dropdowns can't silently
-// couple through a shared sentinel value — no current reader
-// compares both off one source, but the distinct bytes keep that
-// safety property explicit. Written as the `\u0001` escape for the same
-// source-stays-text reason as NULL_ANALYZER_SENTINEL above.
+// The workspace repo dropdown's "no repo" (no `repo.github`, no `_repoFallback`).
 export const NO_REPO_SENTINEL = '\u0001'
-
-// Third control-character sentinel — the "(no model)" bucket in the
-// model column of the analyzer/model dropdown (`<analyzer-select>`).
-// Distinct byte from the two above for the same no-silent-coupling
-// reason: the analyzer and model dimensions sit side by side in one
-// control, so sharing NULL_ANALYZER_SENTINEL would make a "(none)"
-// analyzer and a "(no model)" selection indistinguishable in state.
-// Written as the `\u0002` escape — see NULL_ANALYZER_SENTINEL for why
-// not a literal control byte.
+// The `<analyzer-select>` model columns' "(no model)".
 export const NULL_MODEL_SENTINEL = '\u0002'
 
-// A finding's model dimension for the analyzer/model dropdown — the
-// pretty display name (the form the header combo tags and per-finding
-// run-meta lines already show), so vendor-prefixed spellings of the
-// same model (`anthropic/claude-opus-4-7` vs `claude-opus-4-7`)
-// collapse into one filterable bucket instead of two identical-looking
-// options. `null` when the finding carries no model (source-marked
-// imports never stamp run meta onto findings). `||` rather than `??`
-// so a blank-string model joins the null bucket instead of becoming an
-// empty option label.
+// A finding's model as the dropdown buckets it: the pretty name, so
+// vendor-prefixed spellings of one model are one option; null for none (a
+// blank one included).
 export function modelOfFinding(f) {
   return prettyModel(f.model) || null
-}
-
-// Analyzer + model dimension predicate — two run-meta checks of
-// the toolbar's `<analyzer-select>` dropdown, factored out of
-// matchesFilters because group.js's activeTabFor ALSO consults it:
-// when the dropdown narrows the view, the tab a dedup group opens on
-// by default should be one the filter actually matched, not whichever
-// sorted first. A separate export (rather than reusing matchesFilters)
-// keeps the default-tab preference from dragging the search box /
-// severity / confidence state into tab resolution.
-//
-// Analyzer: empty = no filter. Findings with no analyzer
-// (`_analyzer === null`) match NULL_ANALYZER_SENTINEL; other values
-// are straight string equality.
-//
-// Model: matched on `modelOfFinding` (the pretty name; see that
-// helper for why). Findings with no model match NULL_MODEL_SENTINEL.
-// Only on a row the revalidation pass did not write: the pass's own
-// row answers to the Validation model instead (matchesValidationModel),
-// so that a model the pass ran on can be asked for what IT found in the
-// scans beneath, where the pass ran on that one model everywhere.
-//
-// Both dimensions are evaluated per-finding, so selecting both means
-// "SOME finding carries this exact analyzer+model combination" — not
-// one finding with the analyzer and a different one with the model.
-export function matchesRunFilters(f) {
-  const F = activeFilters()
-  if (F.filterAnalyzer) {
-    const a = f._analyzer ?? null
-    const want = F.filterAnalyzer === NULL_ANALYZER_SENTINEL ? null : F.filterAnalyzer
-    if (a !== want) return false
-  }
-  if (F.filterModel) {
-    if (isRevalidation(f)) return false
-    const m = modelOfFinding(f)
-    const want = F.filterModel === NULL_MODEL_SENTINEL ? null : F.filterModel
-    if (m !== want) return false
-  }
-  return true
-}
-
-// The dropdown's third dimension, offered in App mode: the model of the
-// revalidation pass's own row (`revalidate: "revalidation"`), by the
-// same pretty name and NULL_MODEL_SENTINEL bucket as Model. Any other
-// row matches no Validation model.
-export function matchesValidationModel(f) {
-  const want = activeFilters().filterValidationModel
-  if (!want) return true
-  return isRevalidation(f) && modelOfFinding(f) === (want === NULL_MODEL_SENTINEL ? null : want)
 }
 
 // A dropdown selection as the value it asks for: `undefined` for none,
@@ -105,37 +31,49 @@ export function runFilterValue(value, sentinel) {
   return value === '' ? undefined : value === sentinel ? null : value
 }
 
-// The `<analyzer-select>` dropdown's counts: per column, a Map of each
-// value to how many of `groups`, whole rows, it would show, under the
-// other columns' selection. One pass builds all three: per group,
-// collect the analyzers of its tabs that pass the Model filter, and the
-// models of those that pass the Analyzer filter, where the row has a
-// pass of the Validation model; and the models of its passes where
-// some tab carries the analyzer+model pair. Each collected value then
-// counts the group once, as matchesRunRow would show it.
-//
-// Whole rows, the scans App mode folds under a pass's included, so the
-// counts are the same whether the reader sees those or not.
+const analyzerOf = (f) => f._analyzer ?? null
+// The pass's own row has no Model: it answers to the Validation model, so a
+// model the pass ran on can be asked for what IT found in the scans beneath.
+const analyzerMatches = (f, want) => want === undefined || analyzerOf(f) === want
+const modelMatches = (f, want) => want === undefined || (!isRevalidation(f) && modelOfFinding(f) === want)
+
+// The `<analyzer-select>` Analyzer + Model selection asked of one tab. Per
+// tab, so both mean "SOME finding carries this pair". Also asked by
+// group.js activeTabFor (via matchesRunTab), apart from matchesFilters so
+// tab resolution doesn't depend on the other filters.
+function matchesRunFilters(f) {
+  const F = activeFilters()
+  return analyzerMatches(f, runFilterValue(F.filterAnalyzer, NULL_ANALYZER_SENTINEL))
+    && modelMatches(f, runFilterValue(F.filterModel, NULL_MODEL_SENTINEL))
+}
+
+// The dropdown's third dimension, in App mode: the model of the pass's own
+// row (`revalidate: "revalidation"`). No other row has one.
+function matchesValidationModel(f) {
+  const want = runFilterValue(activeFilters().filterValidationModel, NULL_MODEL_SENTINEL)
+  return want === undefined || (isRevalidation(f) && modelOfFinding(f) === want)
+}
+
+// The `<analyzer-select>` counts: per column, a Map of each value to how
+// many of `groups` (whole rows, the scans App mode folds under a pass
+// included) it would show under the other columns' selection — each value
+// counting its group once, as matchesRunRow would show it.
 export function runFilterCounts(groups) {
   const F = activeFilters()
   const wantA = runFilterValue(F.filterAnalyzer, NULL_ANALYZER_SENTINEL)
   const wantM = runFilterValue(F.filterModel, NULL_MODEL_SENTINEL)
-  const wantV = runFilterValue(F.filterValidationModel, NULL_MODEL_SENTINEL)
-  const analyzerOf = (f) => f._analyzer ?? null
-  const analyzerOk = (f) => wantA === undefined || analyzerOf(f) === wantA
-  const modelOk = (f) => wantM === undefined || (!isRevalidation(f) && modelOfFinding(f) === wantM)
   const counts = { analyzers: new Map(), models: new Map(), validationModels: new Map() }
   const count = (map, values) => { for (const value of values) map.set(value, (map.get(value) ?? 0) + 1) }
   for (const g of groups) {
-    const validated = wantV === undefined || g.some((f) => isRevalidation(f) && modelOfFinding(f) === wantV)
-    const paired = (wantA === undefined && wantM === undefined) || g.some((f) => analyzerOk(f) && modelOk(f))
+    const validated = g.some(matchesValidationModel)
+    const paired = g.some(matchesRunFilters)
     const analyzers = new Set()
     const models = new Set()
     const validationModels = new Set()
     for (const f of g) {
       const pass = isRevalidation(f)
-      if (validated && modelOk(f)) analyzers.add(analyzerOf(f))
-      if (validated && !pass && analyzerOk(f)) models.add(modelOfFinding(f))
+      if (validated && modelMatches(f, wantM)) analyzers.add(analyzerOf(f))
+      if (validated && !pass && analyzerMatches(f, wantA)) models.add(modelOfFinding(f))
       if (paired && pass) validationModels.add(modelOfFinding(f))
     }
     count(counts.analyzers, analyzers)
@@ -145,11 +83,9 @@ export function runFilterCounts(groups) {
   return counts
 }
 
-// Whether the `<analyzer-select>` dropdown has a choice to offer over
-// `groups`, given the Sets of values each column would list: a column
-// with more than one, or a single validation model some row has no pass
-// of, which picking it leaves out. A single one every row has a pass of
-// would leave out nothing.
+// Whether the dropdown has a choice to offer over `groups`, given the Sets
+// each column would list: a column with more than one value, or a single
+// validation model some row has no pass of (picking it leaves that out).
 export function runFiltersOffered(groups, { analyzers, models, validationModels }) {
   return analyzers.size > 1 || models.size > 1 || validationModels.size > 1
     || (validationModels.size === 1 && groups.some((g) => !g.some(isRevalidation)))
@@ -163,24 +99,20 @@ export function matchesRunTab(f) {
     || (Boolean(F.filterValidationModel) && matchesValidationModel(f))
 }
 
-// The dropdown's selection, asked of a whole row: some row carrying the
-// analyzer+model combination, and some pass's row of the Validation
-// model. Separately, since no one row can be both: the pass's row is the
-// only one with a Validation model, and the only one without a Model.
-export function matchesRunRow(group) {
+// The selection asked of a whole row: some tab with the analyzer+model
+// pair, and some pass row of the Validation model — separately, since the
+// pass's row is the only one with a Validation model and without a Model.
+function matchesRunRow(group) {
   const F = activeFilters()
   if (F.filterValidationModel && !group.some(matchesValidationModel)) return false
   return !(F.filterAnalyzer || F.filterModel) || group.some(matchesRunFilters)
 }
 
-// Resolve a finding's repo to a single string key, or null when no
-// repo signal is available. DeepView App findings describe the app in
-// their report, even when their source code lives in a dependency repo.
-// Prefer their report's repo (stamped at ingest as `_repoFallback`) for
-// both the repository selector and its matching predicate. Other findings
-// keep the source repo first, but for one on an advisory whose `repo` is the
-// advised package's (common/finding-repo.js). File/source links resolve
-// separately.
+// A finding's repo as one key, or null. A DeepView App finding describes
+// its report's app even when its code lives in a dependency, so it takes
+// the report's repo (`_repoFallback`); others take their own `repo.github`
+// first, unless it names the package they advise against
+// (common/finding-repo.js). File links resolve separately.
 export function repoOfFinding(f) {
   const reportRepo = typeof f._repoFallback === 'string' && f._repoFallback ? f._repoFallback : null
   if (f.isApp && !(f._source ?? f.source) && reportRepo) return reportRepo
@@ -188,68 +120,36 @@ export function repoOfFinding(f) {
   return reportRepo
 }
 
-// The caller supplies the scope-filtered, visible tabs from applyScopeFilters.
-// Use the same repo resolver for both selector choices and matching.
+// The repository choices over the scope-filtered, visible tabs
+// (applyScopeFilters), through the same resolver the filter matches by.
 export function repositoryFilterValues(groups) {
-  const repos = new Set()
-  for (const group of groups) {
-    for (const finding of group) repos.add(repoOfFinding(finding))
-  }
-  return repos
+  return new Set(groups.flatMap((group) => group.map(repoOfFinding)))
 }
 
+// Every `filter*` field and its "no filter" value, in reset order. Sets are
+// reset to fresh ones.
+const FILTER_DEFAULTS = {
+  filterSeverities: new Set(), filterColors: new Set(), filterSources: new Set(),
+  filterAnalyzer: '', filterModel: '', filterValidationModel: '', filterRepo: '',
+  filterConfMin: 0, filterConfMax: 10,
+  filterInclude: '', filterIncludeNegate: false,
+  filterComment: '', filterIssue: '', filterFix: '', filterFlagged: '', filterDuplicates: '', filterCrossContext: '', filterAppStacked: '', filterSecurity: '',
+  // The outcome too: one surviving a reset would keep hiding findings, and
+  // the deep-link and graph-jump paths reset so their target is on screen.
+  filterRevalidate: '', filterPartial: '',
+}
+const FILTER_FIELDS = Object.keys(FILTER_DEFAULTS)
+
 export function resetFilters() {
-  state.filterSeverities = new Set()
-  state.filterColors = new Set()
-  state.filterSources = new Set()
-  state.filterAnalyzer = ''
-  state.filterModel = ''
-  state.filterValidationModel = ''
-  state.filterRepo = ''
-  state.filterConfMin = 0
-  state.filterConfMax = 10
-  state.filterInclude = ''
-  state.filterIncludeNegate = false
-  state.filterComment = ''
-  state.filterIssue = ''
-  state.filterFix = ''
-  state.filterFlagged = ''
-  state.filterDuplicates = ''
-  state.filterCrossContext = ''
-  state.filterAppStacked = ''
-  state.filterSecurity = ''
-  // Including the revalidation outcome: this is "no filters", and one
-  // that survived would keep hiding findings after a reset — which
-  // matters more now that a revalidation report can OPEN on it (see
-  // defaultRevalidateFilter), and that the deep-link and
-  // graph-jump paths reset precisely so the finding they navigate to
-  // is on screen.
-  state.filterRevalidate = ''
-  state.filterPartial = ''
-  // Opening sort is derived from the complete, merged view in
-  // applyOpeningFilters(). Reports are ingested one at a time, so
-  // looking at state.reports here would let an early report decide the
-  // sort before the workspace's other rows have arrived.
+  for (const key of FILTER_FIELDS) state[key] = FILTER_DEFAULTS[key] instanceof Set ? new Set() : FILTER_DEFAULTS[key]
+  // The opening sort is derived from the whole merged view
+  // (applyOpeningFilters): reports ingest one at a time, and an early one
+  // must not decide it.
   state.sortBy = 'severity'
 }
 
-// Every `filter*` field the predicates below read — the same set
-// `resetFilters` clears, which is what makes a clone of them a complete
-// stand-in for `state` as far as filtering is concerned.
-const FILTER_FIELDS = [
-  'filterSeverities', 'filterColors', 'filterSources',
-  'filterAnalyzer', 'filterModel', 'filterValidationModel', 'filterRepo',
-  'filterConfMin', 'filterConfMax',
-  'filterInclude', 'filterIncludeNegate',
-  'filterComment', 'filterIssue', 'filterFix', 'filterFlagged', 'filterDuplicates', 'filterCrossContext', 'filterAppStacked', 'filterSecurity',
-  'filterRevalidate', 'filterPartial',
-]
-
-// A detached copy of the current filter selection. The Sets are copied
-// too, so a caller can relax one without reaching back into the
-// toolbar's. For the export confirm dialog, which lets a user drop a
-// filter from what it is about to write WITHOUT changing what the app
-// is showing.
+// A detached copy of the filter selection, Sets copied too: the export
+// confirm dialog relaxes one without changing what the app shows.
 export function cloneFilterFields() {
   const out = {}
   for (const key of FILTER_FIELDS) {
@@ -259,66 +159,31 @@ export function cloneFilterFields() {
   return out
 }
 
-// While set, the predicates read their `filter*` values from here
-// instead of `state` — everything else (triage entries, severityMode)
-// still comes from `state`, since only the selection is being stood in
-// for. Deliberately sticky rather than a callback wrapper: print has to
-// hold it across a render and the browser's own print dialog, which no
-// synchronous scope can span. Callers pair it with `clearFilterOverride`
-// in a `finally` / restore path.
+// While set, the predicates read their `filter*` values from here instead
+// of `state` (everything else still comes from `state`). Sticky rather than
+// a callback scope: print holds it across a render and the browser's print
+// dialog. Callers clear it in a `finally` / restore path.
 let filterOverride = null
 
 export function setFilterOverride(fields) { filterOverride = fields }
 export function clearFilterOverride() { filterOverride = null }
 
-// `state` unless something is standing in for it. Read once per
-// predicate call rather than per field, so a filter pass can't see half
-// of one selection and half of another. Exported for the markdown
-// adapter, which describes in its file's header the selection the file
-// was written under — the one its own `applyFilters` pass read.
+// `state` unless something stands in for it, read once per predicate call
+// so a pass can't mix two selections. The markdown adapter describes the
+// selection its file was written under through this.
 export function activeFilters() {
   return filterOverride ?? state
 }
 
-// The outcome a row ANSWERS TO when the toolbar filters by one — the
-// pass's own reading where there is one, and `revalidation` (the value
-// naming the pass itself) for a row NO pass ever reached.
-//
-// A product's import — Claude Security, Codex Security, DeepSec,
-// Piolium; anything carrying a `source` marker, which is everything
-// that isn't DeepView's own dump (file-display.js PRODUCER_LABELS) —
-// was never put in front of DeepView's revalidation pass, so that pass
-// never ruled it out. Where nothing else judged it either, it stands,
-// exactly as a row the pass re-examined and left alone stands. That
-// makes such a finding permanently part of the app view and
-// permanently Confirmed: the App switch has no layer to take off it,
-// and picking Confirmed in a workspace that mixes a revalidated report
-// with imported ones keeps the imports on screen instead of filtering
-// them away for lacking a stamp they could never have carried.
-//
-// But a product can run a pass of its own and write down what it
-// concluded. DeepSec does, and this app reads it
-// (@preventive/report/src/parse-deepsec.js). There the stand-in would be a claim
-// the document doesn't make — a finding that report left unjudged is
-// not one it confirmed — and applied to every unstamped row it would
-// empty Confirmed of meaning for exactly the imports that arrive with
-// real verdicts. So the stand-in asks whether the producer's own pass
-// reached the report this row came from at all (`_sourcePass`, stamped
-// per finding by ingest.js), and stands aside where it did: the row
-// then answers nothing, the same as the analyzer's own unstamped rows
-// in a revalidated report.
-//
-// Only the two filter questions below read this. What a card DRAWS
-// still comes from format.js's own readers, so an imported finding
-// grows no stamp it wasn't given — and the toolbar's option list is
-// still scanned off the real values (render.js), so a set with no pass
-// anywhere gets no dropdown rather than a Confirmed option that
-// matches every finding in it.
-//
-// A stamp the row DOES carry always wins: a product's finding its own
-// pass refuted is refuted like any other. The stand-in only fills the
-// gap where there is no verdict to read and no pass that could have
-// left one.
+// The outcome a row answers to when the toolbar filters by one: its stamp,
+// else `revalidation` for a product import (anything with a `source`
+// marker) whose producer ran no pass of its own on its report — such a
+// finding was never put before a pass, so it stands, as a row a pass left
+// alone does, and Confirmed keeps it. Where the producer did judge
+// (DeepSec writes its verdicts; `_sourcePass`, stamped at ingest), an
+// unstamped row answers nothing. Only the filter reads this: cards draw
+// format.js's readers, and render.js scans the real values to offer the
+// dropdown, so a set with no pass gets none.
 export function filterRevalidateKind(f) {
   return revalidateKind(f) || (f._source && !f._sourcePass ? 'revalidation' : '')
 }
@@ -328,60 +193,22 @@ export function matchesConfirmed(group) {
   return group.some((f) => kinds.includes(filterRevalidateKind(f)))
 }
 
-// The revalidation outcome a freshly-loaded set should OPEN on, given
-// the confidence floor ingest.js just auto-tuned: `'confirmed'` for a
-// revalidation report, `''` (no outcome) for everything else.
-//
-// The two share a toolbar block and only one of them can lead
-// (conf-filter.js), so this is the switch the dropdown would make by
-// hand; the floor stays set underneath, and clearing the outcome
-// hands back the range that would otherwise have been the default.
-//
-// The question is what Confirmed would COST, asked of findings rather
-// than of rows: every finding visible as part of a visible row under
-// the default range has to be visible as part of some visible row
-// under Confirmed. If it is, Confirmed leads.
-//
-// Findings, not rows, because a row is not a thing that goes missing.
-// Two reports over the same code — an analysis and the revalidation
-// of it — put the same finding in two rows, and Confirmed dropping
-// the un-stamped copy loses nothing while the stamped row still shows
-// it. Nor is a whole row the unit of what a row costs: a row shows in
-// FULL when any of its findings answers the filter, so a row visible
-// under the range carries its unscored members onto the screen with
-// it, and those are findings Confirmed can lose.
-//
-// What Confirmed shows is the dropdown's own answer — the confirmed,
-// the PARTIAL and the pass's own rows (REVALIDATE_FILTERS), with the
-// partial chip where a fresh load leaves it — read through
-// filterRevalidateKind, so an import the pass never saw counts as
-// shown rather than as a loss.
-//
-// Two conditions beyond that:
-//   * something has to BE on screen, or an empty load opens on a
-//     filter for no reason;
-//   * Confirmed has to be REACHABLE, and by the pass's OWN answer —
-//     asked of the real values, not filterRevalidateKind's reading.
-//     An import riding Confirmed is a finding the pass never saw, and
-//     a set of nothing but imports carries no pass at all: the
-//     toolbar offers it no dropdown (render.js scans the real values
-//     too), so opening it on an outcome would set a filter with no
-//     control on screen to clear it.
-//
-
+// The outcome a fresh load opens on, given the auto-tuned floor:
+// 'confirmed' when Confirmed costs nothing on screen, else ''. Asked of
+// FINDINGS, not rows: every finding visible under the default range (a row
+// shows whole, unscored members too) must be visible in some row under
+// Confirmed (finding-filters.js confirmedIsDefault, through
+// filterRevalidateKind for the shown side). Something must be on screen,
+// and Confirmed must be reachable by the pass's own, real values — a set
+// of nothing but imports has no dropdown to clear the filter with.
 export function defaultRevalidateFilter(groups, confMin) {
   const visible = groups.map(drawnTabs).filter((g) => g.length > 0)
   return confirmedIsDefault(visible, confMin, confirmedCoverage(groups, drawnTabs, revalidateKind), revalidateKind) ? 'confirmed' : ''
 }
 
-// The rules themselves are in finding-filters.js; by default these ask them
-// through the reader's current lens.
-export function defaultConfidenceFloor(groups, tabs = drawnTabs) {
-  return confidenceFloor(groups, tabs)
-}
-
-export function canLockConfirmed(groups, { tabs = drawnTabs, kindOf = revalidateKind, severityMode = state.severityMode } = {}) {
-  return lockConfirmed(groups, { tabs, kindOf, severityMode })
+// The floor rule lives in finding-filters.js; asked here through the lens.
+export function defaultConfidenceFloor(groups) {
+  return confidenceFloor(groups, drawnTabs)
 }
 
 // Basic App view can fix the outcome to Confirmed only when it is already
@@ -392,55 +219,38 @@ export function canLockConfirmed(groups, { tabs = drawnTabs, kindOf = revalidate
 // reader's default view even though they sit in the broader 6–10 band.
 export function shouldLockConfirmed(groups) {
   if (state.showRevalidation === false || state.upstreamOnly || underlyingFindingsShown()) return false
-  return canLockConfirmed(groups)
+  return canLockConfirmed(groups, { tabs: drawnTabs, kindOf: revalidateKind, severityMode: state.severityMode })
 }
 
-// Put the confidence block where a fresh load of `groups` would put
-// it — the two questions above asked together, with the fields each
-// answer replaces cleared alongside it. That block is one control
-// with two faces (conf-filter.js): an outcome, when the set has one
-// to lead with, and the range underneath it otherwise.
-//
-// One helper because three callers ask it of three different moments
-// and have to agree:
-//
-//   * the first report of a load (ingestReport);
-//   * the whole workspace, once every member is in
-//     (switchToWorkspace) — a workspace is ONE view over its reports,
-//     and asked report by report the answer is whichever member
-//     happened to load first;
-//   * the App switch, which reshapes the set and so has to ask again
-//     rather than keep an answer that was about a different one
-//     (events.js).
-//
-// Always the groups the view SHOWS — getMergedGroups, not a report's
-// own — since that is the set the answer will be applied to.
+// The confidence block (one control, two faces: an outcome, else the range)
+// as a fresh load of `groups` — the groups the view SHOWS — opens it.
+function openingFilters(groups) {
+  const floor = defaultConfidenceFloor(groups)
+  return { filterConfMin: floor, filterConfMax: 10, filterRevalidate: defaultRevalidateFilter(groups, floor), filterPartial: '' }
+}
+
+// Shared by a load's first report, a whole workspace once every member is
+// in, and the App switch, which reshapes the set (events.js).
 export function applyOpeningFilters(groups, { resetSort = true } = {}) {
-  state.filterConfMin = defaultConfidenceFloor(groups)
-  state.filterConfMax = 10
-  state.filterRevalidate = defaultRevalidateFilter(groups, state.filterConfMin)
-  state.filterPartial = ''
+  Object.assign(state, openingFilters(groups))
   if (resetSort) state.sortBy = priorityApplies(groups) ? 'priority-desc' : 'severity'
 }
 
-// The filters a team's Kanban board opens on, which a team link opens it
-// on again: applyOpeningFilters' choices read off every triage status on
-// it, the confidence range at 0—10 where render.js drops it
-// (rangeApplies). Asked of the board as it is now, never of how this view
-// happened to open, which may have been another layout's one status, or a
-// reset since (finding-link.js clears the floor to reveal a finding).
+// The filters a team's Kanban board opens on (and a team link opens it on
+// again): the opening ones over every status on it, the range at 0—10
+// where render.js drops it (rangeApplies). Asked of the board as it is
+// now, never of how this view happened to open.
 function kanbanOpening(groups) {
   const drawn = groups.map(drawnTabs).filter((g) => g.length > 0)
-  const floor = defaultConfidenceFloor(groups)
-  return { filterConfMin: drawn.length > 0 && rangeApplies(drawn) ? floor : 0, filterConfMax: 10,
-    filterRevalidate: defaultRevalidateFilter(groups, floor), filterPartial: '' }
+  const opening = openingFilters(groups)
+  if (drawn.length === 0 || !rangeApplies(drawn)) opening.filterConfMin = 0
+  return opening
 }
 
-// The repository and severities the Kanban board is filtered to, for a link
-// to the team that opens it so (common/managed/routes.js): only when they
-// are ALL it is filtered by, every other filter as the board opens, so the
-// link names the view exactly or not at all. Null when neither is set, or
-// when the repository is the "no repository" choice, which no link names.
+// The repository and severities the board is filtered to, for a team link
+// that opens it so (common/managed/routes.js) — only when they are ALL it
+// is filtered by, so the link names the view exactly or not at all. Null
+// when neither is set, or for the "no repository" choice no link names.
 export function linkedFilters() {
   if (state.filterRepo === NO_REPO_SENTINEL || (!state.filterRepo && state.filterSeverities.size === 0)) return null
   // Every other filter's "off" is an empty set or string, but for those
@@ -458,11 +268,9 @@ export function linkedFilters() {
   }
 }
 
-// A team link's filters, applied to its Kanban board once the findings are
-// in, and nothing else: every other filter as the board opens, the sort
-// left alone, so a board already open (whose load reset nothing) shows
-// what a fresh one would. A repository the board has no choice for is left
-// out rather than emptying it.
+// A team link's filters on its board once the findings are in: every other
+// filter as the board opens, the sort left alone. A repository the board
+// has no choice for is left out rather than emptying it.
 export function applyLinkedFilters(filters) {
   const sortBy = state.sortBy
   const groups = getMergedGroups()
@@ -472,91 +280,56 @@ export function applyLinkedFilters(filters) {
   if (filters?.severities?.length > 0) state.filterSeverities = new Set(filters.severities)
 }
 
-// Priority is a meaningful ordering only when every visible row can be
-// ordered. A workspace can merge a priority-stamped source finding from one
-// report with an App finding from another, so checking for any priority would
-// promote an ordering whose primary App entries have no value. Rows carrying
-// App entries must have a priority on one of those App entries; a source copy
-// cannot stand in for it while the App layer is on screen.
+// Priority orders the view only when every row can be ordered. A row with
+// App entries needs a priority on one of THEM (a source copy can't vouch
+// for it while the App layer is on screen) — or, with no explicit priority
+// anywhere in the row, a ruled-out App entry's implicit 0.
 export function priorityApplies(groups) {
   if (!Array.isArray(groups) || groups.length === 0) return false
   return groups.every((group) => {
     if (priorityForGroup(group) === undefined) return false
     const app = group.filter((f) => f.isApp)
     if (app.length === 0) return true
-    // A ruled-out App finding has a useful implicit priority of zero when
-    // the row has no explicit priority anywhere. An explicit source-copy
-    // priority cannot vouch for an App entry in a row that has one.
     const rowHasExplicit = group.some((f) => f.priority !== undefined)
     return app.some((f) => f.priority !== undefined
       || (!rowHasExplicit && isRuledOut(f)))
   })
 }
 
-// A ruled-out finding still needs a stable place in a priority ordering. It
-// is priority 0 when the row carries no explicit priority; an explicit value
-// anywhere in that row wins, as it does for the availability test above.
+// A row's priority: its first explicit one, else 0 for a row with a
+// ruled-out finding (a stable place in the ordering), else undefined.
 export function priorityForGroup(group) {
   const explicit = group.find((f) => f.priority !== undefined)
   if (explicit) return explicit.priority
   return group.some(isRuledOut) ? 0 : undefined
 }
 
-// Source/dependency and confidence/revalidation selectors establish the
-// scope for the second-row counts and repository choices below them.
+// The source and confidence / outcome selectors: the scope for the
+// second-row counts and the repository choices.
 function matchesScopeFilters(f) {
   const F = activeFilters()
-  // Source filter — empty OR full (both 'own' and 'modules' set) =
-  // no filter; otherwise restrict to the picked side. Both-checked
-  // goes inert because including everything is what "no filter"
-  // already means.
+  // Source: one side picked restricts to it; none or both is no filter.
   if (F.filterSources.size === 1) {
     const allowOwn = F.filterSources.has('own')
     if (allowOwn && isModule(f.file)) return false
     if (!allowOwn && !isModule(f.file)) return false
   }
-  // Revalidation outcome — single-select dropdown shown only when the
-  // loaded set has something to choose between (the toolbar drops the
-  // whole control otherwise, and offers only the reachable options).
-  // Empty = no filter. One option can cover more than one value of the
-  // field: CONFIRMED takes the revalidation row too, since that row IS
-  // the pass leaving the finding standing (see REVALIDATE_FILTERS) —
-  // and with it every finding the pass never judged, which rides the
-  // same value (filterRevalidateKind). Group-visibility via
-  // applyFilters's `g.some(...)`, same as every predicate above: a
-  // dedup group shows in full when any of its rows carries the
-  // selected outcome.
+  // Outcome: one option can cover several values (Confirmed takes the pass's
+  // row and the findings no pass judged, filterRevalidateKind).
   if (F.filterRevalidate) {
     const kinds = activeRevalidateKinds(F.filterRevalidate, F.filterPartial)
     if (kinds && !kinds.includes(filterRevalidateKind(f))) return false
   }
-  // Confidence range — SKIPPED entirely while a revalidation outcome is
-  // selected. The two share one toolbar block and the outcome replaces
-  // the range there (conf-filter.js renders it inert), so the bounds
-  // read as 0—10 whatever the slider was left at: a user who narrowed
-  // the range, then asked for the refuted findings, is asking for all
-  // of them. Clearing the outcome hands the range back untouched.
-  //
-  // Slider bounds 0..10 always have a value; the
-  // special positions are 0 (lower) and 10 (upper):
-  //   * lower at 0 → findings with no place on the scale pass; above
-  //     0 means "must have a place on it" — which a `critical: true`
-  //     finding and an import both have, at 10 (confidenceOnScale).
-  //   * upper at 10 → no upper cap; lets rare confidence > 10 entries
-  //     through. Below 10 caps strictly — including the stand-ins,
-  //     whose value is 10.
-  //   * a row the pass KNOCKED DOWN — refuted, or unreachable — reads
-  //     as 0 whatever number it carries (format.js voidsConfidence).
-  //     Its confidence is not the group's to claim: a group shows in
-  //     full when any tab matches, and without this a refuted 10 would
-  //     float the whole group over a floor its surviving rows can't
-  //     meet. Reading as 0 leaves it matching only the unfiltered
-  //     floor — so `[{plain 3}, {refuted 10}]` behaves as a 3, and
-  //     `[{refuted 3}, {refuted 10}]` shows only at 0. Such a row
-  //     flagged `critical` doesn't ride the 10 bucket either, for the
-  //     same reason.
+  // Confidence: SKIPPED while an outcome is selected, which replaces the
+  // range in its toolbar block (conf-filter.js) — asking for the refuted
+  // findings asks for all of them. Lower at 0 lets findings with no place
+  // on the scale through (a `critical: true` finding and an import sit at
+  // 10, confidenceOnScale); upper at 10 means no cap. A ruled-out row reads
+  // as 0 whatever it claims: a group shows when any tab matches, and a
+  // refuted 10 must not float it over a floor its surviving rows can't
+  // meet (`[{plain 3}, {refuted 10}]` behaves as a 3).
   if (!F.filterRevalidate) {
-    const conf = voidsConfidence(f) ? 0 : confidenceOnScale(f)
+    const conf = isRuledOut(f) ? 0 : confidenceOnScale(f)
     if (conf === undefined) {
       if (F.filterConfMin > 0) return false
     } else {
@@ -567,9 +340,8 @@ function matchesScopeFilters(f) {
   return true
 }
 
-// The search query as matchesFilters reads it — case-folded, and the
-// words long enough to match an ID — worked out once per query rather
-// than once per finding it is asked of.
+// The search query case-folded, with the words long enough to match an ID,
+// worked out once per query rather than per finding.
 let searchQuery = { raw: '', inc: '', idWords: [] }
 function searchOf(raw) {
   if (searchQuery.raw !== raw) {
@@ -579,102 +351,56 @@ function searchOf(raw) {
   return searchQuery
 }
 
-// Per-tab filter predicate. Factored out so `applyFilters` (group-level)
-// can ask "does ANY tab in this group match?" — per the user spec,
-// one matching tab keeps the whole group visible.
+// Per-tab predicate: one matching tab keeps the whole group (applyFilters).
 export function matchesFilters(f) {
   return matchesEntryFilters(f) && matchesRunFilters(f)
 }
 
-// All of it but the `<analyzer-select>` dropdown's dimensions, which
-// matchesFilters adds per tab and applyFilters asks of a row with a
-// revalidation pass's row in it as a whole (matchesRunRow).
+// All of it but the `<analyzer-select>` dimensions, which a row holding a
+// pass row asks as a whole (matchesRunRow). The annotation filters are
+// group-level (matchesAnnotationFilters).
 function matchesEntryFilters(f) {
   if (!matchesScopeFilters(f)) return false
   const F = activeFilters()
   const { inc, idWords } = searchOf(F.filterInclude)
-  // Severity + color filters are multi-select Sets: empty = no
-  // filter, non-empty = membership required. Unmarked tabs bucket
-  // under the literal `'none'` so ticking only that chip isolates
-  // unreviewed findings.
+  // Multi-select: empty = no filter; an unmarked tab's color is `'none'`.
   if (F.filterSeverities.size > 0 && !F.filterSeverities.has(displayedSeverity(f, state.severityMode))) return false
-  if (F.filterColors.size > 0) {
-    const col = triageEntry(f)?.color ?? 'none'
-    if (!F.filterColors.has(col)) return false
-  }
-  // NOTE: the annotation filters (comment | issue | fix | flag) are intentionally
-  // NOT evaluated here — they're GROUP-level (see matchesAnnotationFilters
-  // / applyFilters) so 'with' / 'without' stay complementary across a
-  // dedup group.
-  // Repo filter — single-select dropdown shown only in workspace
-  // view (parent gates the chip on `state.currentWorkspace` + a
-  // multi-repo option list). Empty = no filter; `NO_REPO_SENTINEL`
-  // selects findings whose repo can't be derived (no `repo.github`
-  // and no `_repoFallback`). Group-visibility via applyFilters's
-  // `g.some(...)`, same as the other per-finding predicates above.
-  if (F.filterRepo) {
-    const r = repoOfFinding(f)
-    const want = F.filterRepo === NO_REPO_SENTINEL ? null : F.filterRepo
-    if (r !== want) return false
-  }
+  if (F.filterColors.size > 0 && !F.filterColors.has(triageEntry(f)?.color ?? 'none')) return false
+  if (F.filterRepo && repoOfFinding(f) !== (F.filterRepo === NO_REPO_SENTINEL ? null : F.filterRepo)) return false
   if (inc) {
-    // Triage annotations (the free-form `comment` and the `fix`
-    // reference — PR URL, issue link, or free-text note) live off the
-    // finding in `state.triage`, so they're matched here rather than
-    // folded into `findingText` (which stays free of any `#client`
-    // import — see format.js). Both are searched on every query so a
-    // keyword like "false positive" surfaces findings the user
-    // annotated, and pasting a fix URL surfaces the finding it's filed
-    // against.
+    // The triage comment and fix live in `state.triage`, out of
+    // findingText's reach, so they are matched here.
     const entry = triageEntry(f)
     const hit = findingText(f).includes(inc)
       || (entry?.comment ?? '').toLowerCase().includes(inc)
       || (entry?.fix ?? '').toLowerCase().includes(inc)
       // Short words still search text, but must not match incidental ID fragments.
       || idWords.some(word => f.id?.toLowerCase().includes(word))
-    // Negation toggle: when on, the query excludes — keep the findings
-    // that DON'T match. Per-finding (a group stays visible if any tab
-    // is a non-match, same group rule as every other filter below).
+    // Negated, the query keeps the findings that DON'T match.
     return F.filterIncludeNegate ? !hit : hit
   }
   return true
 }
 
-// Group-level annotation filters (comment | issue | fix | flag), each a
-// tri-state '' / 'with' / 'without'. Issue asks for the finding's saved
-// managed issue (managed-issues.js), which no other mode has. These are
-// deliberately NOT per-tab: 'without'
-// must mean "NO tab in the dedup group carries it" (¬∃) — the exact
-// complement of 'with' = "≥1 tab carries it" (∃). A per-tab `g.some`
-// negation would instead keep a group that has the annotation on one tab
-// just because ANOTHER tab lacks it, which is not complementary. Existence
-// is computed once over the whole group, then 'with'/'without' applied.
+// A tri-state '' / 'with' / 'without' filter over a whole-group test.
+const triState = (mode, has) => !mode || (mode === 'with') === has()
+
+// Group-level annotation filters. Not per tab: 'without' must mean NO tab
+// carries it, the exact complement of 'with' (some tab does). Issue is the
+// managed issue saved for the finding (managed-issues.js).
+const ANNOTATION_FILTERS = [
+  ['filterComment', (f) => Boolean(triageEntry(f)?.comment)],
+  ['filterIssue', (f) => Boolean(managedIssueFor(f))],
+  ['filterFix', (f) => Boolean(triageEntry(f)?.fix || automaticFixFor(f))],
+  ['filterFlagged', (f) => triageEntry(f)?.flagged === true],
+]
 function matchesAnnotationFilters(group) {
   const F = activeFilters()
-  if (!F.filterComment && !F.filterIssue && !F.filterFix && !F.filterFlagged) return true
-  const groupHas = (pred) => group.some((f) => pred(triageEntry(f)))
-  if (F.filterComment) {
-    const has = groupHas((e) => Boolean(e?.comment))
-    if (F.filterComment === 'with' ? !has : has) return false
-  }
-  if (F.filterIssue) {
-    const has = group.some(f => Boolean(managedIssueFor(f)))
-    if (F.filterIssue === 'with' ? !has : has) return false
-  }
-  if (F.filterFix) {
-    const has = group.some(f => Boolean(triageEntry(f)?.fix || automaticFixFor(f)))
-    if (F.filterFix === 'with' ? !has : has) return false
-  }
-  if (F.filterFlagged) {
-    const has = groupHas((e) => e?.flagged === true)
-    if (F.filterFlagged === 'with' ? !has : has) return false
-  }
-  return true
+  return ANNOTATION_FILTERS.every(([key, has]) => triState(F[key], () => group.some(has)))
 }
 
-// Return the npm package carried by a finding, or recover it from a
-// dependency path when the analyzer did not stamp one. Own-source paths
-// deliberately return null: a top-level directory is not an npm package.
+// The npm package a finding carries, or the one its dependency path names;
+// null for own source (a top-level directory is no package).
 function npmPackageOfFinding(f) {
   const npm = f?.package?.npm
   if (typeof npm?.name === 'string' && npm.name && !isPlaceholderNpmPackage(npm)) return npm.name
@@ -683,24 +409,19 @@ function npmPackageOfFinding(f) {
   return match?.[1] ?? null
 }
 
-// App mode is the default revalidation lens, with only the upstream lens
-// explicitly excluded. Showing underlying findings adds detail to App mode;
-// it does not change the mode itself. These two filter predicates are kept
-// separate because they answer different questions and are offered in
-// different modes.
+// App mode is the default revalidation lens, the upstream lens excluded;
+// the detail stop doesn't change the mode. The two filters below are
+// offered in different modes.
 function appLensActive() {
   return state.showRevalidation !== false && !state.upstreamOnly
 }
 
-// A source/underlying row is cross-context when its visible findings span
-// multiple repositories or multiple npm packages. Unknown context is not a
-// second context: the filter is deliberately about an observable repo/package
-// split, rather than merely about a row having two tabs.
+// A source row is cross-context when its visible findings span repositories
+// or npm packages; an unknown context is not a second one.
 export function isCrossContextGroup(group) {
   if (appLensActive()) return false
   const visible = drawnTabs(group)
   if (visible.length < 2) return false
-
   const repos = new Set()
   const packages = new Set()
   for (const f of visible) {
@@ -712,86 +433,56 @@ export function isCrossContextGroup(group) {
   return repos.size > 1 || packages.size > 1
 }
 
-// An App stack counts only App findings when the row has any. Thus
-// `[App, App]` qualifies while `[App, source, source]` does not. The App
-// identities come from the row itself: two App findings can carry different
-// revalidation stamps even when the default tab projection chooses one pass.
+// An App stack is a row of more than one App finding (`[App, App]`, not
+// `[App, source, source]`), counted off the row itself: the drawn tabs may
+// fold two App findings with different stamps into one pass.
 export function isAppStackedGroup(group) {
-  if (!appLensActive()) return false
-  const visible = drawnTabs(group)
-  if (visible.length === 0) return false
-  const app = group.filter((f) => f.isApp)
-  return app.length > 0 && app.length > 1
+  if (!appLensActive() || drawnTabs(group).length === 0) return false
+  return group.filter((f) => f.isApp).length > 1
 }
 
-// isSecurity is propagated from full original rows before App/code/upstream
-// projection. A hidden source or refuted tab still classifies its whole row.
+// `isSecurity` is propagated over whole original rows, so a hidden tab
+// still classifies its row.
 function isSecurityGroup(group) { return group.some((f) => f.isSecurity === true) }
 
 export function hasSecurityContrast(groups) {
   return groups.some(isSecurityGroup) && groups.some((g) => !isSecurityGroup(g))
 }
 
-// Base rows for severity/color counts and repository options. The
-// caller supplies the current lens's rows and triage bucket. After filtering
-// rows, project their visible tabs too: App mode folds underlying findings
-// inside surviving rows, and those hidden tabs must not contribute values.
-// Annotation and second-row filters don't narrow these selector choices.
+// The rows severity / color counts and repository choices are read from:
+// the scope filters only, then each row's visible tabs (App mode folds
+// underlying findings, which must not contribute values).
 export function applyScopeFilters(groups) {
   return scopeRows(groups).map(drawnTabs)
 }
 
-// The same rows, whole: what the `<analyzer-select>` dropdown counts,
-// since its Model asks for the rows App mode folds under the pass's, as
-// applyFilters does.
+// The same rows, whole: the `<analyzer-select>` counts ask for the rows App
+// mode folds under the pass's, as applyFilters does.
 export function scopeRows(groups) {
   return groups.filter((g) => g.some(matchesScopeFilters))
 }
 
+// Per-tab filters via `g.some`, then the group-level ones. A row holding a
+// pass row asks the `<analyzer-select>` dimensions of the row as a whole
+// (matchesRunRow): App mode draws the pass's row, and the Model asked for is
+// one of the scans beneath it, which need not agree with it on severity,
+// confidence or outcome.
 export function applyFilters(groups) {
-  // Per-tab existential filters (severity / color / source / analyzer /
-  // model / repo / search) via `g.some`, AND the group-level annotation
-  // filters.
-  //
-  // The `<analyzer-select>` dropdown's dimensions are per tab too, with
-  // the rest (matchesFilters), except on a row holding a revalidation
-  // pass's row. There they ask the row as a whole (matchesRunRow): the
-  // pass's row is the one App mode draws, and the Model asked for is one
-  // of the scans beneath it, which need not agree with the pass on
-  // severity, confidence or outcome.
-  const duplicatesMode = !state.currentWorkspace && activeFilters().filterDuplicates
+  const F = activeFilters()
+  const duplicatesMode = !state.currentWorkspace && F.filterDuplicates
   const duplicateIds = duplicatesMode ? reportDuplicateIds() : null
-  const crossContextMode = activeFilters().filterCrossContext
-  const appStackedMode = activeFilters().filterAppStacked
-  const securityMode = activeFilters().filterSecurity
   return groups.filter((g) => (g.some(isRevalidation) ? g.some(matchesEntryFilters) : g.some(matchesFilters)) && matchesRunRow(g)
     && matchesAnnotationFilters(g)
-    && (!duplicatesMode || (duplicatesMode === 'with') === g.some((f) => duplicateIds.has(tabKey(f))))
-    && (!crossContextMode || (crossContextMode === 'with') === isCrossContextGroup(g))
-    && (!appStackedMode || (appStackedMode === 'with') === isAppStackedGroup(g))
-    && (!securityMode || (securityMode === 'with') === isSecurityGroup(g)))
+    && triState(duplicatesMode, () => g.some((f) => duplicateIds.has(tabKey(f))))
+    && triState(F.filterCrossContext, () => isCrossContextGroup(g))
+    && triState(F.filterAppStacked, () => isAppStackedGroup(g))
+    && triState(F.filterSecurity, () => isSecurityGroup(g)))
 }
 
-// Numeric-field comparator factory behind the `priority-*` modes
-// (the `confidence-*` modes get their own sorter below, for the
-// critical-flag rule): which field to pull off the primary tab and
-// whether higher comes first. Valueless findings go to the FAR end —
-// -1 for desc (bottom), 11 for asc (above the [0..10] band, so also
-// bottom). File-path is the universal tiebreaker.
-function numericSorter(field, dir) {
-  const missing = dir === 'desc' ? -1 : 11
-  return (pa, pb) => {
-    const va = pa[field] ?? missing
-    const vb = pb[field] ?? missing
-    return (dir === 'desc' ? vb - va : va - vb) || pa.file.localeCompare(pb.file)
-  }
-}
-
-// Confidence sort variant. `critical: true` findings (the boolean
-// flag, not the severity label) without an explicit confidence join
-// the 10 bucket and rank above actual confidence-10 entries in both
-// directions, keeping the most-important unscored items at the top
-// of the 10s.
+// Confidence sort: `critical: true` findings (the flag, not the severity)
+// without a confidence join the 10 bucket, above real 10s either way.
+// Valueless findings go to the far end (-1 descending, 11 ascending); the
+// file path breaks ties.
 function confidenceSorter(dir) {
   const missing = dir === 'desc' ? -1 : 11
   return (pa, pb) => {
@@ -805,13 +496,8 @@ function confidenceSorter(dir) {
   }
 }
 
-// Per-mode primary-tab comparator. Severity stays explicit because
-// it composes multiple keys: severity rank, then confidence
-// (delegated to the confidence-desc sorter so critical-flagged
-// findings join the 10 bucket, matching the dedicated confidence
-// sort), then line as the final within-file tiebreaker — file
-// ordering already falls out of confidenceSorter's own file
-// tiebreaker.
+// Comparators over each group's primary tab. Severity: rank, then
+// confidence as the confidence sort reads it, then line.
 const confDescCmp = confidenceSorter('desc')
 const SORTERS = {
   severity: (pa, pb) =>
@@ -820,37 +506,26 @@ const SORTERS = {
     || parseInt(pa.line, 10) - parseInt(pb.line, 10),
   'confidence-desc': confDescCmp,
   'confidence-asc':  confidenceSorter('asc'),
-  'priority-desc':   numericSorter('priority',   'desc'),
-  'priority-asc':    numericSorter('priority',   'asc'),
 }
+const PRIORITY_SORTS = { 'priority-desc': 'desc', 'priority-asc': 'asc' }
 
-// Group-level sort. Severity/confidence/priority modes compare on
-// each group's primary tab (see sortTabs / primaryTab). 'file' sort
-// is handled by the grouping below; an unrecognised `state.sortBy`
-// falls back to insertion order via the 0 cmp.
-//
-// Decorate-sort-undecorate: resolve each group's primary tab once (N
-// calls) rather than inside the comparator (2·N·log N calls —
-// primaryTab re-sorts a multi-tab group's tabs on every call, which
-// dominated large-list renders).
+// Group-level sort; an unrecognised `state.sortBy` ('file' is grouped
+// elsewhere) keeps insertion order. Each group's primary tab / priority is
+// resolved once, not per comparison (primaryTab re-sorts a group's tabs).
 export function applySorting(groups) {
+  const sortedBy = (key, cmp) => groups.map((g) => ({ p: key(g), g })).toSorted(cmp).map((x) => x.g)
+  const dir = Object.hasOwn(PRIORITY_SORTS, state.sortBy) ? PRIORITY_SORTS[state.sortBy] : null
+  if (dir) {
+    // By the row's priority (priorityForGroup), valueless rows last.
+    const missing = dir === 'desc' ? -1 : 11
+    return sortedBy(priorityForGroup, (a, b) => {
+      const va = a.p ?? missing
+      const vb = b.p ?? missing
+      return (dir === 'desc' ? vb - va : va - vb)
+        || primaryTab(a.g).file.localeCompare(primaryTab(b.g).file)
+    })
+  }
   const cmp = SORTERS[state.sortBy]
   if (!cmp) return [...groups]
-  if (state.sortBy === 'priority-desc' || state.sortBy === 'priority-asc') {
-    const dir = state.sortBy === 'priority-desc' ? 'desc' : 'asc'
-    const missing = dir === 'desc' ? -1 : 11
-    return groups
-      .map((g) => ({ p: priorityForGroup(g), g }))
-      .toSorted((a, b) => {
-        const va = a.p ?? missing
-        const vb = b.p ?? missing
-        return (dir === 'desc' ? vb - va : va - vb)
-          || primaryTab(a.g).file.localeCompare(primaryTab(b.g).file)
-      })
-      .map((x) => x.g)
-  }
-  return groups
-    .map((g) => ({ p: primaryTab(g), g }))
-    .toSorted((a, b) => cmp(a.p, b.p))
-    .map((x) => x.g)
+  return sortedBy(primaryTab, (a, b) => cmp(a.p, b.p))
 }

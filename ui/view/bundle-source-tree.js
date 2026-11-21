@@ -2,7 +2,7 @@
 // original bundle key used to open the source and look up findings.
 import { bundleSourcePackageInfo } from './bundle-source-package.js'
 
-const vendoredEcosystems = new Set(['cargo', 'composer', 'soldeer'])
+export const VENDORED_ECOSYSTEMS = new Set(['cargo', 'composer', 'soldeer'])
 
 export function moduleEcosystem(dir, info, sourcePaths) {
   if (info?.ecosystem !== undefined) return info.ecosystem
@@ -49,7 +49,7 @@ export function bundleSourceTreePrefix(prefix, modules = null, sources = null) {
   const sourcePaths = sources ? new Set(sources) : null
   for (const [dir, info] of modules ?? []) {
     const ecosystem = moduleEcosystem(dir, info, sourcePaths)
-    if (!vendoredEcosystems.has(ecosystem) || !info.name || dir === '.') continue
+    if (!VENDORED_ECOSYSTEMS.has(ecosystem) || !info.name || dir === '.') continue
     if (!prefix.startsWith(`${dir}/`) && !dir.startsWith(prefix)) continue
     const container = (ecosystem === 'soldeer' ? /(?:^|\/)dependencies\//u : /(?:^|\/)vendor\//u).exec(`${dir}/`)
     const boundary = container ? container.index + (container[0].startsWith('/') ? 1 : 0) : dir.lastIndexOf('/') + 1
@@ -65,7 +65,7 @@ function presentDependencyDirectories(node, packageModules, sourcePaths) {
   node.fileCount = node.files.size + [...node.dirs.values()].reduce((sum, child) => sum + child.fileCount, 0)
   const info = packageModules?.get(node.sourcePath)
   const ecosystem = moduleEcosystem(node.sourcePath, info, sourcePaths)
-  if (vendoredEcosystems.has(ecosystem) && info.name) {
+  if (VENDORED_ECOSYSTEMS.has(ecosystem) && info.name) {
     node.boundary = true
     node.package = { name: info.name, version: info.version, ecosystem }
     // Decide before search filtering, so a matching subset cannot hide a
@@ -83,7 +83,7 @@ function presentDependencyDirectories(node, packageModules, sourcePaths) {
         node.boundary = true
         for (const [part, pkg] of child.dirs) dirs.set(`${name}/${part}`, pkg)
       } else {
-        if (vendoredEcosystems.has(child.package?.ecosystem)) node.boundary = true
+        if (VENDORED_ECOSYSTEMS.has(child.package?.ecosystem)) node.boundary = true
         dirs.set(name, child)
       }
     }
@@ -155,7 +155,7 @@ function dependencyRootEcosystem(node) {
 
 export function sourceDirectoryLabel(name, node) {
   const pkg = node.package
-  return pkg ? `${pkg.name}${pkg.version ? `${vendoredEcosystems.has(pkg.ecosystem) ? ' - ' : '@'}${pkg.version}` : ''}` : name
+  return pkg ? `${pkg.name}${pkg.version ? `${VENDORED_ECOSYSTEMS.has(pkg.ecosystem) ? ' - ' : '@'}${pkg.version}` : ''}` : name
 }
 
 // Filter the presentation built from ALL files: a search must not make an

@@ -1,38 +1,12 @@
-// `<triage-selector>` — In progress / Fixed / Invalid / Deleted / Ignored
-// bucket-switcher buttons, shared by the findings
-// toolbar, the graph topbar, and the Packages / Repositories page
-// toolbars. All read `state.shownTriage` and emit the same button
-// shape; variants differ only in an extra marker class
-// (`graph2-triage-selector` or `packages-triage-selector`) that
-// events.js uses to route the click to a teardown-aware path (graph
-// variant tears down the canvas before re-rendering) rather than the
-// plain render() flow.
-//
-// Reactivity: extends StateElement, so reads of `state.shownTriage`
-// inside render() are tracked by observer-util — the active
-// highlight self-syncs without the host re-passing a `shown` prop.
-// Counts still arrive via `counts` because computing them requires
-// the filter-pipeline output the parent already has.
-//
-// Returns `nothing` when there is nothing to switch to (zero counts
-// AND no active bucket) so the host can drop it in unconditionally
-// and let the component decide its own visibility. The bordered-pill
-// shell layout lives on the `triage-selector` element selector in
-// toolbar.css; the buttons render as direct children of the host.
-//
-// Properties (`attribute: false` — passed by reference via Lit's
-// `.prop=${...}` property binding; no attribute reflection):
-//   * `counts` — `{ inprogress?, fixed?, invalid?, deleted?, ignored? }`.
-//                Missing or zero buckets render no button.
-//   * `states` — array picking which buckets the selector renders.
-//                Defaults to all five shared buckets.
-//
-// Attributes:
-//   * `variant` — adds an extra class onto the host element so
-//                 events.js can route the click correctly:
-//                   `graph`    → `.graph2-triage-selector`
-//                   `packages` → `.packages-triage-selector`
-//                 Empty (default, findings toolbar) → no extra class.
+// `<triage-selector>` — the In progress / Fixed / Invalid / Deleted /
+// Ignored bucket buttons of the findings toolbar, the graph topbar and the
+// Packages / Repositories toolbars, switching `state.shownTriage` (which the
+// highlight follows through the autorun). `counts` come from the parent's
+// filter pipeline; an empty bucket shows only while it is the active one,
+// so it can always be clicked out of. `states` picks the buckets (all five
+// by default). `variant` marks the host `graph2-triage-selector` or
+// `packages-triage-selector`, which events.js routes on (the graph's
+// tears its canvas down).
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
@@ -45,9 +19,6 @@ const VARIANT_CLASS = {
   packages: 'packages-triage-selector',
 }
 
-// Display labels for bucket keys that don't title-case cleanly from
-// the key alone (multi-word). Everything else falls back to
-// capitalize-first-letter so single-word keys need no entry here.
 const STATE_LABELS = { inprogress: 'In progress' }
 const labelFor = (s) => STATE_LABELS[s] ?? (s.charAt(0).toUpperCase() + s.slice(1))
 
@@ -75,31 +46,21 @@ class TriageSelector extends StateElement {
   render() {
     const states = this.states ?? DEFAULT_STATES
     const total = states.reduce((n, s) => n + (this.counts[s] ?? 0), 0)
-    // Variant marker class lives on the HOST element so events.js can
-    // distinguish graph-variant clicks (canvas teardown path) from
-    // toolbar-variant clicks (plain render). Unknown variants would
-    // silently drop the marker class and mis-route — warn in dev so
-    // typos surface rather than reading as a subtle interaction bug.
+    // An unknown variant would silently drop the marker and mis-route.
     const extra = this.variant ? VARIANT_CLASS[this.variant] : null
     if (this.variant && extra === undefined) {
       console.warn(`<triage-selector>: unknown variant ${JSON.stringify(this.variant)}; ` +
         `expected one of ${Object.keys(VARIANT_CLASS).map((k) => JSON.stringify(k)).join(', ')} or "".`)
     }
     for (const cls of Object.values(VARIANT_CLASS)) this.classList.toggle(cls, cls === extra)
-    // Self-hide the host (it carries the bordered-pill chrome in toolbar.css)
-    // when there are no buckets to render — otherwise an empty bordered box
-    // lingers in the toolbar. Light-DOM host (createRenderRoot returns this),
-    // so a class toggle is more reliable than `:empty` (Lit leaves part-marker
-    // comment nodes behind when the template is `nothing`).
+    // With nothing to show, the host (the bordered pill, toolbar.css) hides
+    // by class: `:empty` misses the part markers Lit leaves for `nothing`.
     const isEmpty = total === 0 && !state.shownTriage
     this.classList.toggle('is-empty', isEmpty)
     if (isEmpty) return nothing
     return html`${states.map((s) => {
       const n = this.counts[s] ?? 0
       const active = state.shownTriage === s
-      // Hidden when the bucket is empty AND not the current view —
-      // so the user can always click the active button to exit
-      // its bucket even when the count drops mid-session.
       if (n === 0 && !active) return nothing
       const label = labelFor(s)
       return html`<button

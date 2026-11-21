@@ -1,9 +1,8 @@
-import { prepareNpmReviewTab } from './managed-bundle-navigation.js'
+import { managedBundleRoute, managedCodeLocation, prepareNpmReviewTab } from './managed-bundle-navigation.js'
 import { npmRisk } from './npm-risk.js'
 import { setFindingTriage } from '../../client/ignored-triage.js'
 import { REPOSITORY_FILELESS_TABS, compareModeField, compareModeOf, managedRouteForIds, parseManagedRoute } from '../../common/managed/routes.js'
 import { getPublicShare } from '../../client/managed/public-share.js'
-import { managedBundleRoute, managedCodeLocation } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
 import { openFindingHistoryDialog, openManagedIssueDialog } from './client-managed.js'
 import { canViewFindingHistory } from './finding-history.js'
@@ -30,40 +29,72 @@ import { closeLinksPreview, getLinksPreview, openLinksPreview } from './links-pr
 import { FOCUS_SPLIT_STEP, nudgeFocusSplit, resetFocusSplit, startFocusSplitDrag } from './focus-splitter.js'
 import { downloadReportsAsMarkdown, reportsToMarkdown } from './markdown-export.js'
 import { bundleToCycloneDx, bundleToSpdx, sbomBaseName } from './sbom.js'
-import { bundleSourceLines, bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleSourceLines, bundleSourcesAsMap } from '../../common/bundle-sources.js'
+import { ensureBundleSources, handOffBundles, openBundle, prefetchBundleHashes, releaseHandoff, selectBundleTab } from './bundle-load.js'
+import { renderSidebar, showStoredBundle } from './sidebar.js'
+import { BUNDLE_TABS, goHome, persistLastBundle, switchToFile, switchToManagedTeam, switchToWorkspace, switchToWorkspaceContent } from './ingest.js'
+import { treeAnchor } from './file-counts.js'
+import { cleanupGraph2, graph2 } from './graph/state.js'
+import { hideToast, showToast } from './toast.js'
+import { managedDetailsReady } from './managed-details.js'
+
+// All interactive elements inside #report are handled by delegation here,
+// no inline handlers. Click delegates are tables of [matcher, handler]: the
+// first row whose matcher finds an element runs, unless its handler returns
+// `false` to pass the click on down the table — so more specific selectors
+// come first.
+//
+// `deep` matches along the composed path: a click inside a shadow root
+// (`<finding-card>`, `<finding-table>`, `<graph-layout>`) reaches #report
+// retargeted to the host, where `e.target.closest()` (`near`) can't see the
+// element actually clicked.
+function pathClosest(e, selector) {
+  for (const el of e.composedPath()) {
+    if (el?.matches?.(selector)) return el
+  }
+  return null
+}
+const deep = selector => e => pathClosest(e, selector)
+const near = selector => e => e.target.closest?.(selector)
+
+function runClicks(table, e) {
+  for (const [match, handle] of table) {
+    const el = match(e)
+    if (el && handle(el, e) !== false) return true
+  }
+  return false
+}
+
+const toggleIn = (set, value) => { if (!set.delete(value)) set.add(value) }
+const onFindingsView = () => state.currentView === 'findings' || state.currentView === 'files'
+const currentManagedTeam = () => state.managedTeams.find(team => team.id === state.currentManagedTeam)
 
 function navigateManagedReportView(view) {
   if (!isManagedUiMode() || !managedHistory.active || !state.currentManagedTeam) return null
   return managedHistory.navigate(managedRouteForIds({ view, teamId: state.currentManagedTeam, reportId: state.currentManagedReport }, state.managedTeams))
 }
 
-// When another OPFS report finishes parsing, re-render if the user is
-// viewing a bundle — Issues tab and Graph view both pull from the
-// index, so newly-indexed findings must land without a tab flip / re-open.
-// Coalesce refreshes until both one frame and 350ms have passed, allowing
-// report loading and painting to progress before starting the graph rebuild.
+// Another OPFS report finished parsing into the finding index, which every
+// cross-report view reads. Repaint once both a frame and 350ms have passed,
+// so report loading and painting progress before a graph rebuild starts.
 let findingIndexRenderQueued = false
 subscribeToBundleFindingIndex(() => {
   if (findingIndexRenderQueued) return
   findingIndexRenderQueued = true
   let waitsRemaining = 2
-  function ready() {
-    if (--waitsRemaining === 0) refreshFindingIndexView()
-  }
+  const ready = () => { if (--waitsRemaining === 0) refreshFindingIndexView() }
   requestAnimationFrame(ready)
   setTimeout(ready, 350)
 })
 
 // The findings surface waits out a walk still filling the index: a tick
-// there rebuilds every merged row and redraws every card, and the walk
-// reaches the reports on disk one by one, so it draws once with what the
-// walk found rather than once per report — the same rows the last of
-// those draws would have shown.
+// there rebuilds every merged row and card, so it draws once with what the
+// walk found rather than once per report.
 let findingIndexWalkAwaited = false
 function refreshFindingIndexView() {
   findingIndexRenderQueued = false
   const walk = bundleFindingsWalk()
-  if (walk && (state.currentView === 'findings' || state.currentView === 'files')) {
+  if (walk && onFindingsView()) {
     if (!findingIndexWalkAwaited) {
       findingIndexWalkAwaited = true
       void walk.catch(() => {}).finally(() => {
@@ -73,199 +104,113 @@ function refreshFindingIndexView() {
     }
     return
   }
-  // Rows with the same finding id can contribute security evidence even
-  // without an explicit links file. Invalidate the cached lens in every view.
+  // Rows with the same finding id contribute security evidence even without
+  // a links file: invalidate the cached lens in every view.
   state.findingIndexTick++
-  if (state.currentView === 'bundles' && state.selectedBundle) render()
-  else if (state.currentView === 'packages') render()
-  else if (state.currentView === 'repositories') render()
-  // The Links view names, per linked finding, the reports carrying it
-  // — straight out of the same index, so its rows fill in as the walk
-  // reaches each report rather than after a reload.
-  else if (state.currentView === 'links') render()
-  else if (state.currentView === 'findings' || state.currentView === 'files') {
-    // Sidebar's PACKAGES / REPOSITORIES captions depend on the index too.
-    renderSidebar().catch(() => {})
-    // Both the Duplicates filter and security lens can change as already
-    // requested indexing finishes. Refresh whole rows and toolbar visibility.
-    render()
-  }
+  const view = state.currentView
+  // The sidebar's PACKAGES / REPOSITORIES captions read the index too.
+  if (onFindingsView()) renderSidebar().catch(() => {})
+  if (onFindingsView() || ['packages', 'repositories', 'links'].includes(view) || view === 'bundles' && state.selectedBundle) render()
 }
 
-// A bundle's per-file hashes landed (or a deleted bundle's were
-// dropped). Everything that joins a finding to bundle source goes
-// through that index — the focus view's inline Code panel, the
-// finding-card's "Code →" button, the Files tab's per-file link —
-// and all three read it synchronously during a render that has
-// usually already happened by the time the hashes arrive: the
-// prefetch at ingest is fire-and-forget, and on a reload the index
-// starts empty while the stored report paints straight away. So a
-// first paint asks too early, gets an empty answer, and renders no
-// panel; before this subscription the panel only appeared once some
-// unrelated interaction (clicking through the queue) forced another
-// render.
-//
-// Coalesced into a microtask because a report referencing several
-// bundles finishes their hash computes in a burst, and one render
-// picks up all of them.
+// A bundle's per-file hashes landed (or a deleted bundle's were dropped).
+// Every join of a finding to bundle source goes through that index — the
+// focus view's Code panel, a card's "Code →", the Files tab's link, a Links
+// preview — and reads it during a render that usually came first: the
+// prefetch at ingest is fire-and-forget, and a reload paints before the
+// index fills. The bundle views hold their own `details.fileHashes`.
+// Coalesced, as a report's bundles finish hashing in a burst.
 let hashIndexRenderQueued = false
+const readsHashIndex = () => onFindingsView() || getLinksPreview()
 subscribeToBundleHashIndex(() => {
-  // The bundle views don't read this index (they hold their open
-  // bundle's own `details.fileHashes`), so only finding surfaces
-  // that join by hash need the repaint, including Links previews.
-  if (state.currentView !== 'findings' && state.currentView !== 'files' && !getLinksPreview()) return
-  if (hashIndexRenderQueued) return
+  if (!readsHashIndex() || hashIndexRenderQueued) return
   hashIndexRenderQueued = true
   queueMicrotask(() => {
     hashIndexRenderQueued = false
-    if (state.currentView !== 'findings' && state.currentView !== 'files' && !getLinksPreview()) return
-    // A parent render() alone doesn't reach the "Code →" button:
-    // `<finding-card>` paints from its own observer-util autorun, and
-    // an unchanged property binding gives it no reason to re-run. The
-    // tick is a real state mutation, so the cards that consulted the
-    // index re-render with it (see render-finding.js).
+    if (!readsHashIndex()) return
+    // `<finding-card>` paints from its own autorun, which an unchanged
+    // binding doesn't re-run; the tick is the state change it reads.
     state.bundleHashTick++
     render()
   })
 })
 
-// A links file landed in (or left) the OPFS-wide links index. Every
-// finding card asks that index whether this finding has been linked to
-// any other — the "Duplicates:" row at the bottom — and a card paints
-// from its own autorun, which can't see a plain module Map change. So
-// bump the tick the cards read (see `linksTick` in state.ts) and
-// repaint.
-//
-// Not coalesced the way the hash-index subscriber below is: the index
-// notifies for the known-links batch, the completed verification walk, and
-// invalidations, rather than for every file it reads.
+// A links file entered or left the links index, which cards read for their
+// "Duplicates:" row from their own autorun (see `linksTick` in state.ts).
+// Not coalesced: the index notifies per batch, not per file it reads.
 subscribeToLinkedFindings(() => {
   state.linksTick++
   render()
 })
 
-// Findings-tab and bundles-tab graph views share renderGraph2Layout
-// chrome but draw from different graph data. Pick the refresh helper
-// by active view so a node selection inside a bundle graph repaints
-// the bundle's sidebar / top-pkgs block, not the findings tab's.
+// The findings and bundle graph views share the chrome, not the data.
+const inBundleGraph = () => state.currentView === 'bundles' && state.bundleDetailsTab === 'graph'
 function refreshActiveGraphSidebar() {
-  if (state.currentView === 'bundles' && state.bundleDetailsTab === 'graph') {
-    refreshBundleGraphSidebar()
-  } else {
-    refreshGraph2Sidebar()
-  }
+  if (inBundleGraph()) refreshBundleGraphSidebar()
+  else refreshGraph2Sidebar()
 }
 function refreshActiveGraphTopPkgs() {
-  if (state.currentView === 'bundles' && state.bundleDetailsTab === 'graph') {
-    refreshBundleGraphTopPkgs()
-  } else {
-    refreshGraph2TopPkgs()
-  }
+  if (inBundleGraph()) refreshBundleGraphTopPkgs()
+  else refreshGraph2TopPkgs()
 }
 
-// Re-render preserving the bundle source viewer's scroll position.
-// Lit may detach + reattach .bundle-source-code-wrap when sibling
-// structure changes (e.g. side-panel toggle), dropping scrollTop;
-// capture before, restore after. Source-viewer-specific because
-// nothing else here has user-driven scroll worth preserving.
-function renderPreservingSourceScroll() {
-  const before = document.querySelector('.bundle-source-code-wrap')
+// The node set or layout changed: drop the cached layout and the fields
+// named, then remount the canvas.
+function rebuildGraph(...reset) {
+  graph2.layoutCache = null
+  for (const field of reset) graph2[field] = null
+  cleanupGraph2()
+  render()
+}
+
+// Re-render keeping a scroller's position. Lit rebuilds a list's children
+// when a row's `.current` highlight or a sibling's structure changes, and a
+// rebuilt subtree resets the scroll of its scrolling ancestor.
+function renderPreservingScrollOf(selector, keepLeft = false) {
+  const before = document.querySelector(selector)
   const top = before?.scrollTop ?? 0
   const left = before?.scrollLeft ?? 0
   render()
-  const after = document.querySelector('.bundle-source-code-wrap')
-  if (after) {
-    after.scrollTop = top
-    after.scrollLeft = left
-  }
-}
-
-// Re-render preserving scrollTop on a named container. Picking a row
-// in a list-driven view (Code rail tree, Issues slide, Code search)
-// makes Lit rebuild the container's children for the `.current`
-// highlight / data-shape change, and a rebuilt subtree resets
-// scrollTop on the scrolling ancestor.
-function renderPreservingScrollOf(selector) {
-  const before = document.querySelector(selector)
-  const top = before?.scrollTop ?? 0
-  render()
   const after = document.querySelector(selector)
-  if (after) after.scrollTop = top
+  if (!after) return
+  after.scrollTop = top
+  if (keepLeft) after.scrollLeft = left
 }
+const renderPreservingSourceScroll = () => renderPreservingScrollOf('.bundle-source-code-wrap', true)
 
-// Row-internal interactions (tab switch, triage popover, mark-color,
-// comment / fix save, details-panel close) re-render after mutating
-// per-tab state. Steady-state table renders now diff in place (the
-// persistent `<finding-table>` stays connected across them — see
-// render.js), so a bare render() no longer resets scrollTop on
-// `.findings-table-list`; this wrapper stays as a safeguard for the
-// renders that DO rebuild the scroller (cross-view / cross-shape
-// re-entry recreating the body slots).
+// Table renders diff in place (the persistent `<finding-table>`, render.js);
+// this guards the renders that do rebuild the scroller (cross-view re-entry).
 function renderPreservingTableScroll() {
   if (state.viewMode === 'table') renderPreservingScrollOf('.findings-table-list')
   else render()
 }
-// Coalesce a search field's re-renders to one per animation frame.
-// Two fields earn it. The bundle Search tab's full-bundle scan
-// (renderBundleSearchResults) runs inside render(), so rendering
-// synchronously on every keystroke would tie typing latency to the
-// scan cost. The findings search re-filters and re-sorts the whole
-// loaded set and rebuilds the rows it shows — cheap per keystroke on
-// a small report, a frame or more on a large one. Deferring to the
-// next frame keeps the input responsive and collapses bursts (held
-// key / paste / IME) into a single render. The query state is written
-// synchronously, so a frame already pending just picks up the newest
-// value when it fires. (The bundle scan also refines forward-typed
-// queries from the previous keystroke's result — see
-// bundle-search-scan.js — so its per-frame cost usually drops to
-// re-checking prior hit lines.)
-let _searchRaf = 0
+
+// A search field's re-renders, one per frame. The findings search re-filters
+// and re-sorts the whole loaded set, and the bundle searches scan sources
+// inside render(), so per keystroke they would tie typing latency to that
+// cost. The query is written synchronously; a pending frame draws the newest.
+let searchRaf = 0
 function renderSearchNextFrame() {
-  if (_searchRaf) return
-  _searchRaf = requestAnimationFrame(() => {
-    _searchRaf = 0
+  if (searchRaf) return
+  searchRaf = requestAnimationFrame(() => {
+    searchRaf = 0
     render()
   })
 }
-import { ensureBundleSources, handOffBundles, openBundle, prefetchBundleHashes, releaseHandoff, selectBundle, selectBundleTab } from './bundle-load.js'
-import { renderSidebar } from './sidebar.js'
-import { BUNDLE_TABS, goHome, persistLastBundle, switchToFile, switchToManagedTeam, switchToWorkspace, switchToWorkspaceContent } from './ingest.js'
-import { treeAnchor } from './file-counts.js'
-import { cleanupGraph2, graph2 } from './graph/state.js'
-import { hideToast, showToast } from './toast.js'
-import { managedDetailsReady } from './managed-details.js'
 
-// composedPath-aware Element.closest — needed for clicks originating
-// inside a shadow DOM (e.g. `<finding-table>`'s `.tab` / `.mark-*`
-// buttons): clicks bubble out composed:true but `e.target` retargets
-// to the shadow host, so a plain `e.target.closest()` would miss the
-// inner element; composedPath sees the original target. Works for
-// light-DOM clicks too since the path starts at the same node.
-function pathClosest(e, selector) {
-  for (const el of e.composedPath()) {
-    if (el?.matches?.(selector)) return el
-  }
-  return null
-}
-
-// After the render that mounts (or re-targets) the source viewer,
-// bring a line-row into view. Deferred a microtask so the just-
-// rendered row is in the DOM before the lookup.
+// After the render that mounts (or re-targets) the source viewer.
 function scrollSourceLineIntoView(line, options) {
   queueMicrotask(() => {
-    const row = document.querySelector(`.bundle-source-lineno-row[data-line="${line}"]`)
-    if (row) row.scrollIntoView(options)
+    document.querySelector(`.bundle-source-lineno-row[data-line="${line}"]`)?.scrollIntoView(options)
   })
 }
 
-// The 1s `.copied` pulse every copy-style button shows on success.
 function pulseCopied(el) {
   el.classList.add('copied')
   setTimeout(() => el.classList.remove('copied'), 1000)
 }
 
-// Clipboard write + pulse. Failure (no clipboard permission, no
-// secure context) silently no-ops — a convenience, not load-bearing.
+// A convenience: no clipboard permission or secure context is a silent no-op.
 function copyWithPulse(el, text) {
   try {
     navigator.clipboard.writeText(text).then(() => {
@@ -289,6 +234,23 @@ function resetBundleSourceScroll(focus = false) {
   })
 }
 
+// A file opened in the source viewer from its history or a link in it.
+function showSourceFile(clearSearch, focus) {
+  state.bundleSourceFindingIdx = null
+  if (clearSearch) {
+    state.bundleCodeSearchMode = 'files'
+    state.bundleCodeSearchQuery = ''
+  }
+  renderPreservingScrollOf('.bundle-code-rail-body')
+  revealBundleCodeCurrent()
+  resetBundleSourceScroll(focus)
+}
+
+function goBundleTab(tab, options) {
+  selectBundleTab(tab, options)
+  if (state.selectedBundle) persistLastBundle(state.selectedBundle, tab, { push: true })
+}
+
 // A line link pasted or typed over the open managed file changes only the
 // fragment; managed-history keeps the page. Mark the lines it names, within
 // the file, and bring them into view.
@@ -305,16 +267,14 @@ window.addEventListener('hashchange', () => {
   if (state.bundleSourceTargetLine) scrollSourceLineIntoView(route.line, { block: 'center' })
 })
 
-// Source links, file history, close controls, and gutter dots. Shared by
+// Source links, file history, close controls and gutter dots: shared by
 // #report (Code and finding panels) and the separate source overlay slot.
-// Return true when this delegate handled the click.
-function handleBundleSourceClick(e) {
-  // Managed Code's line numbers mark a line, and with Shift a range from
-  // the line clicked first. Clicking the one marked line clears it. The
-  // render puts the marked lines in the URL.
-  const lineLink = e.target.closest('[data-bundle-source-line]')
-  if (lineLink) {
-    const line = Number(lineLink.dataset.bundleSourceLine)
+const SOURCE_CLICKS = [
+  // Managed Code's line numbers mark a line, and with Shift a range from the
+  // line clicked first; clicking the one marked line clears it. The render
+  // puts the marked lines in the URL.
+  [near('[data-bundle-source-line]'), (el, e) => {
+    const line = Number(el.dataset.bundleSourceLine)
     const bundle = state.bundleDetails?.integrity ?? null
     const path = state.bundleSourceFile
     const target = state.bundleSourceTargetLine
@@ -325,58 +285,41 @@ function handleBundleSourceClick(e) {
     } else if (marked?.line === line && !(marked.end > line)) state.bundleSourceTargetLine = null
     else state.bundleSourceTargetLine = { bundle, path, line }
     renderPreservingSourceScroll()
-    return true
-  }
-  const wrapToggle = e.target.closest('[data-bundle-source-wrap]')
-  if (wrapToggle) {
-    // Rewrapping moves every line below the first that changes, so put
-    // back the one at the top of the code once the gutter has followed.
-    const restore = keepSourceLine(wrapToggle)
+  }],
+  // Rewrapping moves every line below the first that changes, so put back
+  // the one at the top of the code once the gutter has followed.
+  [near('[data-bundle-source-wrap]'), (el) => {
+    const restore = keepSourceLine(el)
     state.bundleSourceWrap = !state.bundleSourceWrap
     try { localStorage.setItem(BUNDLE_SOURCE_WRAP_KEY, String(state.bundleSourceWrap)) } catch {}
     render()
     queueMicrotask(restore)
-    return true
-  }
+  }],
   // A pretty-printed copy's lines aren't the file's, so it opens at its top.
-  const prettyToggle = e.target.closest('[data-bundle-source-pretty]')
-  if (prettyToggle) {
-    togglePrettySource(prettyToggle.dataset.bundleSourcePretty === 'json')
+  [near('[data-bundle-source-pretty]'), (el) => {
+    togglePrettySource(el.dataset.bundleSourcePretty === 'json')
     render()
     resetBundleSourceScroll()
-    return true
-  }
+  }],
   // A lockfile's packages, in the lockfile viewer, in place of its text.
-  if (e.target.closest('[data-bundle-source-lockfile]')) {
+  [near('[data-bundle-source-lockfile]'), () => {
     toggleLockfileView()
     render()
-    return true
-  }
+  }],
   // A dropped lockfile's editor (lockfile-drop.js) closes to the landing.
-  if (e.target.closest('[data-dropped-lockfile-close]')) {
-    void goHome()
-    return true
-  }
-  const historyButton = e.target.closest('[data-bundle-code-history]')
-  if (historyButton) {
+  [near('[data-dropped-lockfile-close]'), () => { void goHome() }],
+  [near('[data-bundle-code-history]'), (el) => {
     const history = bundleFileHistory(state.bundleCodeHistory, state.bundleDetails?.integrity ?? null, state.bundleSourceFile)
-    const next = stepBundleFile(history, historyButton.dataset.bundleCodeHistory === 'back' ? -1 : 1)
+    const next = stepBundleFile(history, el.dataset.bundleCodeHistory === 'back' ? -1 : 1)
     const path = next.files[next.at]
-    if (next.at === history.at || !bundleSourcesAsMap(state.bundleDetails).has(path)) return true
+    if (next.at === history.at || !bundleSourcesAsMap(state.bundleDetails).has(path)) return
     state.bundleCodeHistory = next
     state.bundleSourceFile = path
-    state.bundleSourceFindingIdx = null
-    state.bundleCodeSearchMode = 'files'
-    state.bundleCodeSearchQuery = ''
-    renderPreservingScrollOf('.bundle-code-rail-body')
-    revealBundleCodeCurrent()
-    resetBundleSourceScroll()
-    return true
-  }
-  const sourceLink = e.target.closest('[data-bundle-source-link]')
-  if (sourceLink) {
-    const path = sourceLink.dataset.bundleSourceLink
-    const panel = sourceLink.closest('.focus-pane-code')
+    showSourceFile(true, false)
+  }],
+  [near('[data-bundle-source-link]'), (el, e) => {
+    const path = el.dataset.bundleSourceLink
+    const panel = el.closest('.focus-pane-code')
     if (panel) {
       const group = focusedGroupOf(e)
       const pos = focusCodeLinkPosition(group, panel.dataset.focusCodeIntegrity, panel.dataset.focusCodeFile, path)
@@ -384,161 +327,160 @@ function handleBundleSourceClick(e) {
         pushFocusCode(group, pos)
         queueMicrotask(() => panel.querySelector('.focus-code-source')?.focus({ preventScroll: true }))
       }
-      return true
+      return
     }
-    if (!bundleSourcesAsMap(state.bundleDetails).has(path)) return true
-    // Search results can hide a target that doesn't contain the query.
-    // Continue following source references in Code, with its file tree visible.
-    if (state.currentView === 'bundles' && state.bundleDetailsTab === 'search') {
-      selectBundleTab('code', { preserveSource: true })
-      if (state.selectedBundle) persistLastBundle(state.selectedBundle, 'code', { push: true })
-    }
+    if (!bundleSourcesAsMap(state.bundleDetails).has(path)) return
+    // Search results can hide a target that doesn't contain the query, so
+    // follow references on in Code, with its file tree.
+    if (state.currentView === 'bundles' && state.bundleDetailsTab === 'search') goBundleTab('code', { preserveSource: true })
     selectBundleSourceFile(path)
+    showSourceFile(state.bundleDetailsTab === 'code', true)
+  }],
+  // Backdrop or close button. Before the opening clicks further down, so a
+  // stray view-source target inside the modal doesn't reopen it.
+  [e => e.target.classList?.contains('bundle-source-overlay') ? e.target : e.target.closest('[data-action="bundle-source-close"]'), () => {
+    if (!state.bundleSourceFile) return
+    selectBundleTab(state.bundleDetailsTab)
+    render()
+  }],
+  // The side panel's close clears the finding, leaving the modal open.
+  [near('[data-action="bundle-source-panel-close"]'), () => {
+    if (state.bundleSourceFindingIdx == null) return
     state.bundleSourceFindingIdx = null
-    if (state.bundleDetailsTab === 'code') {
-      state.bundleCodeSearchMode = 'files'
-      state.bundleCodeSearchQuery = ''
-    }
-    renderPreservingScrollOf('.bundle-code-rail-body')
-    revealBundleCodeCurrent()
-    resetBundleSourceScroll(true)
-    return true
-  }
-  if (e.target.classList?.contains('bundle-source-overlay')
-      || e.target.closest('[data-action="bundle-source-close"]')) {
-    if (state.bundleSourceFile) {
-      selectBundleTab(state.bundleDetailsTab)
-      render()
-    }
-    return true
-  }
-  // Side panel close — clears the selected finding but leaves the
-  // modal open.
-  if (e.target.closest('[data-action="bundle-source-panel-close"]')) {
-    if (state.bundleSourceFindingIdx != null) {
-      state.bundleSourceFindingIdx = null
-      renderPreservingSourceScroll()
-    }
-    return true
-  }
-  // Gutter dot — selects a finding on this line and opens the side
-  // panel. The dot's dataset carries the index into the file's
-  // findings array (built in render); re-clicking the same dot
-  // dismisses.
-  const sourceFinding = e.target.closest('[data-bundle-source-finding]')
-  if (sourceFinding) {
-    const idx = parseInt(sourceFinding.dataset.bundleSourceFinding, 10)
-    if (Number.isFinite(idx)) {
-      state.bundleSourceFindingIdx = state.bundleSourceFindingIdx === idx ? null : idx
-      renderPreservingSourceScroll()
-    }
-    return true
-  }
-  return false
-}
+    renderPreservingSourceScroll()
+  }],
+  // A gutter dot opens the side panel on the finding it indexes (into the
+  // file's findings, built in render); the same dot again dismisses it.
+  [near('[data-bundle-source-finding]'), (el) => {
+    const idx = parseInt(el.dataset.bundleSourceFinding, 10)
+    if (!Number.isFinite(idx)) return
+    state.bundleSourceFindingIdx = state.bundleSourceFindingIdx === idx ? null : idx
+    renderPreservingSourceScroll()
+  }],
+]
 
-// Labeled `Repo / File / Line / Description / Confidence` block for
-// the active tab under the clicked button. Shared by the copy and
-// Claude buttons (and, built the same way from `findingRepo` +
-// `handoffBlock`, the GitHub-issue link in render-finding.js). Repo
-// lookup walks the package index first (matching the per-package repo
-// header in the file picker), falling back to the per-finding /
-// per-report / global repo URL for OWN-source findings.
-function findingHandoffText(e) {
+// The dedup group whose card or source panel a click landed in, read off the
+// nearest data-gid on its path. Not `state.focusGid`: the focus view writes
+// that only on an explicit pick, so a first click straight into the card
+// would find it null.
+function focusedGroupOf(e) {
+  const gid = pathClosest(e, '[data-gid]')?.dataset?.gid
+  return gid ? findGroupById(gid) : null
+}
+// The group's active tab, which per-tab actions (copy, link, comment, color) act on.
+function focusedTabOf(e) {
   const group = focusedGroupOf(e)
-  if (!group) return null
-  const f = activeTabFor(group)
-  return handoffBlock(f, findingRepo(f))
+  return group && activeTabFor(group)
 }
 
-// All interactive elements inside #report are handled via event
-// delegation here, no inline handlers. Order matters: more specific
-// selectors come first so they short-circuit before a generic match
-// (e.g. tree-graph buttons before generic tab clicks).
-report.addEventListener('click', (e) => {
-  if (pathClosest(e, '[data-finding-history]')) {
-    const group = focusedGroupOf(e)
-    const finding = group && activeTabFor(group)
+// The labeled Repo / File / Line / Description / Confidence block the copy
+// and Claude buttons hand off (the GitHub-issue link builds the same).
+function findingHandoffText(e) {
+  const f = focusedTabOf(e)
+  return f ? handoffBlock(f, findingRepo(f)) : null
+}
+
+// An evidence reference in the focus view loads its file into the Code panel
+// beside the card (render-finding.js evidencePanelRef).
+function followCodeNav(el, e) {
+  pushFocusCode(focusedGroupOf(e), {
+    integrity: el.dataset.codeNavIntegrity,
+    file: el.dataset.codeNavFile,
+    range: lineRange(el.dataset.codeNavLine),
+  })
+}
+
+async function revealOrAlert(id, name, managedReport) {
+  const result = await revealFindingInReport(id, name, managedReport)
+  if (!result.ok) alert(result.reason)
+}
+
+// The package and repository list + details views share one shape: a row
+// selects, the [Issues →] shortcut opens the Issues slide `transient` (backing
+// out of it drops the selection too), and a new pick starts on Overview and
+// the slide's default `live` bucket.
+const ENTITY = {
+  package: { id: 'selectedPackage', version: 'selectedPackageVersion', tab: 'packageDetailsTab', triage: 'packageSlideTriage', transient: 'packageSlideTransient' },
+  repository: { id: 'selectedRepository', tab: 'repositoryDetailsTab', triage: 'repositorySlideTriage', transient: 'repositorySlideTransient' },
+}
+function openEntity(kind, id, version, tab, transient) {
+  const keys = ENTITY[kind]
+  state[keys.id] = id
+  if (keys.version) state[keys.version] = version
+  state[keys.tab] = tab
+  state[keys.triage] = null
+  state[keys.transient] = transient
+  render()
+}
+function closeEntity(kind) {
+  const keys = ENTITY[kind]
+  state[keys.id] = null
+  if (keys.version) state[keys.version] = null
+}
+function setEntityTab(kind, tab) {
+  const key = ENTITY[kind].tab
+  if ((tab !== 'overview' && tab !== 'issues') || state[key] === tab) return
+  state[key] = tab
+  render()
+}
+function entitySlideBack(kind) {
+  const keys = ENTITY[kind]
+  state[keys.tab] = 'overview'
+  state[keys.triage] = null
+  if (state[keys.transient]) {
+    closeEntity(kind)
+    state[keys.transient] = false
+  }
+  render()
+}
+
+const REPORT_CLICKS = [
+  [deep('[data-finding-history]'), (_, e) => {
+    const finding = focusedTabOf(e)
     if (canViewFindingHistory(finding)) void openFindingHistoryDialog(finding)
-    return
-  }
-  // An evidence reference in the focus view — loads that file into the
-  // code panel beside the card (render-finding.js evidencePanelRef).
-  // In `<finding-card>`'s shadow root, hence composedPath.
-  const codeNav = pathClosest(e, '[data-code-nav-file]')
-  if (codeNav) {
-    pushFocusCode(focusedGroupOf(e), {
-      integrity: codeNav.dataset.codeNavIntegrity,
-      file: codeNav.dataset.codeNavFile,
-      range: lineRange(codeNav.dataset.codeNavLine),
-    })
-    return
-  }
-  // Back / forward through the panel's history (render.js).
-  const codeHistory = pathClosest(e, '[data-code-history]')
-  if (codeHistory) {
-    stepFocusCode(codeHistory.dataset.codeHistory === 'forward' ? 1 : -1)
-    return
-  }
-  // The `</>` beside a finding's code links — toggles the inline source
-  // preview open or shut (render-finding.js codePreview). Lives in
-  // `<finding-card>`'s shadow root, hence composedPath. The Set is
-  // replaced rather than mutated so an observer-util autorun reading
-  // it sees the change; render() then repaints, and the loader's own
-  // settle render fills the snippet in when the bundle lands.
-  const codePreview = pathClosest(e, '[data-code-preview]')
-  if (codePreview) {
-    const key = codePreview.dataset.codePreview
+  }],
+  [deep('[data-code-nav-file]'), (el, e) => { followCodeNav(el, e) }],
+  // Back / forward through the Code panel's history (render.js).
+  [deep('[data-code-history]'), (el) => { stepFocusCode(el.dataset.codeHistory === 'forward' ? 1 : -1) }],
+  // The `</>` beside a finding's code links toggles its inline preview. The
+  // Set is replaced, not mutated, so the autorun reading it sees the change;
+  // the loader's own settle render fills the snippet in.
+  [deep('[data-code-preview]'), (el) => {
     const next = new Set(state.codePreviews)
-    if (!next.delete(key)) next.add(key)
+    toggleIn(next, el.dataset.codePreview)
     state.codePreviews = next
     render()
-    return
-  }
-  // Finding card's `[Code]` shortcut — pops the bundle source viewer
-  // modal as an overlay on the current view (findings, packages, etc.)
-  // without navigating away, via the global overlay slot
-  // (`#bundle-source-overlay-slot`, mounted by render.js each render).
-  // Button lives in `<finding-card>`'s shadow root, hence composedPath.
-  const managedCode = pathClosest(e, '[data-finding-code-report]')
-  if (managedCode && isManagedUiMode()) {
+  }],
+  [deep('[data-finding-code-report]'), (el) => {
+    if (!isManagedUiMode()) return false
     void openFindingSourceDialog({
-      reportId: managedCode.dataset.findingCodeReport,
-      file: managedCode.dataset.findingCodeFile,
-      line: managedCode.dataset.findingCodeLine,
+      reportId: el.dataset.findingCodeReport,
+      file: el.dataset.findingCodeFile,
+      line: el.dataset.findingCodeLine,
     })
-    return
-  }
-  const findingCode = pathClosest(e, '[data-finding-code-bundle]')
-  if (findingCode) {
-    const integrity = findingCode.dataset.findingCodeBundle
-    const file = findingCode.dataset.findingCodeFile
-    const lineAttr = findingCode.dataset.findingCodeLine
-    const line = lineAttr ? parseInt(lineAttr, 10) : null
+  }],
+  // A card's `[Code]` pops the bundle source viewer over the current view
+  // (the overlay slot render.js mounts) without navigating away.
+  [deep('[data-finding-code-bundle]'), (el) => {
+    const integrity = el.dataset.findingCodeBundle
+    const file = el.dataset.findingCodeFile
+    const line = el.dataset.findingCodeLine ? parseInt(el.dataset.findingCodeLine, 10) : null
     state.bundleSourceFile = file || null
     state.bundleCodeHistory = null
     state.bundleSourceFindingIdx = null
-    // The modal suppresses itself in the Code + Search tabs (those
-    // slides render the source inline); flip back to default so it
-    // surfaces even if the user is parked on one of them.
-    if (state.bundleDetailsTab === 'code' || state.bundleDetailsTab === 'search') {
-      state.bundleDetailsTab = 'overview'
-    }
-    // After the modal mounts, scroll its line-row to the top of the
-    // viewport (same shape Code-search hits use).
-    const scrollToFindingLine = () => {
-      if (!Number.isFinite(line)) return
-      // `instant`, not `smooth`: the modal pops over the current
-      // view, so a smooth scroll from its initial natural position
-      // would visibly drift the line into place. Instant lands the
-      // line at the top in the same frame the modal appears.
-      scrollSourceLineIntoView(line, { block: 'start', behavior: 'instant' })
+    // The modal suppresses itself in the Code and Search tabs, which show
+    // the source inline.
+    if (state.bundleDetailsTab === 'code' || state.bundleDetailsTab === 'search') state.bundleDetailsTab = 'overview'
+    // `instant`: the modal pops over the view, and a smooth scroll would
+    // visibly drift the line into place.
+    const scrollToLine = () => {
+      if (Number.isFinite(line)) scrollSourceLineIntoView(line, { block: 'start', behavior: 'instant' })
     }
     if (state.selectedBundle === integrity && state.bundleDetails?.integrity === integrity) {
       // An already-open metadata view may still need source bodies.
       render()
       ensureBundleSources().then(() => {
-        if (state.selectedBundle === integrity && state.bundleSourceFile === file) scrollToFindingLine()
+        if (state.selectedBundle === integrity && state.bundleSourceFile === file) scrollToLine()
         return null
       })
       return
@@ -547,263 +489,96 @@ report.addEventListener('click', (e) => {
     state.selectedBundleWorkspace = null
     state.bundleDetails = null
     render()
-    // Wait for openBundle to finish parsing + render so the
-    // line-row is actually in the DOM before we look it up.
-    ;(async () => {
-      await openBundle(integrity)
-      scrollToFindingLine()
-    })()
-    return
-  }
-  // Packages list — expand chevron on multi-version row headlines.
-  // Flips `state.expandedPackages` so older-version sub-rows surface /
-  // hide next render. Listed before the row-issues / row-select
-  // handlers: the chevron lives inside the `<li>`, so bubbling up
-  // would otherwise select the latest-version row alongside the expand.
-  const pkgExpand = e.target.closest('[data-package-expand]')
-  if (pkgExpand) {
-    const pkg = pkgExpand.dataset.packageExpand
-    if (state.expandedPackages.has(pkg)) state.expandedPackages.delete(pkg)
-    else state.expandedPackages.add(pkg)
+    // Once openBundle has parsed and rendered, so the line row exists.
+    void openBundle(integrity).then(scrollToLine)
+  }],
+  // Inside the row `<li>`: before the row's own handlers, or the click would
+  // select the row as well.
+  [near('[data-package-expand]'), (el) => {
+    toggleIn(state.expandedPackages, el.dataset.packageExpand)
     render()
-    return
-  }
-  // Before the row-select handler below: the [Issues →] button sits
-  // inside the selectable `<li>`, so closest() would otherwise select
-  // the row too.
-  const pkgRowIssues = e.target.closest('[data-package-row-issues]')
-  if (pkgRowIssues) {
-    const pkg = pkgRowIssues.dataset.packageRowIssues
-    const ver = pkgRowIssues.dataset.packageRowIssuesVersion
-    state.selectedPackage = pkg
-    state.selectedPackageVersion = ver || null
-    state.packageDetailsTab = 'issues'
-    state.packageSlideTriage = null
-    // Transient flag — slide-back clears `selectedPackage` too so
-    // the user lands back on the plain list instead of the
-    // row+details state. The row's [Issues →] is a drill-in
-    // shortcut, not a row selection.
-    state.packageSlideTransient = true
-    render()
-    return
-  }
-  const repoRowIssues = e.target.closest('[data-repository-row-issues]')
-  if (repoRowIssues) {
-    const repo = repoRowIssues.dataset.repositoryRowIssues
-    state.selectedRepository = repo
-    state.repositoryDetailsTab = 'issues'
-    state.repositorySlideTriage = null
-    state.repositorySlideTransient = true
-    render()
-    return
-  }
-  // Reset the details panel to the Overview tab so a new pick
-  // doesn't carry the prior selection's tab choice. The version
-  // pin reads off the `data-select-package-version` attribute
-  // (empty string → null, meaning "use the package aggregate" /
-  // "the only version slot" — see versionMatchesSelection in
-  // render-packages.js).
-  const selPackage = e.target.closest('[data-select-package]')
-  if (selPackage) {
-    const pkg = selPackage.dataset.selectPackage
-    const verRaw = selPackage.dataset.selectPackageVersion ?? ''
-    const ver = verRaw === '' ? null : verRaw
+  }],
+  [near('[data-package-row-issues]'), (el) => {
+    openEntity('package', el.dataset.packageRowIssues, el.dataset.packageRowIssuesVersion || null, 'issues', true)
+  }],
+  [near('[data-repository-row-issues]'), (el) => { openEntity('repository', el.dataset.repositoryRowIssues, null, 'issues', true) }],
+  // An empty version is the package aggregate / only version slot
+  // (versionMatchesSelection in render-packages.js).
+  [near('[data-select-package]'), (el) => {
+    const pkg = el.dataset.selectPackage
+    const ver = el.dataset.selectPackageVersion || null
     if (state.selectedPackage === pkg && state.selectedPackageVersion === ver) return
-    state.selectedPackage = pkg
-    state.selectedPackageVersion = ver
-    state.packageDetailsTab = 'overview'
-    // Drop the slide's triage sub-view so a new pick lands in the
-    // default `live` (untriaged + in-progress + fixed) bucket — carrying a
-    // prior package's `'invalid'` / `'deleted'` mode would
-    // surprise the user.
-    state.packageSlideTriage = null
-    state.packageSlideTransient = false
+    openEntity('package', pkg, ver, 'overview', false)
+  }],
+  [near('[data-deselect-package]'), () => {
+    closeEntity('package')
     render()
-    return
-  }
-  // Packages list — close-details button on the right panel.
-  if (e.target.closest('[data-deselect-package]')) {
-    state.selectedPackage = null
-    state.selectedPackageVersion = null
-    render()
-    return
-  }
-  // Packages details — tab switch. Overview keeps the regular
-  // list + details layout; Issues opens the full-width slide
-  // (state.packageDetailsTab='issues' triggers the slide branch
-  // in renderPackagesView). Bucket's already in memory, so the
-  // re-render is paint-only.
-  const pkgTab = e.target.closest('[data-package-tab]')
-  if (pkgTab) {
-    const tab = pkgTab.dataset.packageTab
-    if ((tab === 'overview' || tab === 'issues') && state.packageDetailsTab !== tab) {
-      state.packageDetailsTab = tab
-      render()
-    }
-    return
-  }
-  // Packages slide back — drops out of the Issues slide back to
-  // the regular list + details layout (Overview tab).
-  if (e.target.closest('[data-action="package-slide-back"]')) {
-    state.packageDetailsTab = 'overview'
-    // Reset the slide's triage sub-view too — re-entering the
-    // slide should land on the default `live` bucket.
-    state.packageSlideTriage = null
-    // Transient slides (opened via the row's [Issues →] shortcut)
-    // also clear the selection on the way out — the row click
-    // wasn't meant to leave the user on a selected-row+details
-    // state when they back out of the slide.
-    if (state.packageSlideTransient) {
-      state.selectedPackage = null
-      state.selectedPackageVersion = null
-      state.packageSlideTransient = false
-    }
-    render()
-    return
-  }
-  // Package / repository slide Invalid / Deleted tabs dispatch
-  // `slide-triage-toggle` CustomEvents from `<slide-triage-tabs>` —
-  // handled by the listener below (search "slide-triage-toggle"), no
-  // data-attribute branch here.
-  // Packages details — click a report row to navigate to it.
-  // Mirrors the bundle Issues report-chip handler (switchToFile
-  // loads it into findings + flips currentView away from packages).
-  // Links view and workspace finding report chips open a finding in that
-  // original report, preserving the row's grouping and annotations.
-  const linksReport = pathClosest(e, '[data-links-report][data-links-finding]')
-  if (linksReport) {
+  }],
+  [near('[data-package-tab]'), (el) => { setEntityTab('package', el.dataset.packageTab) }],
+  [near('[data-action="package-slide-back"]'), () => { entitySlideBack('package') }],
+  // Links view and workspace finding report chips open the finding in its
+  // original report, keeping the row's grouping and annotations.
+  [deep('[data-links-report][data-links-finding]'), (el, e) => {
     e.preventDefault()
-    const { linksReport: name, linksFinding: id, managedReport: managedReportId } = linksReport.dataset
-    if (name && id) {
-      void (async () => {
-        const result = await revealFindingInReport(id, name, managedReportId)
-        if (!result.ok) alert(result.reason)
-      })().catch((err) => console.warn('links: reveal in report failed:', err))
-    }
-    return
-  }
-  // Report chip → open that report. Shared by every cross-report
-  // surface that names a report the user can go read: the Packages and
-  // Repositories details panels. One attribute, one behaviour — a
-  // second hook doing the same thing would only be a second place to
-  // fix.
-  const pkgReport = e.target.closest('[data-package-report]')
-  if (pkgReport) {
-    const name = pkgReport.dataset.packageReport
-    if (name) switchToFile(name)
-    return
-  }
-  // Repositories list — row select (mirrors data-select-package).
-  // Resets the details panel to the Overview tab and drops the
-  // slide's triage sub-view so a new pick lands on the default
-  // `live` bucket.
-  const selRepo = e.target.closest('[data-select-repository]')
-  if (selRepo) {
-    const repo = selRepo.dataset.selectRepository
-    if (state.selectedRepository === repo) return
-    state.selectedRepository = repo
-    state.repositoryDetailsTab = 'overview'
-    state.repositorySlideTriage = null
-    state.repositorySlideTransient = false
+    const { linksReport: name, linksFinding: id, managedReport } = el.dataset
+    if (name && id) revealOrAlert(id, name, managedReport).catch((err) => console.warn('links: reveal in report failed:', err))
+  }],
+  // A report chip in the Packages and Repositories details opens that report.
+  [near('[data-package-report]'), (el) => { if (el.dataset.packageReport) switchToFile(el.dataset.packageReport) }],
+  [near('[data-select-repository]'), (el) => {
+    const repo = el.dataset.selectRepository
+    if (state.selectedRepository !== repo) openEntity('repository', repo, null, 'overview', false)
+  }],
+  [near('[data-deselect-repository]'), () => {
+    closeEntity('repository')
     render()
-    return
-  }
-  if (e.target.closest('[data-deselect-repository]')) {
-    state.selectedRepository = null
+  }],
+  [near('[data-repository-tab]'), (el) => { setEntityTab('repository', el.dataset.repositoryTab) }],
+  [near('[data-action="repository-slide-back"]'), () => { entitySlideBack('repository') }],
+  // The bundle view's tab strip. Tabs are paint-only over the cached
+  // bundleDetails (Graph and Terminal re-mount their slots in render.js).
+  [near('[data-bundle-tab]'), (el) => {
+    const tab = el.dataset.bundleTab
+    if (!(BUNDLE_TABS.has(tab) || tab === 'review' && state.bundleDetails?.npm || REPOSITORY_FILELESS_TABS.has(tab) && state.bundleDetails?.repository)) return
+    // Re-clicking the active tab navigates nowhere — and must not reset the
+    // Code slide's open file — but still persists: the render-time coercions
+    // (hidden advisories / compare → overview) change the tab without
+    // persisting, and this is the one chance to repair that stale suffix.
+    if (tab === state.bundleDetailsTab) {
+      if (state.selectedBundle) persistLastBundle(state.selectedBundle, tab)
+      return
+    }
+    // Leaving Graph stops its canvas' rAF / observers.
+    if (state.bundleDetailsTab === 'graph' && tab !== 'graph') {
+      cleanupGraph2()
+      document.body.classList.remove('report-fullscreen')
+    }
+    // Switching tabs resets the source-viewer pointer (selectBundleTab): the
+    // modal renders over non-slide tabs whenever it's set.
+    prepareNpmReviewTab(state, tab, npm => npmRisk(npm)?.oldVersion ?? null)
+    goBundleTab(tab)
     render()
-    return
-  }
-  const repoTab = e.target.closest('[data-repository-tab]')
-  if (repoTab) {
-    const tab = repoTab.dataset.repositoryTab
-    if ((tab === 'overview' || tab === 'issues') && state.repositoryDetailsTab !== tab) {
-      state.repositoryDetailsTab = tab
-      render()
+    // Code opens a default file on entry, perhaps deep in a subtree the rail
+    // opens scrolled past.
+    if (tab === 'code') {
+      ensureBundleSources().then(() => {
+        if (state.bundleDetailsTab === 'code') revealBundleCodeCurrent()
+        return null
+      })
     }
-    return
-  }
-  if (e.target.closest('[data-action="repository-slide-back"]')) {
-    state.repositoryDetailsTab = 'overview'
-    state.repositorySlideTriage = null
-    if (state.repositorySlideTransient) {
-      state.selectedRepository = null
-      state.repositorySlideTransient = false
-    }
-    render()
-    return
-  }
-  // Repository slide Invalid / Deleted tabs — handled by the
-  // `slide-triage-toggle` listener registered below. See the matching
-  // comment in the package-slide branch above.
-  // Bundle view — top tab switch. The strip carries Issues,
-  // Terminal, Treemap, Graph, Code, Overview. State is purely UI;
-  // the parsed bundleDetails stays cached so flipping tabs is
-  // paint-only (except Graph / Terminal which re-mount their
-  // canvas / terminal slot in render.js).
-  const bundleTab = e.target.closest('[data-bundle-tab]')
-  if (bundleTab) {
-    const tab = bundleTab.dataset.bundleTab
-    if (BUNDLE_TABS.has(tab) || tab === 'review' && state.bundleDetails?.npm || REPOSITORY_FILELESS_TABS.has(tab) && state.bundleDetails?.repository) {
-      // Re-clicking the active tab is a UI no-op. Without this, the
-      // reset below wiped the Code slide's open file (and the
-      // Search sidebar) on a click that navigates nowhere. The
-      // overlay modal can't coexist with a tab click (it covers
-      // the strip), so nothing else distinguishes the same-tab
-      // case. Still persist: the render-time coercions (hidden
-      // advisories / compare → 'overview') mutate the tab without
-      // persisting, and the same-tab click is the one chance to
-      // repair that stale suffix.
-      if (tab === state.bundleDetailsTab) {
-        if (state.selectedBundle) persistLastBundle(state.selectedBundle, tab)
-        return
-      }
-      // Tear down the canvas when leaving Graph so its rAF /
-      // observers stop. attachGraph2Interaction will re-wire on
-      // re-entry.
-      if (state.bundleDetailsTab === 'graph' && tab !== 'graph') {
-        cleanupGraph2()
-        document.body.classList.remove('report-fullscreen')
-      }
-      // Tab switch resets the source-viewer pointer so a stale
-      // bundleSourceFile from a different tab (Code slide
-      // selection, or modal opened from the Files tab) doesn't
-      // re-render the wrong view in the new tab — the modal
-      // renders over non-slide tabs whenever the pointer is set.
-      prepareNpmReviewTab(state, tab, npm => npmRisk(npm)?.oldVersion ?? null)
-      selectBundleTab(tab)
-      if (state.selectedBundle) persistLastBundle(state.selectedBundle, tab, { push: true })
-      render()
-      // The Code slide auto-opens a default file on entry (see
-      // pickDefaultBundleCodeFile); bring its tree row into view —
-      // it can live deep in a subtree the rail opens scrolled past.
-      if (tab === 'code') {
-        ensureBundleSources().then(() => {
-          if (state.bundleDetailsTab === 'code') revealBundleCodeCurrent()
-          return null
-        })
-      }
-    }
-    return
-  }
-  // Bundle Overview — "Download bundle" button. Saving the bundle
-  // reads its bytes back from OPFS (envelope peeled, .map de-gzipped)
-  // and writes them to disk under the original filename. The bytes
-  // leave the vault DECRYPTED and carry every bundled source, so a
-  // confirmation dialog fronts the write. `readBundle` can reject
-  // (vault locked, OPFS gone) — surface that rather than failing
-  // silently. The entry lookup also guards a stale integrity left in
-  // the DOM after the bundle was deleted in another tab.
-  if (e.target.closest('[data-bundle-retry-sources]')) {
+  }],
+  [near('[data-bundle-retry-sources]'), () => {
     if (state.bundleDetails) delete state.bundleDetails.sourceError
     render()
-    return
-  }
-  const bundleDownload = e.target.closest('[data-bundle-download]')
-  if (bundleDownload) {
-    const integrity = bundleDownload.dataset.bundleDownload
+  }],
+  // Overview's "Download bundle": the bytes leave the vault decrypted, with
+  // every bundled source, so a confirmation fronts the write. The entry
+  // lookup guards a stale integrity left after another tab deleted it.
+  [near('[data-bundle-download]'), (el) => {
+    const integrity = el.dataset.bundleDownload
     const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
     if (!entry) return
-    ;(async () => {
+    void (async () => {
       const { confirmed } = await openDownloadBundleDialog({ name: entry.name, encrypted: isEncryptionEnabled() })
       if (!confirmed) return
       try {
@@ -813,126 +588,67 @@ report.addEventListener('click', (e) => {
         alert(`Failed to download bundle: ${err.message}`)
       }
     })()
-    return
-  }
-  // Bundle Overview — SPDX / CycloneDX SBOM export. Serialized from the
-  // already-parsed stasis module inventory (no bytes re-read, no
-  // network), so it's synchronous; the button only renders once
-  // `bundleDetails` is the parsed stasis bundle. Re-check that the
-  // open details still match the selected bundle before serializing —
-  // a cross-tab switch could have swapped it under the click.
-  const sbomExport = e.target.closest('[data-bundle-export-sbom]')
-  if (sbomExport) {
-    const format = sbomExport.dataset.bundleExportSbom
+  }],
+  // SPDX / CycloneDX, serialized from the parsed inventory — if the open
+  // details still match the selected bundle a cross-tab switch could swap.
+  [near('[data-bundle-export-sbom]'), (el) => {
+    const format = el.dataset.bundleExportSbom
     const details = state.bundleDetails
     const entry = (state.bundles ?? []).find((b) => b.integrity === state.selectedBundle)
     if (!entry || !details || details.integrity !== entry.integrity) return
+    const cdx = format === 'cyclonedx'
     try {
-      const cdx = format === 'cyclonedx'
       const text = cdx ? bundleToCycloneDx(details, entry) : bundleToSpdx(details, entry)
-      const filename = `${sbomBaseName(entry.name)}.${cdx ? 'cdx' : 'spdx'}.json`
-      downloadBlob(new Blob([text], { type: 'application/json' }), filename)
+      downloadBlob(new Blob([text], { type: 'application/json' }), `${sbomBaseName(entry.name)}.${cdx ? 'cdx' : 'spdx'}.json`)
     } catch (err) {
-      alert(`Failed to export ${format === 'cyclonedx' ? 'CycloneDX' : 'SPDX'}: ${err.message}`)
+      alert(`Failed to export ${cdx ? 'CycloneDX' : 'SPDX'}: ${err.message}`)
     }
-    return
-  }
-  // Search tab — Context show/hide pill in the header. Flips whether
-  // matches render with surrounding lines or just the match lines;
-  // preserve the results scroll so the toggle doesn't jump the view.
-  const searchContext = pathClosest(e, '[data-bundle-search-context]')
-  if (searchContext) {
+  }],
+  // Search's Context pill: matches with or without their surrounding lines.
+  [deep('[data-bundle-search-context]'), () => {
     state.bundleSearchContext = !state.bundleSearchContext
     renderPreservingScrollOf('.bundle-search-results')
-    return
-  }
-  // Advisories tab — first-visit consent confirm. Writes the
-  // localStorage flag + re-renders; the Advisories body's
-  // ensureBundleAdvisories call then sees hasConsent() = true on
-  // the next pass and kicks the fetch.
-  if (e.target.closest('[data-advisories-consent]')) {
+  }],
+  // Advisories' first-visit consent; the next render's fetch sees it.
+  [near('[data-advisories-consent]'), () => {
     grantAdvisoriesProxyConsent()
     render()
-    return
-  }
-  // Advisories tab — Retry after a failed fetch. Drops the sticky
-  // error entry and re-issues the lookup; the immediate render()
-  // paints the loading line while the new request is in flight.
-  if (e.target.closest('[data-advisories-retry]')) {
+  }],
+  // Retry drops the sticky error; the render paints the loading line.
+  [near('[data-advisories-retry]'), () => {
     retryBundleAdvisories(state.bundleDetails, render).catch(() => {})
     render()
-    return
-  }
-  // Bundle Issues row — report chip click. Each chip carries the
-  // OPFS report name in its dataset; navigate to that report
-  // (switchToFile loads it into the findings tab and flips
-  // currentView away from bundles, which is the desired UX since
-  // the user is opting in to inspecting the report's findings).
-  const issueReport = e.target.closest('[data-bundle-issue-report]')
-  if (issueReport) {
-    const name = issueReport.dataset.bundleIssueReport
-    if (name) switchToFile(name)
-    return
-  }
-  // Bundle code-rail search-mode tabs (Files / Code / Issues)
-  // dispatch `bundle-search-mode-change` from `<bundle-code-search>`
-  // — handled by the listener below. Clicking a tab doesn't clear the
-  // query so the user can pivot between modes against the same string.
-  // The [×] clear button inside `<bundle-code-search>` dispatches the
-  // same `search-input` CustomEvent as typed input with `value: ""`,
-  // so the search-input listener below handles both flows uniformly.
-  // Bundle source viewer — close / side-panel close / gutter dots
-  // (see handleBundleSourceClick). Open clicks land on
-  // [data-bundle-view-source] further down.
-  // Order: close BEFORE open so a stray view-source target inside
-  // the modal doesn't reopen it.
-  if (handleBundleSourceClick(e)) return
-  // Code slide — issue stepper (‹ ›) in the main bar. Cycles
-  // bundleSourceFindingIdx through the open file's findings in line
-  // order (wrapping), opening the side panel on each, and scrolls
-  // the finding's line into view. The line-ordered (idx, line)
-  // pairs ride in a JSON attribute on the stepper container so the
-  // handler doesn't re-derive the per-file findings.
-  const issueStep = e.target.closest('[data-bundle-code-issue-step]')
-  if (issueStep) {
-    const holder = issueStep.closest('[data-bundle-code-issue-order]')
+  }],
+  [near('[data-bundle-issue-report]'), (el) => { if (el.dataset.bundleIssueReport) switchToFile(el.dataset.bundleIssueReport) }],
+  ...SOURCE_CLICKS,
+  // The Code slide's issue stepper (‹ ›) cycles the side panel through the
+  // open file's findings in line order, wrapping; the (idx, line) pairs ride
+  // on the stepper's container.
+  [near('[data-bundle-code-issue-step]'), (el) => {
     let order = null
-    try { order = JSON.parse(holder?.dataset.bundleCodeIssueOrder ?? 'null') } catch {}
-    if (Array.isArray(order) && order.length > 0) {
-      const step = issueStep.dataset.bundleCodeIssueStep === '-1' ? -1 : 1
-      const pos = order.findIndex((o) => o.idx === state.bundleSourceFindingIdx)
-      // No selection yet: forward starts at the first finding,
-      // backward at the last — both feel like "begin from my end".
-      const next = pos === -1
-        ? (step > 0 ? order[0] : order.at(-1))
-        : order[(pos + step + order.length) % order.length]
-      state.bundleSourceFindingIdx = next.idx
-      renderPreservingSourceScroll()
-      if (next.line > 0) scrollSourceLineIntoView(next.line, { block: 'center', behavior: 'smooth' })
-    }
-    return
-  }
-  const sourceOpen = pathClosest(e, '[data-bundle-view-source]')
-  if (sourceOpen) {
-    const path = sourceOpen.dataset.bundleViewSource
+    try { order = JSON.parse(el.closest('[data-bundle-code-issue-order]')?.dataset.bundleCodeIssueOrder ?? 'null') } catch {}
+    if (!Array.isArray(order) || order.length === 0) return
+    const step = el.dataset.bundleCodeIssueStep === '-1' ? -1 : 1
+    const pos = order.findIndex((o) => o.idx === state.bundleSourceFindingIdx)
+    // With nothing selected, forward starts at the first and back at the last.
+    const next = pos === -1
+      ? (step > 0 ? order[0] : order.at(-1))
+      : order[(pos + step + order.length) % order.length]
+    state.bundleSourceFindingIdx = next.idx
+    renderPreservingSourceScroll()
+    if (next.line > 0) scrollSourceLineIntoView(next.line, { block: 'center', behavior: 'smooth' })
+  }],
+  [deep('[data-bundle-view-source]'), (el) => {
+    const path = el.dataset.bundleViewSource
     if (!path) return
-    // Optional finding pointer — set when an Issues-mode search
-    // result is clicked; opens the side panel directly on that
-    // finding and (after render) scrolls the source viewer to
-    // its line. Plain Files-mode / Code-mode clicks omit the
-    // attribute: a re-click on the open file keeps the pointer,
-    // but a different file drops it — the index is a position in
-    // the PREVIOUS file's findings array, so carrying it over
-    // opened the side panel on an arbitrary finding of the new
-    // file (or pointed past its end).
-    const findingIdxAttr = sourceOpen.dataset.bundleViewFindingIdx
-    const findingIdx = findingIdxAttr === undefined ? null : parseInt(findingIdxAttr, 10)
-    const lineAttr = sourceOpen.dataset.bundleViewLine
-    const line = lineAttr ? parseInt(lineAttr, 10) : null
-    // A line is the file's as published, not a pretty-printed copy's
-    // (pretty-source.js), so following one shows the file as published,
-    // and a lockfile as its text rather than its packages.
-    if (Number.isFinite(line)) {
+    // An Issues-mode result opens the side panel on its finding. The index is
+    // into the previous file's findings, so it never carries to another file.
+    const findingIdx = el.dataset.bundleViewFindingIdx === undefined ? null : parseInt(el.dataset.bundleViewFindingIdx, 10)
+    const line = el.dataset.bundleViewLine ? parseInt(el.dataset.bundleViewLine, 10) : null
+    const hasLine = Number.isFinite(line)
+    // A line is the file's as published: not a pretty-printed copy's
+    // (pretty-source.js), nor a lockfile's package list.
+    if (hasLine) {
       state.bundleSourcePretty = false
       state.bundleSourceLockfile = false
     }
@@ -940,50 +656,26 @@ report.addEventListener('click', (e) => {
     selectBundleSourceFile(path)
     if (Number.isFinite(findingIdx)) state.bundleSourceFindingIdx = findingIdx
     else if (pathChanged) state.bundleSourceFindingIdx = null
-    // Mark the line a result opened; opening a file without a line
-    // clears the mark.
-    state.bundleSourceTargetLine = Number.isFinite(line)
-      ? { bundle: state.bundleDetails?.integrity ?? null, path, line }
-      : null
-    // Preserve the scroll position of whichever list-style
-    // container the click came from. Code rail (tree / search
-    // results), Issues slide (file-grouped list), and Code source
-    // viewer panels each scroll inside their own element; the
-    // outermost match wins. render() would otherwise reset
-    // scrollTop on whichever subtree Lit rebuilds for the new
-    // `.current` highlight.
-    if (sourceOpen.closest('.bundle-code-rail')) {
-      renderPreservingScrollOf('.bundle-code-rail-body')
-    } else if (sourceOpen.closest('.bundle-search-results')) {
-      renderPreservingScrollOf('.bundle-search-results')
-    } else if (sourceOpen.closest('.bundles-slide-body')) {
-      renderPreservingScrollOf('.bundles-slide-body')
-    } else {
-      render()
-    }
-    if (Number.isFinite(line)) {
-      // `data-bundle-view-scroll-block` lets the click target pick
-      // where the line should land in the viewport — code-search
-      // hits use `'start'` (top of viewport, so the matching line
-      // anchors the eye and the surrounding context flows below)
-      // while Issues / per-line-dot clicks default to `'center'`
-      // (the line IS the focus, so equal context above and below
-      // reads better).
-      const block = sourceOpen.dataset.bundleViewScrollBlock || 'center'
-      ensureBundleSources().then(() => {
-        if (state.bundleSourceFile === path) scrollSourceLineIntoView(line, { block, behavior: 'smooth' })
-        return null
-      })
-    }
-    return
-  }
-  const workspaceContentButton = e.target.closest('[data-action="workspace-reports"], [data-action="workspace-bundles"], [data-action="workspace-repositories"], [data-action="workspace-dependencies"]')
-  if (workspaceContentButton) {
-    const kind = workspaceContentButton.dataset.action.slice(10)
+    // Mark the line a result opened; a file opened without one clears it.
+    state.bundleSourceTargetLine = hasLine ? { bundle: state.bundleDetails?.integrity ?? null, path, line } : null
+    // Keep the scroll of the list the click came from.
+    const list = [['.bundle-code-rail', '.bundle-code-rail-body'], ['.bundle-search-results'], ['.bundles-slide-body']].find(([within]) => el.closest(within))
+    if (list) renderPreservingScrollOf(list.at(-1))
+    else render()
+    if (!hasLine) return
+    // Code-search hits land at the top (`data-bundle-view-scroll-block`),
+    // Issues and gutter dots centered.
+    const block = el.dataset.bundleViewScrollBlock || 'center'
+    ensureBundleSources().then(() => {
+      if (state.bundleSourceFile === path) scrollSourceLineIntoView(line, { block, behavior: 'smooth' })
+      return null
+    })
+  }],
+  [near(['reports', 'bundles', 'repositories', 'dependencies'].map(kind => `[data-action="workspace-${kind}"]`).join(', ')), (el) => {
+    const kind = el.dataset.action.slice('workspace-'.length)
     if (state.currentView !== `workspace-${kind}`) void switchToWorkspaceContent(state.currentManagedTeam ?? state.currentWorkspace, kind)
-    return
-  }
-  if (e.target.closest('[data-action="workspace-findings"]')) {
+  }],
+  [near('[data-action="workspace-findings"]'), () => {
     if (state.currentView === 'findings') return
     if (state.currentView === 'files') {
       if (navigateManagedReportView('findings')) return
@@ -991,470 +683,248 @@ report.addEventListener('click', (e) => {
       state.filesSelectedFile = null
       document.body.classList.remove('report-fullscreen')
       render()
-    } else if (isManagedUiMode()) {
-      void switchToManagedTeam(state.managedTeams.find(team => team.id === state.currentManagedTeam))
-    } else void switchToWorkspace(state.currentWorkspace)
-    return
-  }
-  const workspaceReport = e.target.closest('[data-workspace-report]')
-  if (workspaceReport) {
-    if (isManagedUiMode()) {
-      void switchToManagedTeam(state.managedTeams.find(team => team.id === state.currentManagedTeam), workspaceReport.dataset.workspaceReport)
-    } else void switchToFile(workspaceReport.dataset.workspaceReport, undefined, { workspaceId: state.currentWorkspace })
-    return
-  }
+    } else if (isManagedUiMode()) void switchToManagedTeam(currentManagedTeam())
+    else void switchToWorkspace(state.currentWorkspace)
+  }],
+  [near('[data-workspace-report]'), (el) => {
+    if (isManagedUiMode()) void switchToManagedTeam(currentManagedTeam(), el.dataset.workspaceReport)
+    else void switchToFile(el.dataset.workspaceReport, undefined, { workspaceId: state.currentWorkspace })
+  }],
   // A team's repository, from its Repositories list: its code, at the path
   // the team links it by where it links one.
-  const workspaceRepository = e.target.closest('[data-workspace-repository]')
-  if (workspaceRepository) {
-    const { workspaceRepository: repoId, repositoryName: repo, repositoryPath: path } = workspaceRepository.dataset
+  [near('[data-workspace-repository]'), (el) => {
+    const { workspaceRepository: repoId, repositoryName: repo, repositoryPath: path } = el.dataset
     document.dispatchEvent(new CustomEvent('managed-repository-code-open', { detail: { repoId: Number(repoId), repo, path } }))
-    return
-  }
-  const workspaceBundle = e.target.closest('[data-workspace-bundle]')
-  if (workspaceBundle) {
+  }],
+  [near('[data-workspace-bundle]'), (el) => {
+    const bundleId = el.dataset.workspaceBundle
     if (isManagedUiMode()) {
-      void managedHistory.navigate(managedRouteForIds({ view: 'bundles', teamId: state.currentManagedTeam,
-        bundleId: workspaceBundle.dataset.workspaceBundle, bundleTab: 'overview' }, state.managedTeams))
-    } else {
-      const integrity = workspaceBundle.dataset.workspaceBundle
-      selectBundle(integrity, 'overview', { workspaceId: state.currentWorkspace })
-      persistLastBundle(integrity, 'overview')
-      render()
-      void renderSidebar()
-      void openBundle(integrity)
-    }
-    return
-  }
-  // Files toggle (page header, right of the repo chip). Flips
-  // state.currentView between 'files' and 'findings', mirroring the
-  // Trash button's state.showDeleted. The graph view-mode lives
-  // inside Findings; its rAF/observers tear down when render() resets
-  // the body innerHTML, but cleanupGraph2 is called explicitly so the
-  // canvas drops its viewport cache / hover state cleanly across the
-  // switch.
-  const filesToggle = e.target.closest('[data-action="toggle-files"]')
-  if (filesToggle) {
-    if (navigateManagedReportView(state.currentView === 'files' ? 'findings' : 'files')) return
-    if (state.currentView === 'files') {
-      state.currentView = 'findings'
-    } else {
-      if (state.viewMode === 'graph') cleanupGraph2()
-      state.currentView = 'files'
-    }
+      void managedHistory.navigate(managedRouteForIds({ view: 'bundles', teamId: state.currentManagedTeam, bundleId, bundleTab: 'overview' }, state.managedTeams))
+    } else void showStoredBundle(bundleId, 'overview', { workspaceId: state.currentWorkspace })
+  }],
+  // The page header's Files toggle. The in-findings graph tears its canvas
+  // down explicitly, dropping its viewport cache and hover state cleanly.
+  [near('[data-action="toggle-files"]'), () => {
+    const files = state.currentView === 'files'
+    if (navigateManagedReportView(files ? 'findings' : 'files')) return
+    if (!files && state.viewMode === 'graph') cleanupGraph2()
+    state.currentView = files ? 'findings' : 'files'
     document.body.classList.remove('report-fullscreen')
     render()
-    return
-  }
-  // Graph v2 — segmented controls (layout / edge mode), palette
-  // swatches, severity rows, toggle rows, neighbor jumps, and the
-  // jump-to-Findings / jump-to-Files buttons. All grouped here so
-  // the more specific selectors hit before the generic tab/click
-  // handlers below. The slider input event is wired separately
-  // (input event listener at the bottom of this file).
-  const g2Pkg = pathClosest(e, '[data-g2-pkg]')
-  if (g2Pkg) {
-    const pkg = g2Pkg.dataset.g2Pkg
-    // Clicking a package row (Top packages list) toggles solo on
-    // that package; re-clicking the soloed entry clears solo.
+  }],
+  // Graph controls, ahead of the generic tab handlers below. (Its severity
+  // and color chips dispatch `severity-toggle` / `color-toggle`, and its path
+  // filter an `input`, handled further down.)
+  //
+  // A Top packages row solos its package, again un-solos. Soloing drops the
+  // file selection, so the selection card shows the package.
+  [deep('[data-g2-pkg]'), (el) => {
+    const pkg = el.dataset.g2Pkg
     graph2.solo = graph2.solo === pkg ? null : pkg
-    // Clear the file selection when the user solos a package —
-    // selection card switches to package mode in that case (see
-    // renderSelectionCard's priority chain). Without this, an
-    // earlier file selection would keep displaying file info
-    // even though the user just asked for package-level info.
     if (graph2.solo) graph2.selected = null
     refreshActiveGraphSidebar()
     refreshActiveGraphTopPkgs()
     graph2.graphState?.requestDraw?.()
-    return
-  }
-  // (graph2 severity filter is a `<severity-chips kind="graph">`; its
-  // click dispatches `severity-toggle`, handled by the listener at the
-  // bottom of this file — canvas redraw + Top-packages refresh.)
-
-  const g2Select = pathClosest(e, '[data-g2-select]')
-  if (g2Select) {
-    graph2.selected = g2Select.dataset.g2Select
+  }],
+  // The canvas paints the selection ring, so redraw now rather than on the
+  // next hover.
+  [deep('[data-g2-select]'), (el) => {
+    graph2.selected = el.dataset.g2Select
     refreshActiveGraphSidebar()
-    // The canvas paints the selection ring from graph2.selected, so
-    // redraw now — otherwise the highlight lags until the next hover
-    // happens to dirty the frame.
     graph2.graphState?.requestDraw?.()
-    return
-  }
-  // Top-packages mini-tabs (Issues / Files). Pure right-panel
-  // change — re-render just the block, leave the canvas alone.
-  const g2TopPkgs = pathClosest(e, '[data-g2-top-pkgs]')
-  if (g2TopPkgs) {
-    graph2.topPkgsTab = g2TopPkgs.dataset.g2TopPkgs
+  }],
+  // Top packages' Issues / Files tabs: the right panel only.
+  [deep('[data-g2-top-pkgs]'), (el) => {
+    graph2.topPkgsTab = el.dataset.g2TopPkgs
     refreshActiveGraphTopPkgs()
-    return
-  }
-  const g2JumpFindings = pathClosest(e, '[data-g2-jump-findings]')
-  if (g2JumpFindings) {
-    // Bundle context — the canvas-selected file lives inside a
-    // bundle, not in `state.reports`, so flipping
-    // `state.currentView = 'findings'` would navigate out of the
-    // bundle entirely. Switch to the bundle's Issues tab instead so
-    // the click stays bundle-local — the closest analog to "show me
-    // this file's findings" inside a bundle.
+  }],
+  [deep('[data-g2-jump-findings]'), (el) => {
+    // A bundle's file isn't in `state.reports`: its findings are the
+    // bundle's Issues tab.
     if (state.currentView === 'bundles') {
       if (state.bundleDetailsTab === 'graph') cleanupGraph2()
-      selectBundleTab('issues')
-      if (state.selectedBundle) persistLastBundle(state.selectedBundle, 'issues', { push: true })
+      goBundleTab('issues')
       render()
       return
     }
     resetFilters()
     state.filterConfMin = 0
-    state.filterInclude = g2JumpFindings.dataset.g2JumpFindings
+    state.filterInclude = el.dataset.g2JumpFindings
     state.currentView = 'findings'
-    // The jump targets the findings list, not the graph. If the
-    // user was on the in-findings graph view, stay in findings
-    // but switch to a list-style mode so the include filter
-    // (which has no UI in the graph viewport) is actually visible.
+    // The include filter has no UI in the graph, so land on a list.
     if (state.viewMode === 'graph') state.viewMode = 'table'
     cleanupGraph2()
     if (navigateManagedReportView('findings')) return
     render()
-    return
-  }
-  const g2JumpFile = pathClosest(e, '[data-g2-jump-file]')
-  if (g2JumpFile) {
-    const targetFile = g2JumpFile.dataset.g2JumpFile
+  }],
+  [deep('[data-g2-jump-file]'), (el) => {
+    const targetFile = el.dataset.g2JumpFile
     cleanupGraph2()
     const revealFile = () => requestAnimationFrame(() => {
-      const target = document.querySelector(`#${treeAnchor(targetFile)}`)
-      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      document.querySelector(`#${treeAnchor(targetFile)}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     })
     const navigation = navigateManagedReportView('files')
     if (navigation) { void navigation.then(ok => ok ? revealFile() : undefined); return }
     state.currentView = 'files'
     render()
     revealFile()
-    return
-  }
-  // Path/package filter clear button — wipe the input value
-  // and redraw. The clear button itself is hidden via CSS
-  // when the input shows its placeholder (i.e. empty), so no
-  // re-render is needed; the button just disappears once the
-  // input value is cleared.
-  if (pathClosest(e, '#g2-path-filter-clear')) {
+  }],
+  // CSS hides the clear button once the input is empty, so no render.
+  [deep('#g2-path-filter-clear'), () => {
     graph2.pathFilter = ''
     const input = document.querySelector('graph-layout')?.shadowRoot?.querySelector('#g2-path-filter')
     if (input) input.value = ''
     graph2.graphState?.requestDraw?.()
-    return
-  }
-  // v2 fullscreen — same body-class flip as v1's #tree-fullscreen.
-  // The CSS rule under body.report-fullscreen sizes both .tree-layout
-  // and .graph2-layout to the viewport, and v2's ResizeObserver on
-  // the stage element will fire when the size change lands so the
-  // canvas refits without explicit wiring.
-  if (pathClosest(e, '#g2-fullscreen')) {
-    document.body.classList.toggle('report-fullscreen')
-    return
-  }
-  // Show-all in the v2 topbar — flips the FILE SET, so the
-  // graph rebuilds with different nodes / edges / layout. Tear
-  // down the v2 canvas (rAF + observers + window listeners) so
-  // render() can re-attach against the new set.
-  const g2ShowAll = pathClosest(e, '[data-g2-show-all]')
-  if (g2ShowAll) {
+  }],
+  // body.report-fullscreen sizes the layout to the viewport; the stage's
+  // ResizeObserver refits the canvas.
+  [deep('#g2-fullscreen'), () => { document.body.classList.toggle('report-fullscreen') }],
+  // Show all changes the file set; the selection may be filtered out.
+  [deep('[data-g2-show-all]'), () => {
     graph2.showAll = !graph2.showAll
-    graph2.layoutCache = null
-    // Selection might have pointed at a file that's now filtered
-    // out — clear it so the right panel doesn't render against a
-    // missing node.
-    graph2.selected = null
-    cleanupGraph2()
-    render()
-    return
-  }
-  // Packages-view toggle (bundle Graph tab) — flips the canvas
-  // between one-node-per-file and one-node-per-package. The node
-  // set, layout, and hit-testing all change, so tear down + rebuild
-  // like the other graph-reshaping toggles. File selection is a
-  // file-level concept — clear it so the sidebar doesn't show a
-  // file card over a package canvas; a solo'd package stays (it's
-  // the packages view's selection) and so does the focus drill-in
-  // wiring through it. Exits package-focus mode for the same
-  // reason the selection clears: the user asked for a different
-  // altitude, not a different slice.
-  const g2PackagesView = pathClosest(e, '[data-g2-packages-view]')
-  if (g2PackagesView) {
-    if (graph2.bundleLayout === 'flow') {
-      graph2.flowPackagesView = !graph2.flowPackagesView
-    } else if (graph2.bundleLayout === 'dependencies') {
+    rebuildGraph('selected')
+  }],
+  // One node per file or per package. A file selection means nothing on a
+  // package canvas, and package focus goes with it; a solo'd package stays.
+  [deep('[data-g2-packages-view]'), () => {
+    if (graph2.bundleLayout === 'flow') graph2.flowPackagesView = !graph2.flowPackagesView
+    else if (graph2.bundleLayout === 'dependencies') {
       graph2.dependencyPackagesView = !graph2.dependencyPackagesView
       graph2.solo = null
-    } else {
-      graph2.packagesView = !graph2.packagesView
-    }
-    graph2.layoutCache = null
-    graph2.selected = null
-    graph2.focusedPkg = null
-    cleanupGraph2()
-    render()
-    return
-  }
-  // Issues switch (bundle Graph tab) — findings reach the bundle graph
-  // only while it is on (buildBundleGraphData), so rebuild. Layouts
-  // don't depend on findings, so nodes keep their places, the file
-  // selection stays valid, and the canvas keeps its pan and zoom.
-  if (pathClosest(e, '[data-g2-bundle-issues]')) {
+    } else graph2.packagesView = !graph2.packagesView
+    rebuildGraph('selected', 'focusedPkg')
+  }],
+  // Findings reach the bundle graph only while Issues is on. Layouts don't
+  // depend on them, so the nodes, selection and viewport all stay.
+  [deep('[data-g2-bundle-issues]'), () => {
     graph2.bundleIssues = !graph2.bundleIssues
     cleanupGraph2({ keepViewport: true })
     render()
-    return
-  }
-  const g2Layout = pathClosest(e, '[data-g2-layout]')
-  if (g2Layout) {
-    const next = g2Layout.dataset.g2Layout
+  }],
+  [deep('[data-g2-layout]'), (el) => {
+    const next = el.dataset.g2Layout
     if (!['graph', 'layers', 'matrix', 'dependencies', 'flow', 'package-flow'].includes(next)) return
     if (graph2.bundleLayout === next && !graph2.focusedPkg) return
     graph2.bundleLayout = next
     if (next === 'dependencies') graph2.dependencyPackagesView = false
-    graph2.layoutCache = null
-    graph2.selected = null
-    graph2.solo = null
-    graph2.focusedPkg = null
-    cleanupGraph2()
-    render()
-    return
-  }
-  // Triage view selector in graph v2's topbar — flips
-  // state.shownTriage to the picked bucket (or back to live when
-  // re-clicking the active button). Canvas teardown + cache
-  // invalidation so the graph rebuilds against the new file set.
-  const g2TriageBtn = pathClosest(e, '.graph2-triage-selector [data-triage-show]')
-  if (g2TriageBtn) {
-    const next = g2TriageBtn.dataset.triageShow
+    rebuildGraph('selected', 'solo', 'focusedPkg')
+  }],
+  // The topbar's triage selector rebuilds the graph over the new file set.
+  [deep('.graph2-triage-selector [data-triage-show]'), (el) => {
+    const next = el.dataset.triageShow
     state.shownTriage = state.shownTriage === next ? null : next
-    graph2.layoutCache = null
-    graph2.selected = null
-    cleanupGraph2()
-    render()
-    return
-  }
-  // Package-graph drill-in (selection card → "Package graph →"):
-  // narrows the canvas to a single package's intra-imports with
-  // v1-style rendering. Selection is preserved when the file
-  // belongs to the package being focused, so the right panel
-  // keeps showing it; cleared otherwise.
-  const g2FocusPkg = pathClosest(e, '[data-g2-focus-pkg]')
-  if (g2FocusPkg) {
-    graph2.focusedPkg = g2FocusPkg.dataset.g2FocusPkg
-    graph2.layoutCache = null
-    cleanupGraph2()
-    render()
-    return
-  }
-  // Back-to-full from the package-focus mode — restores the
-  // spiral over the whole file set. Selection is kept (it's
-  // valid in both modes since the file still exists in the
-  // full graph) — EXCEPT when the back lands on the packages
-  // view (focus suspended it; clearing focus resumes it): a
-  // file picked inside the drill-in has no node on the package
-  // canvas, and the sidebar would show its file card desynced
-  // from the solo ring. Same file-card-over-package-canvas rule
-  // the Packages toggle handler applies. graph2.packagesView may
-  // be a stale `true` on a graph whose gate is off (< 3
-  // packages, file altitude resumes) — over-clearing there costs
-  // a selection, which beats under-clearing at package altitude.
-  if (pathClosest(e, '#g2-back-to-full')) {
+    rebuildGraph('selected')
+  }],
+  // "Package graph →": one package's intra-imports.
+  [deep('[data-g2-focus-pkg]'), (el) => {
+    graph2.focusedPkg = el.dataset.g2FocusPkg
+    rebuildGraph()
+  }],
+  // Back from package focus keeps the selection, except landing on the
+  // packages view (which focus suspended): a file picked inside the drill-in
+  // has no node there. A stale `packagesView` on a graph whose gate is off
+  // over-clears, which beats under-clearing at package altitude.
+  [deep('#g2-back-to-full'), () => {
     graph2.focusedPkg = null
-    graph2.layoutCache = null
     if (graph2.packagesView || graph2.bundleLayout === 'layers') graph2.selected = null
-    cleanupGraph2()
-    render()
-    return
-  }
-  // Tab click — switch the active tab within a group. Re-render because
-  // tab highlight + tab body visibility + marks row color all update.
-  // pathClosest (not e.target.closest) so the lookup works for tabs
-  // rendered inside `<finding-table>`'s shadow DOM — same for the
-  // mark-* handlers below, and the `[data-gid]` ancestor is resolved
-  // off the path too (it's the `.finding-row` in the same shadow tree).
-  const tabEl = pathClosest(e, '.tab')
-  if (tabEl && pathClosest(e, '.tabs')) {
-    const findingEl = pathClosest(e, '[data-gid]')
-    const gid = findingEl.dataset.gid
-    const tid = tabEl.dataset.tid
-    state.activeTabByGroup.set(gid, tid)
+    rebuildGraph()
+  }],
+  // A finding's tab strip, possibly inside `<finding-table>`'s shadow DOM.
+  [deep('.tab'), (el, e) => {
+    if (!pathClosest(e, '.tabs')) return false
+    state.activeTabByGroup.set(pathClosest(e, '[data-gid]').dataset.gid, el.dataset.tid)
     renderPreservingTableScroll()
-    return
-  }
-  // Triage menu action — clicked option inside the native
-  // `popover="auto"` menu. The popover is in the top layer (escapes
-  // overflow-hidden ancestors), so the data-gid lookup walks UP
-  // from the action button to the popover root rather than the
-  // row's DOM tree. Conflict groups still scope to the active tab;
-  // non-conflict groups apply to every tab. Setting any state for
-  // a tab clears the others (the Map allows at most one value).
-  // Manual hidePopover() after the click since the action button
-  // doesn't carry a popovertarget attribute.
-  //
-  // Set-or-clear is `triageActionPlan`'s call, made ONCE for the whole
-  // scope before the loop: the same answer has to reach every tab, or
-  // a re-click flips the tabs holding the state off and the rest on
-  // instead of switching the group off.
-  const triageActionBtn = pathClosest(e, '[data-triage-action]')
-  if (triageActionBtn) {
-    const popover = triageActionBtn.closest('.triage-menu')
+  }],
+  // An option in the triage menu: a top-layer `popover="auto"`, so the gid
+  // is on the popover root, and the button (no popovertarget) closes it.
+  // Set-or-clear is `triageActionPlan`'s call, made once for the whole scope:
+  // a re-click must switch the group off, not flip each tab. Clearing (also
+  // Restore) writes the same 'untriaged' the kanban's untriaged column does.
+  [deep('[data-triage-action]'), (el) => {
+    const popover = el.closest('.triage-menu')
     const gid = popover?.dataset.gid
-    if (!gid) return
-    const group = findGroupById(gid)
-    if (!group) return
-    const action = triageActionBtn.dataset.triageAction
-    if (!['inprogress', 'fixed', 'invalid', 'deleted', 'ignored', 'restore'].includes(action)) return
-    // `clearing` covers Restore and a re-click of the state the scope
-    // already shows; both land on the same 'untriaged' write the
-    // kanban's untriaged column performs.
+    const group = gid ? findGroupById(gid) : null
+    const action = el.dataset.triageAction
+    if (!group || !['inprogress', 'fixed', 'invalid', 'deleted', 'ignored', 'restore'].includes(action)) return
     const { targets, clearing } = triageActionPlan(group, action)
     if (targets.length === 0) return
     applyTriage(targets, clearing ? 'untriaged' : action)
     try { popover.hidePopover() } catch {}
     saveTriage()
     renderPreservingTableScroll()
-    return
-  }
-  // Comment button — open the multi-line <comment-dialog> with the
-  // active tab's existing comment. Empty input clears the entry so
-  // saveTriage doesn't persist a "" placeholder. Per-active-tab
-  // (matching mark-color semantics — a multi-tab group holds distinct
-  // comments per member). Dialog resolves to null on cancel or an
-  // unchanged save, so the early-return covers both.
-  const commentBtn = pathClosest(e, '.mark-comment')
-  if (commentBtn) {
-    const findingEl = pathClosest(e, '[data-gid]')
-    const gid = findingEl.dataset.gid
-    const group = findGroupById(gid)
-    if (!group) return
-    const activeTab = activeTabFor(group)
-    if (!canTriageFinding(activeTab)) return
+  }],
+  // The active tab's comment; an empty one clears the entry rather than
+  // saving "". The dialog resolves null on cancel or an unchanged save.
+  [deep('.mark-comment'), (_, e) => {
+    const activeTab = focusedTabOf(e)
+    if (!activeTab || !canTriageFinding(activeTab)) return
     if (isManagedUiMode()) {
       openManagedCommentsDialog(activeTab, renderPreservingTableScroll)
         .catch(() => showToast('Could not open comments. Please retry.'))
       return
     }
-    const activeKey = tabKey(activeTab)
-    const current = triageEntry(activeTab)?.comment ?? ''
-    openCommentDialog({ initial: current, finding: activeTab }).then((next) => {
+    const key = tabKey(activeTab)
+    openCommentDialog({ initial: triageEntry(activeTab)?.comment ?? '', finding: activeTab }).then((next) => {
       if (next === null || !canEditTriage(activeTab)) return null
-      patchEntry(state.triage, activeKey, { comment: next || undefined })
+      patchEntry(state.triage, key, { comment: next || undefined })
       saveTriage()
       renderPreservingTableScroll()
       return null
     }).catch(() => {})
-    return
-  }
-  // Copy button — write the active tab's file / line / description /
-  // confidence to the clipboard as a labeled block (per-active-tab,
-  // so a multi-tab group copies the member in view). Toggles `.copied`
-  // for 1s so the icon pulses per click. Failure (no clipboard
-  // permission, no secure context) silently no-ops — a convenience,
-  // not load-bearing.
-  const copyBtn = pathClosest(e, '.mark-copy')
-  if (copyBtn) {
+  }],
+  [deep('.mark-copy'), (el, e) => {
+    const text = findingHandoffText(e)
+    if (text !== null) copyWithPulse(el, text)
+  }],
+  // A `#finding=<id>` URL reopening the app on this finding
+  // (finding-link-nav.js). Null only for a session-local id, whose button
+  // render-finding.js withholds.
+  [deep('.mark-link'), (el, e) => {
+    const finding = focusedTabOf(e)
+    const url = finding && findingLinkFor(finding)
+    if (url) copyWithPulse(el, url)
+  }],
+  // The page header's report name(s), and the Code slide's full file path.
+  [deep('[data-copy-report]'), (el) => { copyWithPulse(el, el.dataset.copyReport) }],
+  [deep('[data-copy-path]'), (el) => { copyWithPulse(el, el.dataset.copyPath) }],
+  // A team member's issue opens the managed dialog; otherwise the button is
+  // the GitHub link it is.
+  [deep('.mark-issue'), (el, e) => {
+    if (!isManagedUiMode() || !state.managedSession || state.managedSession.publicShare || !state.currentManagedTeam) return false
+    const finding = focusedTabOf(e)
+    if (!finding?._managedReportId || !finding.id) return false
+    e.preventDefault()
+    const url = new URL(el.dataset.issueForm)
+    const draftOptions = () => ({ ...issueDraftOptions(finding), findingLink: findingLinkFor(finding) })
+    void openManagedIssueDialog({ teamId: state.currentManagedTeam, session: { ...state.managedSession },
+      context: { reportId: finding._managedReportId, findingId: finding.id, repository: url.pathname.split('/').slice(1, 3).join('/') },
+      formUrl: url.href, title: url.searchParams.get('title') ?? '',
+      finding, draftOptions: draftOptions(),
+      // The draft again once the bundle says where the evidence in
+      // dependencies is (focus-code.js), which a card need not have read.
+      draftOptionsReady: loadBundleDependencyRepos(finding).then(draftOptions),
+      renderBody: renderHighlighted, render,
+    }).catch(() => showToast('Could not open issue creation. Please retry.'))
+  }],
+  // Hands the finding block to Claude Code through its URL scheme.
+  [deep('.mark-claude'), (el, e) => {
     const text = findingHandoffText(e)
     if (text === null) return
-    copyWithPulse(copyBtn, text)
-    return
-  }
-  // Link button — copy a `#finding=<id>` URL that reopens the app on
-  // this finding (see view/finding-link-nav.js for what the receiving
-  // side does with it). Per-active-tab like copy, so a multi-tab group links
-  // the member in view rather than the group's primary. Same pulse +
-  // silent-failure semantics as copy: `findingLinkFor` returns null
-  // only for a session-local id, which render-finding.js already
-  // withholds the button for, so the null check is belt-and-braces.
-  const linkBtn = pathClosest(e, '.mark-link')
-  if (linkBtn) {
-    const findingEl = pathClosest(e, '[data-gid]')
-    const group = findingEl ? findGroupById(findingEl.dataset.gid) : null
-    if (!group) return
-    const url = findingLinkFor(activeTabFor(group))
-    if (!url) return
-    copyWithPulse(linkBtn, url)
-    return
-  }
-  // Page-header file chip — click copies the report name(s) to the
-  // clipboard (a convenience, like the finding copy button above:
-  // silent no-op without clipboard access, brief "Copied" overlay on
-  // success). No pointer cursor — the `title` signals it, matching the
-  // page-head chrome.
-  const copyReport = pathClosest(e, '[data-copy-report]')
-  if (copyReport) {
-    copyWithPulse(copyReport, copyReport.dataset.copyReport)
-    return
-  }
-  // Code slide — copy the open file's full (un-stripped) path. Same
-  // convenience semantics as the report-name copy above: silent
-  // no-op without clipboard access, brief color pulse on success.
-  const copyPath = pathClosest(e, '[data-copy-path]')
-  if (copyPath) {
-    copyWithPulse(copyPath, copyPath.dataset.copyPath)
-    return
-  }
-  const issueBtn = pathClosest(e, '.mark-issue')
-  if (issueBtn && isManagedUiMode() && state.managedSession && !state.managedSession.publicShare
-    && state.currentManagedTeam) {
-    const findingEl = pathClosest(e, '[data-gid]')
-    const group = findingEl ? findGroupById(findingEl.dataset.gid) : null
-    const finding = group ? activeTabFor(group) : null
-    if (finding?._managedReportId && finding.id) {
-      e.preventDefault()
-      const url = new URL(issueBtn.dataset.issueForm)
-      void openManagedIssueDialog({ teamId: state.currentManagedTeam, session: { ...state.managedSession },
-        context: { reportId: finding._managedReportId, findingId: finding.id, repository: url.pathname.split('/').slice(1, 3).join('/') },
-        formUrl: url.href, title: url.searchParams.get('title') ?? '',
-        finding, draftOptions: { ...issueDraftOptions(finding), findingLink: findingLinkFor(finding) },
-        // The draft again once the bundle says where the evidence in
-        // dependencies is (focus-code.js), which a card need not have read.
-        draftOptionsReady: loadBundleDependencyRepos(finding)
-          .then(() => ({ ...issueDraftOptions(finding), findingLink: findingLinkFor(finding) })),
-        renderBody: renderHighlighted, render,
-      }).catch(() => showToast('Could not open issue creation. Please retry.'))
-      return
-    }
-  }
-  // Claude button — hand the same finding block to Claude Code via
-  // the `claude://code/new?q=…` URL scheme, prefixed with a
-  // `Confirm and fix:` instruction so the receiving session knows
-  // what to do with it.
-  const claudeBtn = pathClosest(e, '.mark-claude')
-  if (claudeBtn) {
-    const text = findingHandoffText(e)
-    if (text === null) return
+    // Built outside the try: a malformed text's URIError surfaces, as before.
     const url = `claude://code/new?q=${encodeURIComponent(`Confirm and fix:\n\n${text}`)}`
     try {
       window.location.href = url
-      pulseCopied(claudeBtn)
+      pulseCopied(el)
     } catch {}
-    return
-  }
-  // Fix-link button — mirrors the comment flow but stores into the
-  // finding's triage entry. Typically a PR URL (also accepts plain
-  // text). Empty input clears the entry. Per-active-tab by default, so
-  // a multi-tab group can hold distinct fix references per member; the
-  // dialog's group action widens one edit to every tab, offered only
-  // where the group agrees (see canApplyFixToGroup). Dialog resolves
-  // to null on cancel / Esc / unchanged save.
-  //
-  // "Whole group" means the group as the DATA has it — with the App
-  // lens off, that includes the revalidation rows it drops from the
-  // rendered one (`groupWithPassRows`). The pass's row is the same
-  // issue re-rated, so the PR that fixes the base finding fixes it
-  // too: it counts against the offer when it holds a different link,
-  // and it takes the write when the offer stands. The active tab and
-  // the tab pin stay on the RENDERED group — those are about what's on
-  // screen.
-  const fixBtn = pathClosest(e, '.mark-fix')
-  if (fixBtn) {
-    const findingEl = pathClosest(e, '[data-gid]')
-    const gid = findingEl?.dataset.gid
+  }],
+  // The fix link (typically a PR URL), per active tab; an empty one clears
+  // it. The dialog offers to widen the edit to the whole group where the
+  // group agrees (canApplyFixToGroup) — the group as the data has it, with
+  // the revalidation rows the App lens drops from the rendered one
+  // (`groupWithPassRows`): the PR fixing the base finding fixes its
+  // re-rating too. The active tab and its pin stay on the rendered group.
+  [deep('.mark-fix'), (_, e) => {
+    const gid = pathClosest(e, '[data-gid]')?.dataset.gid
     const group = gid ? findGroupById(gid) : null
     if (!group) return
     const activeTab = activeTabFor(group)
@@ -1467,10 +937,9 @@ report.addEventListener('click', (e) => {
       canApplyToGroup: canApplyFixToGroup(whole, current),
     }).then((next) => {
       if (next === null || !canEditTriage(activeTab)) return null
-      // The offer was granted before the dialog opened; `fixApplies`
-      // re-asks per tab now, so a link a sync peer or another browser
-      // tab landed on a sibling meanwhile isn't overwritten by a
-      // permission that has since expired.
+      // The offer was granted before the dialog opened; `fixApplies` asks
+      // again per tab, lest a link a sync peer or another tab landed on a
+      // sibling meanwhile be overwritten.
       const targets = next.scope === 'group'
         ? whole.filter((f) => canEditTriage(f) && (f === activeTab || fixApplies(f, current)))
         : [activeTab]
@@ -1479,111 +948,64 @@ report.addEventListener('click', (e) => {
         if (patchEntry(state.triage, tabKey(f), { fix: next.value || undefined })) changed = true
       }
       if (!changed) return null
-      // A fix link is one of the marks `activeTabFor` picks the default
-      // tab by, so writing it to every sibling would otherwise hand the
-      // default to the group's first tab and swap the card out from
-      // under the user. Pin what they were reading.
+      // A fix link is a mark `activeTabFor` picks the default tab by, so
+      // writing every sibling would swap the card under the reader: pin it.
       if (targets.length > 1) state.activeTabByGroup.set(gid, tabKey(activeTab))
       renderPreservingTableScroll()
-      // Paint first, persist after — saveTriage's synchronous head
-      // serializes the whole triage map (see the kanban drop below).
+      // Paint first, persist after (see the kanban drop below).
       queueMicrotask(saveTriage)
       return null
     }).catch(() => {})
-    return
-  }
-  // Attention-flag toggle (top-right of the card / row). Tri-state:
-  // unset/false → true, true → false. We write the explicit `false`
-  // on un-flag (never undefined) so the removal is a real, syncable
-  // change that overrides a peer's stale `true` (see TriageEntry.flagged).
-  // `data-flag-toggle` carries the exact tab key, so a multi-tab group
-  // flags per member rather than the active tab only.
-  const flagBtn = pathClosest(e, '[data-flag-toggle]')
-  if (flagBtn) {
-    const key = flagBtn.dataset.flagToggle
-    const gid = pathClosest(e, '[data-gid]')?.dataset.gid
-    const finding = (gid ? findGroupById(gid) : null)?.find((f) => tabKey(f) === key)
+  }],
+  // The attention flag, per exact tab key. Un-flagging writes `false`, never
+  // undefined, so the removal is a syncable change that overrides a peer's
+  // stale `true` (TriageEntry.flagged).
+  [deep('[data-flag-toggle]'), (el, e) => {
+    const key = el.dataset.flagToggle
+    const finding = focusedGroupOf(e)?.find((f) => tabKey(f) === key)
     if (!finding || !canEditTriage(finding)) return
-    // Toggle: true → false (explicit tombstone), false/unset → true.
-    const cur = triageEntry(finding)?.flagged
-    patchEntry(state.triage, key, { flagged: cur !== true })
+    patchEntry(state.triage, key, { flagged: triageEntry(finding)?.flagged !== true })
     saveTriage()
     renderPreservingTableScroll()
-    return
-  }
-  // Toolbar triage view selector — flips state.shownTriage to the
-  // picked bucket (or back to live when re-clicking the active
-  // button). Filters (severity, confidence, text match) still apply,
-  // just against the chosen bucket rather than the live set.
-  const triageShowBtn = e.target.closest('[data-triage-show]')
-  if (triageShowBtn && !triageShowBtn.closest('.graph2-triage-selector')) {
-    const next = triageShowBtn.dataset.triageShow
+  }],
+  // The toolbar's triage selector: filters still apply, against that bucket.
+  [near('[data-triage-show]'), (el) => {
+    if (el.closest('.graph2-triage-selector')) return false
+    const next = el.dataset.triageShow
     state.shownTriage = state.shownTriage === next ? null : next
     render()
-    return
-  }
-  // severity-chips / triage-filter / source-filter / view-mode-buttons
-  // clicks dispatch `severity-toggle` / `color-toggle` / `source-toggle`
-  // / `view-mode-change` custom events — handled outside this click
-  // delegate by dedicated listeners below.
-
-  // Table-view details panel close button — clears selection and
-  // re-renders so the list expands back to full width.
-  if (e.target.closest('[data-table-deselect]')) {
+  }],
+  [near('[data-table-deselect]'), () => {
     state.tableSelectedGid = null
     renderPreservingTableScroll()
-    return
-  }
-  // Files-tab table view: row click toggles the file selection
-  // (re-clicking the active row deselects, just like the findings
-  // table). The details panel on the right follows
-  // state.filesSelectedFile.
-  const treeRow = e.target.closest('[data-tree-select]')
-  if (treeRow) {
-    const file = treeRow.dataset.treeSelect
+  }],
+  // The Files tab's rows toggle the details panel's file.
+  [near('[data-tree-select]'), (el) => {
+    const file = el.dataset.treeSelect
     state.filesSelectedFile = state.filesSelectedFile === file ? null : file
     render()
-    return
-  }
-  if (e.target.closest('[data-tree-deselect]')) {
+  }],
+  [near('[data-tree-deselect]'), () => {
     state.filesSelectedFile = null
     render()
-  }
-  // Table-view row click is no longer a delegate here; <finding-table>
-  // owns row selection and dispatches a `row-select` CustomEvent
-  // (handled below) on clicks that aren't on a button / link / label.
-})
+  }],
+]
+report.addEventListener('click', (e) => { runClicks(REPORT_CLICKS, e) })
 
-// Bundle source modal lives in `#bundle-source-overlay-slot`
-// (sibling of `#main-content`, not inside `#report`), so its
-// clicks don't reach the report listener above. The handlers
-// here cover the modal-specific interactions: close button,
-// backdrop click, side-panel close, and per-line gutter dots.
-const bundleSourceOverlaySlot = document.querySelector('#bundle-source-overlay-slot')
-if (bundleSourceOverlaySlot) {
-  bundleSourceOverlaySlot.addEventListener('click', handleBundleSourceClick)
-}
+// The bundle source modal's slot is outside #report.
+document.querySelector('#bundle-source-overlay-slot')?.addEventListener('click', (e) => runClicks(SOURCE_CLICKS, e))
 
-// Opening a finding's details is where a partially-triaged group gets
-// levelled — see syncGroupTriage in group.js. The detail surfaces
-// (table aside, kanban modal, focus card) route through here; grouped
-// and list mode render every card at once and have no open event, so
-// nothing levels there. A no-op for a group that already agrees, for a
-// single-tab group, and for a gid that no longer resolves; the render
-// each caller already runs picks up whatever changed.
-//
-// Persist AFTER that render, like the kanban drop below: saveTriage's
-// synchronous head serializes the whole triage map, and these callers
-// sit on click and arrow-key paths where that would stall the frame
-// the user is waiting for.
+// Opening a finding's details (table aside, kanban modal, focus card) is
+// where a partially-triaged group gets levelled (syncGroupTriage in
+// group.js); the caller's render picks up what changed. Persisted after that
+// render, like the kanban drop: these sit on click and arrow-key paths.
 function syncOpenedGroupTriage(gid) {
   const group = gid ? findGroupById(gid) : null
   if (group && syncGroupTriage(group)) queueMicrotask(saveTriage)
 }
 
-// row-select fires from inside `<finding-table>`'s shadow DOM with
-// composed:true, so it bubbles up to the report element. Re-clicking
-// the same row deselects (closes the side details panel).
+// `<finding-table>` dispatches this (composed) for a row click; the same
+// row again closes the details panel.
 report.addEventListener('row-select', (e) => {
   const gid = e.detail?.gid
   if (!gid) return
@@ -1593,23 +1015,13 @@ report.addEventListener('row-select', (e) => {
   renderPreservingTableScroll()
 })
 
-// Kanban drag-and-drop. A `<finding-row class="kanban-card">` is
-// draggable; the `.kanban-column` elements advertise themselves as
-// drop zones via `data-kanban-target=<active|inprogress|fixed|invalid
-// |deleted|ignored>`. On drop we mirror the existing `[data-triage-action]`
-// menu's mutation rules (conflict groups apply to the active tab
-// only, consistent groups apply to every tab), then `saveTriage()`
-// + render() to repaint the board.
+// Kanban drag-and-drop: a `.kanban-card` drags onto a `.kanban-column`
+// whose `data-kanban-target` names a triage state.
 const KANBAN_DATA_TYPE = 'application/x-deepview-kanban-gid'
 
-// Write one triage target onto every tab in `targets`. The two axes
-// are mutually exclusive, so each branch clears the other: 'untriaged'
-// clears both (the menu's Restore, and any re-click switching a state
-// off), 'ignored' goes to the per-report ignore store, and every other
-// value to the tab's own triage bucket. No toggling here — callers
-// decide set-vs-clear for the whole scope before calling (see
-// `triageActionPlan`), so every tab in a group lands on the same
-// answer.
+// Write one triage target onto every tab in `targets`. Callers decide
+// set-vs-clear for the whole scope first (`triageActionPlan`), so every tab
+// of a group lands on the same answer.
 function applyTriage(targets, target) {
   for (const f of targets) {
     if (!canEditTriage(f)) continue
@@ -1618,12 +1030,8 @@ function applyTriage(targets, target) {
 }
 
 function clearKanbanDragChrome() {
-  for (const el of report.querySelectorAll('.kanban-card.dragging')) {
-    el.classList.remove('dragging')
-  }
-  for (const el of report.querySelectorAll('.kanban-column.drag-over')) {
-    el.classList.remove('drag-over')
-  }
+  for (const el of report.querySelectorAll('.kanban-card.dragging')) el.classList.remove('dragging')
+  for (const el of report.querySelectorAll('.kanban-column.drag-over')) el.classList.remove('drag-over')
 }
 
 report.addEventListener('dragstart', (e) => {
@@ -1633,10 +1041,8 @@ report.addEventListener('dragstart', (e) => {
   if (!gid) return
   const group = findGroupById(gid)
   if (!group || triageScope(group).length === 0) { e.preventDefault(); return }
-  // Setting both a private type (for our drop predicate) and a
-  // plain-text fallback (so dragging out of the app shows the gid
-  // rather than nothing). `effectAllowed = 'move'` matches the
-  // semantics — the card leaves its source column.
+  // The private type is what the drop checks; text/plain shows the gid when
+  // dragged out of the app.
   e.dataTransfer.setData(KANBAN_DATA_TYPE, gid)
   e.dataTransfer.setData('text/plain', gid)
   e.dataTransfer.effectAllowed = 'move'
@@ -1651,21 +1057,17 @@ report.addEventListener('dragover', (e) => {
   if (!col) return
   e.preventDefault()
   e.dataTransfer.dropEffect = 'move'
-  if (!col.classList.contains('drag-over')) {
-    for (const other of report.querySelectorAll('.kanban-column.drag-over')) {
-      if (other !== col) other.classList.remove('drag-over')
-    }
-    col.classList.add('drag-over')
+  if (col.classList.contains('drag-over')) return
+  for (const other of report.querySelectorAll('.kanban-column.drag-over')) {
+    if (other !== col) other.classList.remove('drag-over')
   }
+  col.classList.add('drag-over')
 })
 
 report.addEventListener('dragleave', (e) => {
   const col = e.target.closest?.('.kanban-column[data-kanban-target]')
-  if (!col) return
-  // `dragleave` also fires on entering child elements; only clear
-  // the highlight when the pointer actually left the column box.
-  if (col.contains(e.relatedTarget)) return
-  col.classList.remove('drag-over')
+  // `dragleave` fires on entering a child too; only leaving the column counts.
+  if (col && !col.contains(e.relatedTarget)) col.classList.remove('drag-over')
 })
 
 report.addEventListener('drop', (e) => {
@@ -1681,43 +1083,28 @@ report.addEventListener('drop', (e) => {
   clearKanbanDragChrome()
   if (!gid || !target) return
   const group = findGroupById(gid)
-  if (!group) return
-  // No-op drops (same column) skip the persist + render churn —
-  // groupState read is cheap relative to a full re-render.
-  const currentTriage = groupState(group).commonTriage ?? 'untriaged'
-  if (currentTriage === target) return
-  // The column the card landed in names the state outright, so there's
-  // nothing to toggle — only the scope question, which `triageScope`
-  // answers for the menu too.
+  // A drop on its own column changes nothing.
+  if (!group || (groupState(group).commonTriage ?? 'untriaged') === target) return
+  // The column names the state outright, so only the scope is a question.
   const targets = triageScope(group)
   if (targets.length === 0) return
   applyTriage(targets, target)
-  // Paint first; persist after. saveTriage's synchronous portion
-  // does a localStorage.setItem of the (potentially large)
-  // pending-key JSON which can stall the next frame; doing it
-  // after render() means the card visibly snaps to the new column
-  // immediately and the persistence work happens off the critical
-  // path. The async compress / seal already runs on its own
-  // microtask chain after this point.
+  // Paint first, persist after: saveTriage's synchronous head serializes the
+  // whole triage map into localStorage, which would stall the frame the card
+  // snaps to its column in.
   render()
   queueMicrotask(saveTriage)
 })
 
-// Kanban detail popover — open / close via document.startViewTransition
-// so the modal animates via the CSS keyframes on
-// `::view-transition-{new,old}(kanban-detail-modal)` in findings.css.
-// The real card and modal share the transition name in both directions.
-// On close, CSS preserves the card image's natural text size while its
-// background follows the group's original size / position animation.
+// The kanban detail modal opens and closes through a view transition: the
+// card and modal share the transition name, and findings.css animates
+// `::view-transition-{new,old}(kanban-detail-modal)`; on close, CSS keeps the
+// card image's text size while its background follows the morph.
 //
-// kanbanTransitioning is true between `startViewTransition` and its
-// `.finished` settling. It swallows rapid follow-up open / close
-// clicks that would otherwise call `startViewTransition` against the
-// still-active prior one — the browser would `skipTransition()` it,
-// running its callback synchronously against just-updated state and
-// leaving the page inconsistent (the "rapid-double-click then nothing
-// ever opens again" report). Card-to-card switches still go through
-// (they don't start a transition).
+// Starting a transition against a still-active one makes the browser skip
+// it, running its callback synchronously against just-updated state and
+// leaving no transition able to render again, so `kanbanTransitioning`
+// swallows open / close clicks until the in-flight one settles.
 let kanbanTransitioning = false
 
 // W95 and Paper open and close the dialog in place, as a window and a
@@ -1733,193 +1120,111 @@ function kanbanCardEl(gid) {
   return report.querySelector(`.kanban-card[data-gid="${CSS.escape(gid)}"]`)
 }
 
-// Measure a representative kanban card and stamp its dimensions as
-// CSS custom properties on the document root. The clip-path keyframes
-// (kanban-clip-hide / kanban-clip-reveal in findings.css) use these
-// as the floor of the modal pseudo's clip animation — the modal never
-// shrinks past card-sized, so its "small" frame overlaps the source
-// card instead of collapsing to a zero-area rect that would expose
-// the OLD modal snapshot's leftover edges (the "two rectangles
-// overlapping" report). Uses the stamped source card when provided,
-// else the first board card; falls back to :root defaults if none.
-//
-// Per the user note ("underestimating size is ok, overestimating
-// might make the animation bad"), Math.floor plays it safe.
+// Stamp a card's size on the root as the floor of the modal's clip animation
+// (findings.css kanban-clip-*), so its "small" frame overlaps the card rather
+// than collapsing to a zero-area rect that exposes the old snapshot's edges.
+// Floored: underestimating is harmless, overestimating spoils the animation.
 function updateKanbanClipVars(stampedCard) {
   const card = stampedCard ?? report.querySelector('.kanban-card')
   if (!card) return
   const rect = card.getBoundingClientRect()
   if (rect.width <= 0 || rect.height <= 0) return
-  document.documentElement.style.setProperty(
-    '--kanban-clip-card-w',
-    `${Math.floor(rect.width)}px`,
-  )
-  document.documentElement.style.setProperty(
-    '--kanban-clip-card-h',
-    `${Math.floor(rect.height)}px`,
-  )
-  document.documentElement.style.setProperty(
-    '--kanban-return-card-bg',
-    getComputedStyle(card).backgroundColor,
-  )
+  const root = document.documentElement.style
+  root.setProperty('--kanban-clip-card-w', `${Math.floor(rect.width)}px`)
+  root.setProperty('--kanban-clip-card-h', `${Math.floor(rect.height)}px`)
+  root.setProperty('--kanban-return-card-bg', getComputedStyle(card).backgroundColor)
 }
 
-// The dialog's finding, and the Code panel's history alongside it.
-// Fullscreen mounts the focus view's panel (render.js
-// focusMainTemplate), and a trail of followed references belongs to
-// the finding that was on screen when the reader followed them — the
-// same rule setFocusGid applies when the focus queue moves. Every path
-// that changes what the dialog shows comes through here, the close
-// included, so the next open starts on its own file rather than
-// wherever the last reader wandered off to.
-function showKanbanFinding(next) {
-  state.kanbanPopoverGid = next
+// A trail of followed Code references belongs to the finding that was on
+// screen, as in the focus view: a new finding starts the panel afresh.
+function resetFocusCode() {
   state.focusCodeStack = []
   state.focusCodeAt = 0
 }
 
-// What a dialog that just changed finding owes the code panel beside it,
-// once the render has landed: mounted in fullscreen, the panel moves to
-// the lines this finding cites. A no-op when the panel isn't on screen.
-// (The rail brings the now-open card into view itself — kanban-rail.js
-// — as it may not have drawn it yet.)
-//
-// The panel needs asking. Lit reuses `.focus-code-body` across the
-// render, so its scrollTop survives the swap and the new file arrives
-// still scrolled to wherever the last finding was read — which for a
-// finding cited at line 400 of the same bundle is nowhere near it. The
-// focus view has always asked (setFocusGid); the dialog only ever got
-// it by accident, on the cache-miss path where loadSources reveals
-// after its own late render, and never when the source was already
-// loaded.
-function afterKanbanFindingShown() {
-  revealFocusCodeLines()
-}
-
+// Every change of the dialog's finding, the close included, comes through
+// here. Once rendered, a fullscreen dialog's Code panel moves to the lines the
+// finding cites (revealFocusCodeLines): Lit reuses `.focus-code-body`, whose
+// scroll would otherwise survive the swap.
 function setKanbanPopoverGid(next) {
   const prev = state.kanbanPopoverGid
   if (prev === next) return
   const opening = prev === null && next !== null
   const closing = prev !== null && next === null
-
-  // Plain render path: no API available, a theme that doesn't
-  // animate it, or card-to-card switch (modal stays open, contents
-  // swap in place). Card switches stay allowed during an in-flight
-  // transition because they don't start a new one — only a render().
+  // Card-to-card switches swap the modal's contents in place, with no
+  // transition, so they go through even while one is in flight.
   if (!kanbanAnimates() || (!opening && !closing)) {
     syncOpenedGroupTriage(next)
-    showKanbanFinding(next)
+    state.kanbanPopoverGid = next
+    resetFocusCode()
     render()
-    afterKanbanFindingShown()
+    revealFocusCodeLines()
     return
   }
-
-  // Open / close are gated on the lock. Successive rapid clicks
-  // are ignored until the in-flight animation completes — without
-  // this the View Transitions API's `skipTransition()` race left
-  // the page in a state where no further transition would render.
   if (kanbanTransitioning) return
-  // Past the lock: this click is being acted on, so the group it
-  // opens can be levelled. Above the lock it would mutate and persist
-  // on a click the guard is about to swallow — no modal, no render.
+  // Levelled past the lock only, which would swallow the click.
   syncOpenedGroupTriage(next)
   kanbanTransitioning = true
-
-  // Opening hides the old card snapshot; closing keeps the new card
-  // visible and prevents its text from scaling with the animated box.
+  // Opening hides the old card snapshot; closing keeps the new card visible
+  // and stops its text scaling with the animated box.
   const directionClass = opening ? 'kanban-opening' : 'kanban-closing'
   document.documentElement.classList.add(directionClass)
-
-  // Shared-element pairing: the modal has `view-transition-name:
-  // kanban-detail-modal` in CSS; we stamp the source card with the
-  // same name via inline style. The browser pairs snapshots by name
-  // and the GROUP pseudo morphs position + size, so the modal flies
-  // out of the card on open and back on close. The inline-style
-  // bookkeeping is safe because the lock above guarantees one
-  // transition in flight at a time.
-  //
-  // Safety-net timeout: ViewTransition.finished should settle when
-  // the transition ends, but some browser builds get stuck and never
-  // settle on an odd interruption — leaving the lock held forever
-  // ("no clicks open the modal until reload"). 600ms is generous
-  // (animation ~200ms); cleared on a clean settle.
-  const unlock = (card) => {
-    if (card) card.style.viewTransitionName = ''
-    document.documentElement.classList.remove(directionClass)
-    kanbanTransitioning = false
+  // The modal has `view-transition-name: kanban-detail-modal` in CSS; the
+  // card it flies out of (or back into) gets the same name inline, so the
+  // browser pairs the two. `finished` can fail to ever settle on an odd
+  // interruption, so a timeout (the animation is ~200ms) releases the lock.
+  const settle = (transition, card) => {
+    const unlock = () => {
+      const el = card()
+      if (el) el.style.viewTransitionName = ''
+      document.documentElement.classList.remove(directionClass)
+      kanbanTransitioning = false
+    }
+    const safety = setTimeout(unlock, 600)
+    void (async () => {
+      try { await transition.finished } catch {}
+      clearTimeout(safety)
+      unlock()
+    })()
   }
-
   if (opening) {
     const card = kanbanCardEl(next)
     if (card) {
-      // Set CSS clip-size vars from the actual source card, and
-      // forcing layout via getBoundingClientRect inside that helper
-      // doubles as a style-flush so the inline view-transition-name
-      // is committed before the snapshot capture below.
+      // Measuring flushes styles; the second read commits the inline name to
+      // the style tree the old snapshot is taken from.
       updateKanbanClipVars(card)
       card.style.viewTransitionName = 'kanban-detail-modal'
-      // One more layout read to commit the just-set inline style
-      // into the style tree the browser uses for the old snapshot.
       card.getBoundingClientRect()
-    } else {
-      updateKanbanClipVars()
-    }
-    showKanbanFinding(next)
-    const t = startViewTransition(() => {
+    } else updateKanbanClipVars()
+    state.kanbanPopoverGid = next
+    resetFocusCode()
+    settle(startViewTransition(() => {
       render()
-      // Inside the callback, so what the NEW snapshot captures is
-      // already in place — moving it afterwards would animate from a
-      // view the user never asked for. The rail brings the open card
-      // into view in its own update, a microtask from here, which also
-      // lands before the capture.
-      afterKanbanFindingShown()
-      // Clear inline name inside the callback so the NEW snapshot
-      // has exactly one element holding `kanban-detail-modal` —
-      // the modal (via CSS). Two elements with the same name
-      // would make the browser skip the pairing.
+      // Inside the callback, so the new snapshot captures the panel already
+      // moved (the rail brings the open card into view a microtask later,
+      // still before the capture).
+      revealFocusCodeLines()
+      // Two elements with the name would make the browser skip the pairing.
       if (card) card.style.viewTransitionName = ''
-    })
-    const safety = setTimeout(() => unlock(card), 600)
-    ;(async () => {
-      try { await t.finished } catch {}
-      clearTimeout(safety)
-      unlock(card)
-    })()
+    }), () => card)
     return
   }
-
-  // Closing pairs the modal with the real destination card. Keep the
-  // destination snapshot visible throughout its return to the board.
   updateKanbanClipVars()
-  showKanbanFinding(next)
+  state.kanbanPopoverGid = next
+  resetFocusCode()
   let closeCard = null
-  const t = startViewTransition(() => {
+  settle(startViewTransition(() => {
     render()
     closeCard = kanbanCardEl(prev)
-    if (closeCard) {
-      // Refresh the clip-size vars from the now-re-rendered target
-      // card in case its size shifted (different content, different
-      // column).
-      updateKanbanClipVars(closeCard)
-      closeCard.style.viewTransitionName = 'kanban-detail-modal'
-    }
-  })
-  const safety = setTimeout(() => unlock(closeCard ?? kanbanCardEl(prev)), 600)
-  ;(async () => {
-    try { await t.finished } catch {}
-    clearTimeout(safety)
-    unlock(closeCard ?? kanbanCardEl(prev))
-  })()
+    if (!closeCard) return
+    // Re-measured: the rendered card may have changed size.
+    updateKanbanClipVars(closeCard)
+    closeCard.style.viewTransitionName = 'kanban-detail-modal'
+  }), () => closeCard ?? kanbanCardEl(prev))
 }
 
-// Move the open kanban popover by `direction` (+1 = next, -1 =
-// previous) through the cards of the SAME column as the currently-
-// shown finding, so the arrow keys step between findings sharing a
-// triage state without crossing into another column. Clamps at the
-// column ends (no wrap). Mirrors navigateFocus but scopes the walk
-// to one `.kanban-column` rather than the flat focus queue. The
-// card-to-card hop swaps the modal contents in place (no view
-// transition — see setKanbanPopoverGid's plain-render branch).
+// Step the open modal through its column's cards, clamped at the ends, so
+// the arrows walk findings that share a triage state.
 function navigateKanban(direction) {
   const current = kanbanCardEl(state.kanbanPopoverGid)
   const column = current?.closest('.kanban-column')
@@ -1932,16 +1237,9 @@ function navigateKanban(direction) {
   const nextGid = cards[nextIdx].dataset.gid
   if (!nextGid) return
   setKanbanPopoverGid(nextGid)
-  // The accent ring that marks the open card is the state-driven
-  // `.active` class (render.js / findings.css), so the indicator itself
-  // tracks the popover regardless of DOM focus. Still move focus to the
-  // now-open card: it keeps keyboard focus coherent with what's shown,
-  // and parks the card's own `:focus-visible` ring on the SAME card as
-  // `.active` instead of leaving it stuck on the originally-clicked card
-  // once the keyboard is in use (which showed a second, wrong outline).
-  // `preventScroll` defers positioning to the scrollIntoView below;
-  // `nearest` minimises movement, and the modal covers the board so the
-  // scroll is invisible until the close transition morphs back.
+  // The open card's ring is the state-driven `.active`; moving focus too
+  // keeps its `:focus-visible` ring off the originally clicked card. The
+  // modal covers the board, so the scroll is unseen until the close morph.
   const card = kanbanCardEl(nextGid)
   if (card) {
     card.focus({ preventScroll: true })
@@ -1953,152 +1251,94 @@ let linksPreviewTrigger = null
 
 function dismissLinksPreview() {
   closeLinksPreview()
-  state.focusCodeStack = []
-  state.focusCodeAt = 0
+  resetFocusCode()
   render()
   if (linksPreviewTrigger?.isConnected) linksPreviewTrigger.focus({ preventScroll: true })
   linksPreviewTrigger = null
 }
 
-report.addEventListener('click', (e) => {
-  const previewTrigger = pathClosest(e, '[data-links-preview]')
-  if (previewTrigger) {
+const KANBAN_CLICKS = [
+  [deep('[data-links-preview]'), (el, e) => {
     e.preventDefault()
-    linksPreviewTrigger = previewTrigger
-    const rowIndex = previewTrigger.dataset.previewRow
-    const loading = openLinksPreview(previewTrigger.dataset.linksPreview, previewTrigger.dataset.previewReport,
-      rowIndex === undefined ? undefined : Number(rowIndex), previewTrigger.dataset.previewManagedReport)
+    linksPreviewTrigger = el
+    const rowIndex = el.dataset.previewRow
+    const loading = openLinksPreview(el.dataset.linksPreview, el.dataset.previewReport,
+      rowIndex === undefined ? undefined : Number(rowIndex), el.dataset.previewManagedReport)
     render()
     report.querySelector('.kanban-detail-close')?.focus({ preventScroll: true })
     void loading.then(() => {
       render()
       revealFocusCodeLines()
-      // Read only the saved hash index, as report navigation does;
-      // unopened bundle bodies stay unloaded.
+      // Only the saved hash index, as report navigation reads; unopened
+      // bundle bodies stay unloaded.
       const hashes = getLinksPreview()?.group?.[0]._bundleHashes
       if (Array.isArray(hashes)) {
         for (const integrity of hashes) prefetchBundleHashes(integrity).catch(() => {})
       }
       return null
     })
-    return
-  }
-  // × button inside the modal — close. Listed first so the card
-  // toggle below doesn't intercept clicks landing here when the
-  // card and modal overlap z-wise (they don't, but cheap to
-  // sequence).
-  if (e.target.closest?.('.kanban-detail-close')) {
-    if (getLinksPreview()) { dismissLinksPreview(); return }
-    setKanbanPopoverGid(null)
-    return
-  }
-  // Fullscreen toggle beside it — hand the dialog the whole backdrop,
-  // or put it back at its width cap. A plain render, deliberately not a
-  // view transition: the modal's `::view-transition-old/new` keyframes
-  // animate a clip-path whose floor is the SOURCE CARD's size (set for
-  // the open / close morph), which on a resize would collapse the
-  // dialog to card-sized and grow it back. Persisted so the next
-  // dialog — this session or the next visit — opens the same way.
-  if (e.target.closest?.('[data-kanban-detail-fullscreen]')) {
+  }],
+  [near('.kanban-detail-close'), () => {
+    if (getLinksPreview()) dismissLinksPreview()
+    else setKanbanPopoverGid(null)
+  }],
+  // The dialog's fullscreen toggle, persisted for the next dialog. A plain
+  // render, not a view transition: the morph's clip floor is the source
+  // card's size, which would collapse the dialog and grow it back.
+  [near('[data-kanban-detail-fullscreen]'), () => {
     state.kanbanDetailFullscreen = !state.kanbanDetailFullscreen
     try {
       localStorage.setItem(KANBAN_DETAIL_FULLSCREEN_KEY, String(state.kanbanDetailFullscreen))
     } catch {}
     render()
-    // Going fullscreen mounts the code panel for the first time, at the
-    // top of the file. Put it on the lines the finding cites, same as a
-    // navigation would.
+    // Fullscreen mounts the code panel, at the top of the file.
     revealFocusCodeLines()
-    return
-  }
-  // Fullscreen toggle in a column header — give that column the whole
-  // board, or (clicking the same one again) put the others back.
-  // Ahead of the light-dismiss branch at the bottom so a click here
-  // never doubles as "close the modal".
-  const expandBtn = e.target.closest?.('[data-kanban-expand]')
-  if (expandBtn) {
-    const key = expandBtn.dataset.kanbanExpand
+  }],
+  // A column header's fullscreen toggle. Expanding a different column than
+  // the open card's unmounts that card, leaving the modal nothing to close
+  // back into, so it closes.
+  [near('[data-kanban-expand]'), (el) => {
+    const key = el.dataset.kanbanExpand
     const next = state.kanbanExpandedColumn === key ? null : key
     state.kanbanExpandedColumn = next
-    // An open detail modal is anchored to a card in one specific
-    // column. Expanding a DIFFERENT column unmounts that card, leaving
-    // the modal over a board it no longer belongs to and its close
-    // transition with nothing to morph back into — so close it. Going
-    // back to the full board, or expanding the column the open card
-    // already sits in, keeps it up.
     if (next && state.kanbanPopoverGid) {
       const openColumn = kanbanCardEl(state.kanbanPopoverGid)?.closest('.kanban-column')
       if (openColumn?.dataset.kanbanTarget !== next) state.kanbanPopoverGid = null
     }
     render()
-    return
-  }
-  // Prev / next in the dialog rail's header — the same column walk
-  // the ← / → keys do, for the mouse.
-  const railNav = e.target.closest?.('[data-kanban-nav]')
-  if (railNav) {
-    navigateKanban(railNav.dataset.kanbanNav === 'next' ? 1 : -1)
-    return
-  }
-  // Card in the dialog's same-column rail — swap the dialog to that
-  // finding. The rail's cards aren't `[data-kanban-source]` (they
-  // don't drag), so they need their own branch, and it has to sit
-  // ahead of the light-dismiss fallthrough at the bottom or clicking
-  // one would read as "clicked outside the modal" and close it.
-  const railCard = e.target.closest?.('[data-kanban-select]')
-  if (railCard) {
-    // Same text-selection guard as the board card below.
+  }],
+  // The rail header's prev / next: the ← / → column walk, for the mouse.
+  [near('[data-kanban-nav]'), (el) => { navigateKanban(el.dataset.kanbanNav === 'next' ? 1 : -1) }],
+  // A card in the dialog's rail. Re-clicking the open one keeps it: in the
+  // rail the active card marks position, it isn't what the dialog came from.
+  [near('[data-kanban-select]'), (el) => {
+    // A click ending a text selection isn't a pick.
     if (window.getSelection?.()?.toString()) return
-    const gid = railCard.dataset.gid
-    // Re-clicking the open finding is a no-op (setKanbanPopoverGid
-    // bails on an unchanged gid) rather than a toggle-closed: in the
-    // rail the active card marks position, it isn't the thing the
-    // dialog came out of.
-    if (gid) setKanbanPopoverGid(gid)
-    return
-  }
-  // Fix-link / comment shortcut on the compact card — the anchor
-  // navigates on its own and the .mark-fix / .mark-comment buttons
-  // open their dialogs via the delegates earlier in this file; none
-  // of them should also toggle the detail modal. A read-only fix note
-  // does nothing itself, so it opens the card like the rest of it.
-  if (e.target.closest?.('.kanban-action:not(.kanban-fix-note)')) return
-  // Kanban card — open / toggle / switch. Backdrop is
-  // pointer-events: none in CSS so this branch can also fire for
-  // clicks landing on a card that's visually behind the backdrop
-  // — re-clicking the active card toggles the modal closed
-  // without needing a separate trip through the backdrop.
-  const card = e.target.closest?.('.kanban-card[data-kanban-source]')
-  if (card) {
-    // Skip when the user is grabbing text (selection clicks fire
-    // a click after mouseup with a non-empty selection range).
+    if (el.dataset.gid) setKanbanPopoverGid(el.dataset.gid)
+  }],
+  // A compact card's action buttons run their own delegates; a read-only fix
+  // note opens the card like the rest of it.
+  [near('.kanban-action:not(.kanban-fix-note)'), () => {}],
+  // A board card opens, switches or (the open one) closes the modal. The
+  // backdrop is pointer-events: none, so this also fires for a card behind it.
+  [near('.kanban-card[data-kanban-source]'), (el) => {
     if (window.getSelection?.()?.toString()) return
-    const gid = card.dataset.gid
-    if (!gid) return
-    setKanbanPopoverGid(state.kanbanPopoverGid === gid ? null : gid)
-    return
-  }
-  // Click inside the modal panel, or on the rail's chrome (header,
-  // padding, empty space below the cards) — no-op. Action buttons
-  // inside either panel run via their own delegates higher up in
-  // this file; what matters here is that neither counts as a click
-  // outside the dialog.
-  // Import navigation can replace the clicked source markup in an earlier
-  // listener. The original event path still identifies this as an inside click.
-  if (pathClosest(e, '.kanban-detail-modal, .kanban-detail-side')) return
-  if (getLinksPreview()) { dismissLinksPreview(); return }
-  // Click anywhere else while the modal is open → close. With the
-  // backdrop set to pointer-events: none, these clicks bubble up
-  // from whatever non-modal, non-card DOM was under the cursor
-  // (a column header, empty column body, the kanban board gutter).
-  if (state.kanbanPopoverGid) setKanbanPopoverGid(null)
+    const gid = el.dataset.gid
+    if (gid) setKanbanPopoverGid(state.kanbanPopoverGid === gid ? null : gid)
+  }],
+  // Inside the modal or the rail's chrome isn't outside the dialog. The path
+  // still says so when an earlier listener's navigation replaced the markup.
+  [deep('.kanban-detail-modal, .kanban-detail-side'), () => {}],
+]
+report.addEventListener('click', (e) => {
+  if (runClicks(KANBAN_CLICKS, e)) return
+  // Anywhere else light-dismisses.
+  if (getLinksPreview()) dismissLinksPreview()
+  else if (state.kanbanPopoverGid) setKanbanPopoverGid(null)
 })
 
-// Column picker in the dialog rail's header — land on the chosen
-// bucket's first finding, which is what pulls the rail across to it.
-// The gid rides on the option rather than being looked up here: the
-// buckets are render.js's, and the DOM already carries the one answer
-// this needs.
+// The rail header's column picker lands on the bucket's first finding, whose
+// gid rides on the option.
 report.addEventListener('change', (e) => {
   const select = e.target.closest?.('[data-kanban-column]')
   if (!select) return
@@ -2106,17 +1346,13 @@ report.addEventListener('change', (e) => {
   if (gid) setKanbanPopoverGid(gid)
 })
 
-// Esc dismisses the popover, then (a second press) the fullscreen
-// column. Bound to document so it fires regardless of focus location
-// — the modal isn't a `<dialog>` (we manage focus + light dismiss
-// ourselves to keep view-transition in the driver's seat). Unwinding
-// one layer per press means Esc from a card opened inside a fullscreen
-// column doesn't skip straight back to the whole board.
+// Esc unwinds one layer per press: the links preview or the kanban modal
+// (not `<dialog>`s, so view transitions stay in charge), then a fullscreen
+// column.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return
   if (getLinksPreview()) {
-    // The shared hover tooltip is a popover too (so it shows over modal
-    // dialogs) — never one Escape should defer to.
+    // The shared hover tooltip is a popover too — never one to defer to.
     if (!e.defaultPrevented && !focusNavBlocked(e) && !document.querySelector(':popover-open:not(#styled-tooltip)')) dismissLinksPreview()
     return
   }
@@ -2124,48 +1360,22 @@ document.addEventListener('keydown', (e) => {
     setKanbanPopoverGid(null)
     return
   }
-  // Guarded on the view mode as well: the expansion outlives a trip to
-  // another tab (it's plain state, not torn down on unmount), and Esc
-  // over the table or graph belongs to whatever is on screen there.
+  // The expansion outlives a trip to another view, where Esc belongs to
+  // whatever is on screen.
   if (state.viewMode !== 'kanban' || state.kanbanExpandedColumn === null) return
   state.kanbanExpandedColumn = null
   render()
 })
 
-// Focus-view selection. The right-hand "up next" queue renders each
-// upcoming finding as a `<div class="kanban-card focus-side-card"
-// data-focus-select>`; clicking one swaps the centered finding-card
-// to that gid. The handler also scrolls the now-active card into
-// view inside the sidebar so chaining clicks keeps the queue
-// oriented around the cursor.
-// The dedup group whose card or source panel a click landed in, read from
-// the nearest data-gid on the card host or its shared focus workbench.
-//
-// NOT `state.focusGid`: the focus view only writes that on an explicit
-// pick — a sidebar click, an arrow key — and otherwise falls back to
-// the previous render's index (see the selection rules in render.js).
-// So arriving in the focus view and clicking straight into the card
-// asks about a gid that is still null, which is exactly the path a
-// reader takes and exactly the one that quietly did nothing.
-function focusedGroupOf(e) {
-  const card = pathClosest(e, '[data-gid]')
-  const gid = card?.dataset?.gid
-  return gid ? findGroupById(gid) : null
-}
-
-// Move the focus view's Code panel to `pos`, from a link the reader
-// followed in `group`'s card. The stack rules live in
-// focus-code-history.js; what this adds is where the finding's own
-// file comes from — the group — and the repaint.
+// Move the focus view's Code panel to `pos`, from a link followed in
+// `group`'s card (stack rules in focus-code-history.js). A null `pushed`
+// means the panel already shows exactly this: no entry, no repaint, just
+// back onto those lines.
 function pushFocusCode(group, pos) {
   if (!pos.integrity || !pos.file) return
   const history = focusCodeHistory(group)
   if (!history) return
   const next = pushed(history, pos)
-  // `null` means the panel is already showing exactly this. The reader
-  // clicked a reference to what is on screen, so what they are asking
-  // for is to be put back on those lines — not a history entry, and
-  // not a repaint of a panel that hasn't changed.
   if (next) {
     state.focusCodeStack = next.stack
     state.focusCodeAt = next.at
@@ -2182,28 +1392,19 @@ function resetFocusCodeScroll() {
   }
 }
 
-// The panel references are `role="link"` spans rather than anchors or
-// buttons, for the layout reason in render-finding.js — which means
-// the keyboard activation a real control would have had is ours to
-// supply. Enter is what a link takes; Space too, since a reader who
-// has tabbed onto something clickable will try both.
+// The panel's references are `role="link"` spans (render-finding.js says
+// why), so their keyboard activation is ours: Enter, and Space, which would
+// otherwise scroll the pane away from the lines asked for.
 report.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' && e.key !== ' ') return
   const codeNav = pathClosest(e, '[data-code-nav-file]')
   if (!codeNav) return
-  // Space scrolls the pane otherwise, which is the opposite of putting
-  // the reader on the lines they just asked for.
   e.preventDefault()
-  pushFocusCode(focusedGroupOf(e), {
-    integrity: codeNav.dataset.codeNavIntegrity,
-    file: codeNav.dataset.codeNavFile,
-    range: lineRange(codeNav.dataset.codeNavLine),
-  })
+  followCodeNav(codeNav, e)
 })
 
-// Back (-1) / forward (+1) through the panel's history. A no-op at the
-// ends — the buttons are disabled there, so this only catches a stale
-// render.
+// Back (-1) / forward (+1) through the panel's history; the buttons are
+// disabled at the ends, so a no-op there only catches a stale render.
 function stepFocusCode(direction) {
   const next = stepped(state.focusCodeStack, state.focusCodeAt, direction)
   if (next === state.focusCodeAt) return
@@ -2217,40 +1418,22 @@ function setFocusGid(gid) {
   if (!gid || state.focusGid === gid) return
   syncOpenedGroupTriage(gid)
   state.focusGid = gid
-  // The panel starts again from the new finding's own file: a trail of
-  // files you walked while reading a DIFFERENT finding is not history
-  // you can act on from here.
-  state.focusCodeStack = []
-  state.focusCodeAt = 0
+  resetFocusCode()
   render()
-  // Post-render: bring the new active card into view in the
-  // sidebar. `block: 'nearest'` minimises movement (a no-op when
-  // the card is already visible); `behavior: 'instant'` skips the
-  // smooth-scroll animation, which would noticeably lag an arrow-
-  // key run-through. The sidebar is the closest scrollable
-  // ancestor, so only it scrolls — the page stays put.
-  const card = report.querySelector('.focus-side-card.active')
-  if (card) card.scrollIntoView({ block: 'nearest', behavior: 'instant' })
-  // And the inline Code panel: put the gutter rows carrying the
-  // finding's lines where the user can see them on entry — the whole
-  // cited block, not just where it starts (focus-code.js
-  // revealFocusCodeLines). Falls through silently when the panel
-  // isn't mounted, which is the case for a finding with no bundle
-  // code behind it.
+  // Bring the active card into view in the queue without animation, which
+  // would lag an arrow-key run-through; only the sidebar scrolls.
+  report.querySelector('.focus-side-card.active')?.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+  // And put the finding's whole cited block in view in the Code panel, when
+  // it is mounted (focus-code.js).
   revealFocusCodeLines()
 }
 
-// Move the focus by `direction` (+1 = next, -1 = previous), walked
-// off the rendered queue. Shared by the forward/back buttons in
-// the main-pane top bar and the arrow-key keyboard handler.
-// Both paths land here so the no-op guard (already at the end)
-// and the gid lookup behave identically.
+// Step the focus through the rendered "up next" queue, clamped at the ends:
+// a wrap would surprise mid-triage. Shared by the top bar and the arrows.
 function navigateFocus(direction) {
   const cards = [...report.querySelectorAll('.focus-side-card[data-focus-select]')]
   if (cards.length === 0) return
   const idx = cards.findIndex((c) => c.classList.contains('active'))
-  // Clamp at the ends — wrapping would surprise the user mid-
-  // triage (you don't expect Down to teleport you back to the top).
   const nextIdx = idx < 0
     ? (direction > 0 ? 0 : cards.length - 1)
     : Math.min(Math.max(idx + direction, 0), cards.length - 1)
@@ -2259,33 +1442,19 @@ function navigateFocus(direction) {
   if (nextGid) setFocusGid(nextGid)
 }
 
-report.addEventListener('click', (e) => {
-  // Forward / back buttons in the main-pane top bar — same
-  // navigation path as the keyboard handler below.
-  const navBtn = e.target.closest?.('[data-focus-nav]')
-  if (navBtn) {
-    navigateFocus(navBtn.dataset.focusNav === 'next' ? 1 : -1)
-    return
-  }
-  const card = e.target.closest?.('.focus-side-card[data-focus-select]')
-  if (!card) return
-  // Skip when the user is text-selecting (click fires after mouseup
-  // with a non-empty selection range, same gotcha the kanban card
-  // handler dodges).
-  if (window.getSelection?.()?.toString()) return
-  const gid = card.dataset.gid
-  if (gid) setFocusGid(gid)
-})
+const FOCUS_CLICKS = [
+  [near('[data-focus-nav]'), (el) => { navigateFocus(el.dataset.focusNav === 'next' ? 1 : -1) }],
+  // A queue card swaps the centered finding (not on a text-selecting click).
+  [near('.focus-side-card[data-focus-select]'), (el) => {
+    if (window.getSelection?.()?.toString()) return
+    if (el.dataset.gid) setFocusGid(el.dataset.gid)
+  }],
+]
+report.addEventListener('click', (e) => { runClicks(FOCUS_CLICKS, e) })
 
-// Focus-view pane divider. Grabbing it starts a pointer-captured
-// drag that resizes the finding-card / Code split (see
-// view/focus-splitter.js); double-clicking restores the 1:1 default,
-// which is the quick way back after dragging a pane down to its
-// minimum. Both are no-ops anywhere else in the report, since the
-// divider only renders inside the focus view's Code layout.
+// The focus view's pane divider (focus-splitter.js): a primary-button drag
+// resizes the split, a double-click restores 1:1.
 report.addEventListener('pointerdown', (e) => {
-  // Secondary buttons open context menus / paste on X11 — only the
-  // primary button drags.
   if (e.button !== 0) return
   const handle = e.target.closest?.('[data-focus-splitter]')
   if (handle) startFocusSplitDrag(handle, e)
@@ -2295,49 +1464,26 @@ report.addEventListener('dblclick', (e) => {
   if (handle) resetFocusSplit(handle)
 })
 
-// Arrow-key navigation between findings. Bound to document so the key
-// fires from anywhere, guarded to act only on an arrow-navigable
-// surface, when the user isn't typing in a text field (Search, Repo,
-// etc.), and no modal dialog is open. Two surfaces share the handler:
-//
-//   - Focus view — walks the right-hand "up next" queue.
-//   - Kanban view with the detail popover open — walks the cards in
-//     the open card's own column, stepping the popover through the
-//     findings that share its triage state. With no popover up there's
-//     nothing anchored to step from, so the arrows stay inert.
-//
-// Bound keys (all clamp at the ends, no wrap):
-//   ← / ArrowLeft   → previous finding
-//   → / ArrowRight  → next finding
-//
-// ArrowUp / ArrowDown intentionally don't navigate — the focused
-// finding-card's description can be tall enough to scroll, and
-// hijacking up/down would steal the user's way of reading past the
-// fold.
-//
-// The "is the user typing" check walks `composedPath()` rather than
-// `e.target.tagName`: inputs inside a custom element's shadow root
-// (search bars, repo chip) retarget `e.target` to the shadow host, so
-// a tagName check would hijack arrow-key caret movement inside them.
-// The path walk sees the actual focused node.
+// Whether a key belongs to something else: an open modal dialog, or a field
+// being typed in. Walks the composed path, as an input inside a shadow root
+// retargets `e.target` to its host. App dialogs render their `<dialog>` in a
+// Lit shadow root, out of the querySelector's sight, but showModal() traps
+// focus inside, so it is on the path whichever control holds focus.
 function focusNavBlocked(e) {
   if (document.querySelector('dialog[open]')) return true
   for (const el of e.composedPath()) {
     if (!el || el.nodeType !== 1) continue
     const tag = el.tagName
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
-    // App dialogs (comment / fix-link / …) render their <dialog> inside
-    // a Lit shadow root, so the light-DOM querySelector above can't see
-    // them. showModal() traps focus inside, so the open <dialog> is
-    // always on a keydown's composed path while it's up — catch it here
-    // regardless of which control holds focus (the INPUT/TEXTAREA check
-    // alone misses a focused button, e.g. fix-link's Save/Cancel).
     if (tag === 'DIALOG' && el.open) return true
     if (el.isContentEditable) return true
   }
   return false
 }
 
+// ← / → step between findings, from anywhere: in the focus view through the
+// queue, in the kanban with its modal open through the open card's column.
+// Up / down stay the reader's, to scroll a tall card.
 document.addEventListener('keydown', (e) => {
   if (state.currentView !== 'findings') return
   const inFocus = state.viewMode === 'focus'
@@ -2350,10 +1496,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowLeft') direction = -1
   else return
   e.preventDefault()
-  // The focus view's pane divider is arrow-driven in its own right
-  // (the ARIA separator pattern), so while it holds keyboard focus
-  // the same keys move the split instead of walking the queue —
-  // otherwise the only way to resize would be with a pointer.
+  // The pane divider is an ARIA separator: focused, it takes the arrows.
   const splitter = e.target?.closest?.('[data-focus-splitter]')
   if (splitter) {
     nudgeFocusSplit(splitter, direction * FOCUS_SPLIT_STEP)
@@ -2363,122 +1506,63 @@ document.addEventListener('keydown', (e) => {
   else navigateKanban(direction)
 })
 
-// mark-color fires from `<color-marker>` (composed:true) when one of
-// its dots is clicked. Color applies to the ACTIVE tab only (per
-// spec rule 4); clicking the currently-marked color toggles it off.
-// This may change tab sort order (colored tabs come first), so a
-// full re-render is necessary — we can't just flip classes in place.
+// `<color-marker>`'s dots color the active tab; the marked color again
+// clears it. A full render, as colored tabs sort first.
 report.addEventListener('mark-color', (e) => {
-  const findingEl = pathClosest(e, '[data-gid]')
-  if (!findingEl) return
-  const gid = findingEl.dataset.gid
-  const group = findGroupById(gid)
-  if (!group) return
-  const activeTab = activeTabFor(group)
-  if (!canEditTriage(activeTab)) return
-  const activeKey = tabKey(activeTab)
+  const activeTab = focusedTabOf(e)
+  if (!activeTab || !canEditTriage(activeTab)) return
   const color = e.detail?.color
   if (!color) return
-  const current = triageEntry(activeTab)?.color
-  if (current === color) patchEntry(state.triage, activeKey, { color: undefined })
-  else patchEntry(state.triage, activeKey, { color })
+  patchEntry(state.triage, tabKey(activeTab), { color: triageEntry(activeTab)?.color === color ? undefined : color })
   saveTriage()
   renderPreservingTableScroll()
 })
 
-// Print button — fixed top-right icon, lives OUTSIDE #report (see
-// index.html / styles/theme.css), so the report-level click delegate
-// can't see it; attach directly. Two pieces of state swap for the
-// print and restore after the dialog dismisses:
-//
-//   - document.title → filename (or longest common prefix across
-//     loaded reports) so the OS print dialog / saved PDF default to a
-//     meaningful name. Set AFTER the viewMode swap because `render()`
-//     ends by writing the document title.
-//
-//   - state.viewMode `table` → `list`. The table layout is
-//     interaction-driven (compact rows, side panel, hover) and prints
-//     as row-chrome stubs with none of the finding body; list mode
-//     paints the full card per entry, which is what paper wants.
-//     `tableSelectedGid` isn't bound to viewMode, so the row selection
-//     survives the round trip.
-//
-// The swap/restore lifecycle is owned by a beforeprint/afterprint
-// pair so non-button entry points (Ctrl+P, browser menu, print
-// extensions) get the same layout. The pair alone wasn't enough:
-// `<finding-card>` is Lit, rendering in a microtask, so going
-// straight from beforeprint to the browser snapshot printed empty
-// shells — only the file/location headers (synchronous via innerHTML)
-// showed. The button handler swaps eagerly and awaits every card's
-// render BEFORE `window.print()`; beforeprint then no-ops since
-// `prepareForPrint` is idempotent on the saved-state sentinel. The
-// Ctrl+P / menu path can't insert that await, so `prepareForPrint`
-// builds every card's body synchronously instead (`ensureRendered`
-// with `sync`), which is what makes both paths print complete.
-// Microtasks drain through the await chain in user-gesture context,
-// so `window.print()` still pops a dialog without the browser
-// flagging it as automation.
-//
-// A non-null `printSavedMode` also doubles as the re-entrancy guard,
-// so the click handler doesn't race itself across the await and
-// beforeprint doesn't clobber state the click handler captured.
+// Printing swaps two things and restores them after:
+//   - state.viewMode `table` → `list`: the table prints as row stubs, list
+//     paints every card in full (the row selection survives);
+//   - document.title → the report's name (or the loaded reports' common
+//     prefix), the saved PDF's default — after the swap's render, which
+//     writes the title.
+// beforeprint / afterprint own it, so Ctrl+P and the browser menu get the
+// same layout. `<finding-card>` renders in a microtask, which the snapshot
+// after beforeprint doesn't wait for: so prepareForPrint builds every card's
+// body synchronously, and the export dialog's print path also awaits each
+// card before window.print() (microtasks keep the user gesture). A non-null
+// `printSavedMode` is the re-entrancy guard for both.
 let printSavedMode = null
 let printSavedTitle = null
-// The relaxed filter selection the confirm dialog handed back, when the
-// user dropped a filter from this export. Print serializes the DOM, so
-// unlike the markdown path it can't scope the override to a synchronous
-// call: it has to hold from the re-render here through the browser's own
-// print dialog to `afterprint`. Null for a native Ctrl+P, which never
-// sees the confirm dialog — that path prints what is on screen, as it
-// always has.
+// The relaxed filter selection the export dialog handed back, when the user
+// dropped a filter. Print serializes the DOM, so the override holds from the
+// re-render here through the browser's print dialog to `afterprint`. Null
+// for a native Ctrl+P, which prints what is on screen.
 let printFilterFields = null
 let printOneSamplePerGroup = false
 
 function prepareForPrint() {
   if (printSavedMode !== null) return
   if (state.reports.length === 0) {
-    // The only way out of this function without a matching restore, so
-    // it is also the only place a pending selection could go stale.
+    // The one exit without a matching restore, so the one place a pending
+    // selection could go stale.
     printFilterFields = null
     printOneSamplePerGroup = false
     return
   }
   printSavedMode = state.viewMode
   printSavedTitle = document.title
-  let rerender = false
-  if (state.viewMode === 'table') {
-    state.viewMode = 'list'
-    rerender = true
-  }
-  if (printFilterFields) {
-    setFilterOverride(printFilterFields)
-    rerender = true
-  }
+  const rerender = state.viewMode === 'table' || Boolean(printFilterFields)
+  if (state.viewMode === 'table') state.viewMode = 'list'
+  if (printFilterFields) setFilterOverride(printFilterFields)
   if (rerender) render()
-  // Every card goes on paper, so every card needs its body: the list
-  // surfaces build them only near the viewport (finding-card.js), and
-  // a print of a long report would otherwise be shells past the first
-  // screen. Built synchronously, because this also runs as the
-  // `beforeprint` handler of a native Ctrl+P, which can't await
-  // anything: the browser may snapshot the page the moment the handler
-  // returns, and a body left to Lit's microtask would print as the
-  // shell it was replacing. This covers the cards the mode swap above
-  // just created as well as the ones already on the page. (The button
-  // path below awaits the same cards anyway; after this the wait is
-  // already over.)
+  // Every card goes on paper, so every card needs its body, which the list
+  // surfaces build only near the viewport (finding-card.js).
   for (const card of report.querySelectorAll('finding-card')) {
     card.toggleAttribute('print-one-sample', printOneSamplePerGroup)
     card.ensureRendered({ sync: true })
   }
   const fileNames = state.reports.map((r) => r.fileName)
-  let target = ''
-  if (fileNames.length === 1) target = fileNames[0]
-  else if (fileNames.length > 1) target = commonPrefix(fileNames)
-  // Strip the `.json` suffix so a "Save as PDF" doesn't end up
-  // named `<report>.json.pdf`. Also handles a stripped trailing
-  // `.` from a partial common prefix like `security-foo.j` —
-  // only `.json` exactly at the end gets removed.
-  target = target.replace(/\.json$/u, '')
+  // Without `.json`, so "Save as PDF" isn't `<report>.json.pdf`.
+  const target = (fileNames.length === 1 ? fileNames[0] : commonPrefix(fileNames)).replace(/\.json$/u, '')
   if (target) document.title = target
 }
 
@@ -2505,48 +1589,29 @@ function restoreAfterPrint() {
 window.addEventListener('beforeprint', prepareForPrint)
 window.addEventListener('afterprint', restoreAfterPrint)
 
-// Send the page to paper under the selection the export dialog handed
-// back. Split out of the click path because the dialog is where the
-// two exports part company: the confirm click is still the user
-// gesture that authorises window.print(), it just arrives through the
-// export button rather than a print button of its own.
+// Print under the selection the export dialog handed back; its confirm
+// click is the user gesture that authorises window.print().
 async function runPrint(fields, { oneSamplePerGroup = false } = {}) {
-  // Re-check the re-entrancy guard: the caller's check ran before the
-  // dialog, and `printSavedMode` isn't set until prepareForPrint below
-  // — so a print started during the dialog (a stray beforeprint, or a
-  // second confirm) could otherwise race past it.
+  // Again: a print started during the dialog could otherwise race past.
   if (printSavedMode !== null) return
-  // Set before prepareForPrint, which is what installs it and renders
-  // the relaxed set into the DOM print reads.
   printFilterFields = fields
   printOneSamplePerGroup = oneSamplePerGroup
   try {
     prepareForPrint()
-    // `ensureRendered` builds a card's body if the list surfaces
-    // hadn't yet (prepareForPrint asked already; this is the wait),
-    // and resolves after the element's render() has applied its
-    // template. Doing this on every card is overkill in steady-state
-    // but cheap enough relative to dialog-modal time.
     await Promise.all(
       [...report.querySelectorAll('finding-card')].map((c) => c.ensureRendered()),
     )
     window.print()
   } catch (e) {
-    // If window.print() never fires, afterprint won't either —
-    // restore manually so the page isn't stranded in list mode.
-    // Safe to call even if afterprint has already run; the
-    // sentinel check no-ops it.
+    // No print, no afterprint: restore here (a no-op if it already ran).
     restoreAfterPrint()
     throw e
   }
 }
 
-// Run a markdown export under the selection the confirm dialog handed
-// back. `fields` is null unless the user dropped a filter there, in
-// which case it is a relaxed CLONE of the toolbar's — never the
-// toolbar's own state, which this path does not touch. Scoped to the
-// call because serializing is synchronous; print can't do the same (see
-// printFilterFields above).
+// A markdown export under the dialog's selection: `fields` is a relaxed
+// clone of the toolbar's, never its own state, scoped to the synchronous
+// serialization.
 function withExportFilters(fields, fn) {
   if (!fields) return fn()
   setFilterOverride(fields)
@@ -2557,17 +1622,10 @@ function withExportFilters(fields, fn) {
   }
 }
 
-// The export flow, from the toolbar's one button (view/download-
-// button.js). The dialog states the filtered selection — counts and
-// active filters — and its tabs are the two ways out: Download writes
-// the markdown, Print sends the page to paper. Which tab the reader
-// confirmed under comes back as `mode`, so the button opens on
-// Download and the dialog decides what actually runs.
-//
-// The markdown side is a pure data export: no view-mode swap, since we
-// serialize state.reports + per-finding triage / marker / comment
-// state directly rather than through the DOM. Print needs the DOM, and
-// `runPrint` above owns that.
+// The toolbar's export button (download-button.js). The dialog states the
+// filtered selection; its tabs are the ways out (`mode`): Download writes
+// the markdown — from state, not the DOM — and Print sends the page to
+// paper. View shows the file read-only instead, ending the flow.
 document.addEventListener('download-requested', async () => {
   if (state.reports.length === 0) return
   const { confirmed, view, fields, mode, oneSamplePerGroup } = await openExportConfirmDialog('download')
@@ -2577,11 +1635,6 @@ document.addEventListener('download-requested', async () => {
     showToast('Could not load finding details to export. Open the team again to retry.')
     return
   }
-  // View replaces the confirmation with the file itself — same
-  // selection, serialized the same way the download would, shown
-  // read-only. It ends the flow: closing the preview leaves the report
-  // unwritten, and the button is one click away for a reader who has
-  // seen what they wanted to see.
   if (view) {
     await openExportViewDialog(withExportFilters(fields, () => reportsToMarkdown({ oneSamplePerGroup, shipped: bundleDependencyRepo })))
     return
@@ -2594,59 +1647,36 @@ document.addEventListener('download-requested', async () => {
   withExportFilters(fields, () => downloadReportsAsMarkdown({ oneSamplePerGroup, shipped: bundleDependencyRepo }))
 })
 
-// `<analyzer-select>` dispatches this when a row in its analyzer /
-// model / validation model popover is picked. detail always carries
-// EVERY dimension (the clicked one updated, the others passed through
-// unchanged), so one listener writes them without knowing which column
-// was clicked. The component owns its popover, so there's no id-keyed
-// branch in a generic change listener.
+// `<analyzer-select>` hands back every dimension, the clicked one updated.
 report.addEventListener('analyzer-change', (e) => {
   state.filterAnalyzer = e.detail.analyzer
   state.filterModel = e.detail.model
   state.filterValidationModel = e.detail.validationModel
   render()
 })
-// `<repo-filter>` forwards the shared repository selector change. Mirrors
-// the analyzer-change branch above — flip state and render the
-// filtered body. Only the toolbar listens for it (the component
-// is workspace-view-only); a stray event from anywhere else is
-// harmless since the predicate gates on `state.filterRepo`.
-report.addEventListener('repo-change', (e) => {
-  state.filterRepo = e.detail.value
-  render()
-})
-// `<revalidate-filter>` — the toolbar dropdown for the revalidation
-// pass's outcome. Same shape as the repo filter above: the component
-// owns the select, the state write and re-render land here.
-report.addEventListener('revalidate-change', (e) => {
-  state.filterRevalidate = e.detail.value
-  render()
-})
-// The partial switch inside that dropdown's Confirmed row — a chip the
-// component cycles through PARTIAL_MODES; the write lands here like
-// every other filter's.
-report.addEventListener('partial-change', (e) => {
-  state.filterPartial = e.detail.value
-  render()
-})
-// `<revalidation-switch>` — the "App" toggle. Taking the layer off
-// changes which rows exist at all (group.js drops the pass's own),
-// which filters the toolbar offers, and what every card draws, so this
-// is a full render like the severity lens rather than a repaint.
-//
-// The confidence block is re-derived rather than carried over: the
-// switch changes which findings exist and what they are about, so it
-// leaves the filter where a reload of the new set would put it —
-// filters.js applyOpeningFilters, the same call a first load makes.
-// Carrying the answers over was wrong in every part: an outcome
-// nothing can reach once the layer is off, the CLEARED outcome once
-// it is back on (so a report that OPENS on Confirmed returned to
-// plain Confidence), and a floor tuned for a group count the switch
-// has just changed.
-//
-// configureRevalidation before any of it: getShownGroups and the
-// outcome question both read `revalidate` through format.js's gate,
-// and it is still set to the mode the previous render drew.
+// Toolbar controls handing back a value for their state slot: `<repo-filter>`,
+// `<revalidate-filter>`, and the partial chip in its Confirmed row.
+for (const [type, key] of [['repo-change', 'filterRepo'], ['revalidate-change', 'filterRevalidate'], ['partial-change', 'filterPartial']]) {
+  report.addEventListener(type, (e) => {
+    state[key] = e.detail.value
+    render()
+  })
+}
+// …and toggles flipping one: `<bundle-search>`'s `.*` (regular expressions)
+// and `Aa` (case-sensitive) modifiers, and the findings search's negation.
+for (const [type, key] of [['bundle-search-regex-toggle', 'bundleSearchRegex'], ['bundle-search-case-toggle', 'bundleSearchCase'], ['search-negate-toggle', 'filterIncludeNegate']]) {
+  report.addEventListener(type, () => {
+    state[key] = !state[key]
+    render()
+  })
+}
+// `<revalidation-switch>`'s App toggle changes which rows exist (group.js
+// drops the pass's own), which filters the toolbar offers, and what every
+// card draws. The confidence block is re-derived as a load of the new set
+// would put it (filters.js applyOpeningFilters): carried over it could hold
+// an outcome nothing reaches, or a floor tuned to the old group count.
+// configureRevalidation first: getShownGroups reads `revalidate` through
+// format.js's gate, still set to the previous render's mode.
 report.addEventListener('revalidation-change', (e) => {
   state.showRevalidation = e.detail.on
   const hasDependencyIssues = !e.detail.on && state.reports.some((r) =>
@@ -2661,33 +1691,20 @@ report.addEventListener('revalidation-change', (e) => {
 report.addEventListener('revalidation-conflicts-open', () => {
   void (async () => {
     const selected = await openRevalidationConflictsDialog(state.revalidateConflicts)
-    if (!selected) return
-    const result = await revealFindingInReport(selected.id, selected.reportName)
-    if (!result.ok) alert(result.reason)
+    if (selected) await revealOrAlert(selected.id, selected.reportName)
   })().catch((err) => console.warn('revalidation: open conflicting finding failed:', err))
 })
-// The detail icon in the same pill — the line INSIDE the app view:
-// whether a group the pass re-examined shows the rows it re-rated, or
-// the pass's row alone speaking for them (group.js drawnTabs), and
-// whether the `+ Partial` chip is offered with them.
-//
-// A full render for the same reason as the switch — every card's tab
-// strip is drawn from this, and the toolbar gains or loses the chip —
-// but NOT a re-derived confidence block. Detail changes what a group
-// SHOWS of itself, not which findings exist: every row still counts,
-// still filters, and still answers the outcome question it did a
-// moment ago, so a filter the reader is parked in stays where it is.
-// (The partial mode is the one exception, cleared by render.js when
-// the chip stops being offered — a control that isn't on screen must
-// not keep narrowing.)
+// The pill's detail icon: whether a group the pass re-examined shows the
+// rows it re-rated or the pass's row alone (group.js drawnTabs), and whether
+// `+ Partial` is offered. It changes what groups show, not which findings
+// exist, so the confidence block stays (render.js clears the partial mode
+// once its chip stops being offered).
 report.addEventListener('revalidation-detail-change', (e) => {
   state.revalidationDetailed = e.detail.on === true
   render()
 })
-// The upstream lens. A full render like its neighbours: it changes
-// which groups exist and which members they hold (workspace-groups.js
-// mergeReportGroups), so every count, column and filter on screen is drawn
-// from a different set afterwards.
+// The upstream lens changes which groups exist and which members they hold
+// (workspace-groups.js mergeReportGroups).
 report.addEventListener('upstream-only-change', (e) => {
   state.upstreamOnly = e.detail.on === true
   configureRevalidation(state.showRevalidation, state.upstreamOnly)
@@ -2700,12 +1717,9 @@ report.addEventListener('upstream-only-change', (e) => {
   }
   render()
 })
-// `<bundle-code-search>` dispatches this when a Files / Code /
-// Issues / Largest mode tab is clicked in the bundle code rail's search
-// row. Switching back to Files rebuilds the tree at its remembered
-// scroll-top, which may be far from the open file — reveal it. The rail
-// keeps its scroll-top across modes, so Largest starts at its top, where
-// the largest files are.
+// The Code rail's Files / Code / Issues / Largest tabs. Back on Files the
+// tree rebuilds at its remembered scroll-top, perhaps far from the open file;
+// Largest starts at its top, where the largest files are.
 report.addEventListener('bundle-search-mode-change', (e) => {
   const mode = e.detail?.mode
   if (!['files', 'code', 'issues', 'largest'].includes(mode)) return
@@ -2717,42 +1731,21 @@ report.addEventListener('bundle-search-mode-change', (e) => {
     if (body) body.scrollTop = 0
   }
 })
-// Native select changes do not cross shadow roots; graph-layout emits this
+// Native select changes don't cross shadow roots; graph-layout emits this
 // composed event so the main and lazy graph bundles share one selection.
 report.addEventListener('bundle-graph-reason-change', (e) => {
   const reason = e.detail?.reason
   if (reason !== null && typeof reason !== 'string') return
   graph2.bundleReason = reason
-  graph2.layoutCache = null
-  graph2.selected = null
-  graph2.solo = null
-  graph2.focusedPkg = null
-  cleanupGraph2()
-  render()
+  rebuildGraph('selected', 'solo', 'focusedPkg')
 })
-// `<bundle-search>` (the Search tab's github-style bar) dispatches
-// this when the trailing `.*` modifier is clicked — flip between
-// plain-substring and regular-expression matching.
-report.addEventListener('bundle-search-regex-toggle', () => {
-  state.bundleSearchRegex = !state.bundleSearchRegex
-  render()
-})
-// …and this when the `Aa` modifier is clicked — flip matching
-// between case-insensitive (default) and case-sensitive.
-report.addEventListener('bundle-search-case-toggle', () => {
-  state.bundleSearchCase = !state.bundleSearchCase
-  render()
-})
-// `<bundle-compare>` swap button, or a pick on its own side — switch the
-// active bundle to `integrity` while staying on the Compare tab, compared
-// with `target` (for a swap the old base, so A and B trade places). The
-// component has already stashed that target; this performs the same full
-// bundle switch the sidebar row click does, just landing on 'compare'
-// instead of 'overview'.
+// `<bundle-compare>`'s swap, or a pick on its own side: switch to
+// `integrity` on the Compare tab, compared with `target` (which the
+// component has stashed; for a swap the old base).
 report.addEventListener('bundle-swap', (e) => {
   const integrity = e.detail?.integrity
-  if (!integrity || !(state.bundles ?? []).some((b) => b.integrity === integrity)) return
-  const entry = state.bundles.find(b => b.integrity === integrity)
+  const entry = integrity ? (state.bundles ?? []).find(b => b.integrity === integrity) : null
+  if (!entry) return
   // Both sides arrive parsed: the navigation opens one and compares against
   // the other without reading either again, and lets go of what is left
   // once it settles (a task later, after the views it painted updated).
@@ -2767,11 +1760,7 @@ report.addEventListener('bundle-swap', (e) => {
     void managedHistory.navigate(managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, 'compare', compare, state.bundles)).finally(release)
     return
   }
-  selectBundle(integrity, 'compare')
-  persistLastBundle(integrity, 'compare')
-  render()
-  renderSidebar()
-  void openBundle(integrity).finally(release)
+  void showStoredBundle(integrity, 'compare').finally(release)
 })
 // `<bundle-compare>` picked a bundle, cleared it, or switched mode: a
 // managed bundle's URL names the bundle compared with and the mode (see
@@ -2782,29 +1771,17 @@ report.addEventListener('bundle-compare-change', (e) => {
   state.bundleCompare = target ? { bundle: base, target, mode: compareModeOf(mode) } : null
   persistLastBundle(base, 'compare')
 })
-// `<findings-sort>` (kind="findings") and `<entity-sort>` (kind=
-// "packages"|"repositories") both dispatch this on native change.
-// Routes to the matching state slot.
+// `<findings-sort>` and `<entity-sort>`.
+const SORT_KEYS = { findings: 'sortBy', packages: 'packagesSortBy', repositories: 'repositoriesSortBy' }
 report.addEventListener('sort-change', (e) => {
   const { kind, value } = e.detail
-  if (kind === 'findings') {
-    state.sortBy = value
-  } else if (kind === 'packages') {
-    state.packagesSortBy = value
-  } else if (kind === 'repositories') {
-    state.repositoriesSortBy = value
-  } else {
-    return
-  }
+  if (!Object.hasOwn(SORT_KEYS, kind)) return
+  state[SORT_KEYS[kind]] = value
   render()
 })
 
-// Confidence range slider. `range-change` fires on release and
-// triggers the full render so every chrome piece (severity-chip
-// badges, the search row's `X of Y`) catches up. The drag-time
-// label mirror is owned by the <conf-range-mirror> element — it
-// listens to `range-input` directly and updates its own text, so
-// the toolbar doesn't have to re-render per tick.
+// The confidence slider commits on release; `<conf-range-mirror>` follows
+// the drag itself, so the toolbar doesn't re-render per tick.
 report.addEventListener('range-change', (e) => {
   if (e.target.id !== 'conf-range') return
   state.filterConfMin = e.detail.low
@@ -2812,139 +1789,59 @@ report.addEventListener('range-change', (e) => {
   render()
 })
 
+// The graph's path filter, from inside `<graph-layout>`'s shadow root:
+// composedPath()[0] is the real input.
 report.addEventListener('input', (e) => {
-  // composedPath()[0] is the real input — `e.target` retargets to
-  // the shadow host (`<graph-layout>`) for events crossing the
-  // graph's shadow boundary, so reading `e.target.id` would miss
-  // the `#g2-path-filter` branch below. Light-DOM inputs still
-  // give themselves as path[0], so the other branches are
-  // unaffected.
   const src = e.composedPath()[0]
-  const id = src?.id
-  const val = src?.value
-  if (id === 'g2-path-filter') {
-    graph2.pathFilter = val
-    graph2.graphState?.requestDraw?.()
-  }
+  if (src?.id !== 'g2-path-filter') return
+  graph2.pathFilter = src.value
+  graph2.graphState?.requestDraw?.()
 })
-// `<toolbar-search>` dispatches this on native input from the findings
-// toolbar / Files tab search field. Routes to `state.filterInclude` or
-// `state.filesSearch` based on `kind`. Plain render() suffices for
-// focus / cursor preservation: Lit reuses the same `<input>` element
-// across re-renders (parent diff + component autorun both diff against
-// the same template position) and the user's caret survives the
-// no-op DOM write `live()` performs once the typed value already
-// matches state.
+
+// `<toolbar-search>`, `<entity-search>`, `<bundle-code-search>` and
+// `<bundle-search>` (whose × clear sends an empty value): kind → [state
+// slot, render per frame]. Per frame where a keystroke's render is heavy —
+// re-filtering the findings, a Files row per matching file, scanning every
+// source. Lit reuses each `<input>` and `live()` makes the matching write a
+// no-op, so focus and caret survive the render.
+const SEARCH_KEYS = {
+  'findings': ['filterInclude', true],
+  'files': ['filesSearch', true],
+  'packages': ['packagesSearchQuery', false],
+  'repositories': ['repositoriesSearchQuery', false],
+  'bundle-code': ['bundleCodeSearchQuery', true],
+  'bundle-search': ['bundleSearchQuery', true],
+}
 report.addEventListener('search-input', (e) => {
-  if (!e.detail) return
+  if (!e.detail || !Object.hasOwn(SEARCH_KEYS, e.detail.kind)) return
   const { kind, value } = e.detail
-  if (kind === 'findings') {
-    state.filterInclude = value
-    // Clearing the field ends the search; drop negation so a fresh
-    // query starts matching (the toggle is hidden while empty, so a
-    // persisted mode would resurface unseen).
-    if (!value) state.filterIncludeNegate = false
-    // Per-frame, like the bundle search below: the `<toolbar-search>`
-    // input keeps its own value through its autorun, so the field
-    // stays responsive while the list catches up.
-    renderSearchNextFrame()
-    return
-  } else if (kind === 'files') {
-    // Per-frame as well: the Files tab draws a row for every file the
-    // search leaves, which a tree of thousands takes longer than a
-    // keystroke to.
-    state.filesSearch = value
-    renderSearchNextFrame()
-    return
-  } else if (kind === 'packages') {
-    state.packagesSearchQuery = value
-  } else if (kind === 'repositories') {
-    state.repositoriesSearchQuery = value
-  } else if (kind === 'bundle-code') {
-    // The Code rail's filter, a search of every source in its Code mode:
-    // per frame, as the Search tab's below.
-    state.bundleCodeSearchQuery = value
-    renderSearchNextFrame()
-    return
-  } else if (kind === 'bundle-search') {
-    // Heaviest of the search fields (scans every source) — debounce
-    // its render to one per frame instead of the synchronous render
-    // below. The `<bundle-search>` component still updates its own
-    // input via its autorun, so the field stays responsive.
-    state.bundleSearchQuery = value
-    renderSearchNextFrame()
-    return
-  } else {
-    return
-  }
-  render()
+  const [key, perFrame] = SEARCH_KEYS[kind]
+  state[key] = value
+  // Clearing the findings search ends it: drop negation, whose toggle hides
+  // while the field is empty.
+  if (kind === 'findings' && !value) state.filterIncludeNegate = false
+  if (perFrame) renderSearchNextFrame()
+  else render()
 })
 
-// The findings search's negate toggle (`<toolbar-search kind="findings">`)
-// flips the include/exclude mode; re-filter so the list follows.
-// matchesFilters reads `state.filterIncludeNegate`.
-report.addEventListener('search-negate-toggle', () => {
-  state.filterIncludeNegate = !state.filterIncludeNegate
-  render()
-})
-
-// `<severity-chips>` / `<triage-filter>` events. Each component
-// dispatches a `*-toggle` event with the value to flip; the host
-// adds / removes it from the matching state Set and re-renders so
-// the rest of the chrome (counts on the chips, the filtered row
-// count) catches up.
-report.addEventListener('severity-toggle', (e) => {
-  const sev = e.detail.severity
-  if (e.detail.kind === 'graph') {
-    // Graph topbar usage — flip `graph2.selectedSeverities` (the
-    // canvas highlight set, separate from the findings-tab filter)
-    // and trigger a surgical canvas redraw + Top-packages refresh.
-    // A full render() would tear down the canvas's rAF loop / hover
-    // state, so we update the chip's `selected` property in place
-    // instead of re-rendering through render.js.
-    if (graph2.selectedSeverities.has(sev)) graph2.selectedSeverities.delete(sev)
-    else graph2.selectedSeverities.add(sev)
-    // composedPath()[0] is the actual `<severity-chips>` element
-    // when this fires from inside the graph's shadow DOM; `e.target`
-    // would be retargeted to `<graph-layout>` and setting
-    // `.selected` on the host would do nothing.
-    e.composedPath()[0].selected = [...graph2.selectedSeverities]
-    graph2.graphState?.requestDraw?.()
-    refreshActiveGraphTopPkgs()
+// A severity / color chip. The graph topbar's (kind "graph") highlight the
+// canvas, surgically: a full render would tear down its rAF loop and hover
+// state. Its chip element is composedPath()[0], inside the graph's shadow
+// root, where `e.target` is retargeted to `<graph-layout>`.
+function chipToggle(e, value, graphSet, filterSet) {
+  if (e.detail.kind !== 'graph') {
+    toggleIn(filterSet, value)
+    render()
     return
   }
-  // Findings-tab usage (default) — flips `state.filterSeverities`
-  // and full-renders so the toolbar count + visible row set catch up.
-  if (state.filterSeverities.has(sev)) state.filterSeverities.delete(sev)
-  else state.filterSeverities.add(sev)
-  render()
-})
-report.addEventListener('color-toggle', (e) => {
-  const col = e.detail.color
-  if (e.detail.kind === 'graph') {
-    // Graph topbar usage — flip `graph2.selectedColors` (the canvas
-    // highlight set, separate from the findings-tab filter) and
-    // trigger a surgical canvas redraw + Top-packages refresh.
-    // Mirrors the severity-toggle 'graph' branch above; a full
-    // render() would tear down the canvas's rAF loop / hover state.
-    if (graph2.selectedColors.has(col)) graph2.selectedColors.delete(col)
-    else graph2.selectedColors.add(col)
-    // composedPath()[0] is the actual `<triage-filter>` element
-    // when this fires from inside the graph's shadow DOM; see the
-    // sibling severity-toggle comment for the retargeting rationale.
-    e.composedPath()[0].selected = [...graph2.selectedColors]
-    graph2.graphState?.requestDraw?.()
-    refreshActiveGraphTopPkgs()
-    return
-  }
-  if (state.filterColors.has(col)) state.filterColors.delete(col)
-  else state.filterColors.add(col)
-  render()
-})
-// `<source-filter>` — Sources / Dependencies single-select with
-// toggle-off. Clear the Set first so picking a chip switches off
-// whatever else was active (and re-clicking the active chip leaves
-// the Set empty = no filter).
+  toggleIn(graphSet, value)
+  e.composedPath()[0].selected = [...graphSet]
+  graph2.graphState?.requestDraw?.()
+  refreshActiveGraphTopPkgs()
+}
+report.addEventListener('severity-toggle', (e) => { chipToggle(e, e.detail.severity, graph2.selectedSeverities, state.filterSeverities) })
+report.addEventListener('color-toggle', (e) => { chipToggle(e, e.detail.color, graph2.selectedColors, state.filterColors) })
+// `<source-filter>`: single-select, the active chip again clears it.
 report.addEventListener('source-toggle', (e) => {
   const v = e.detail.source
   const wasActive = state.filterSources.has(v)
@@ -2952,66 +1849,41 @@ report.addEventListener('source-toggle', (e) => {
   if (!wasActive) state.filterSources.add(v)
   render()
 })
-// Annotation filter chips (comment | issue | fix | flag | duplicates |
-// cross-context | App-stacked) — cycle the matching
-// tri-state ('' → 'with' → 'without' → '') and re-render. Each is an
-// independent AND filter (matchesFilters).
+// Annotation chips, each an independent AND filter (matchesFilters) cycling
+// '' → 'with' → 'without'. Duplicates is a single report's filter.
+const ANNOTATION_FILTERS = { 'comment': 'filterComment', 'issue': 'filterIssue', 'fix': 'filterFix', 'flag': 'filterFlagged', 'duplicates': 'filterDuplicates', 'cross-context': 'filterCrossContext', 'app-stacked': 'filterAppStacked', 'security': 'filterSecurity' }
 report.addEventListener('annotation-filter-toggle', (e) => {
   const key = e.detail?.key
-  const next = (v) => (v === '' ? 'with' : v === 'with' ? 'without' : '')
-  if (key === 'comment') state.filterComment = next(state.filterComment)
-  else if (key === 'issue') state.filterIssue = next(state.filterIssue)
-  else if (key === 'fix') state.filterFix = next(state.filterFix)
-  else if (key === 'flag') state.filterFlagged = next(state.filterFlagged)
-  else if (key === 'duplicates' && !state.currentWorkspace) state.filterDuplicates = next(state.filterDuplicates)
-  else if (key === 'cross-context') state.filterCrossContext = next(state.filterCrossContext)
-  else if (key === 'app-stacked') state.filterAppStacked = next(state.filterAppStacked)
-  else if (key === 'security') state.filterSecurity = next(state.filterSecurity)
-  else return
+  if (!Object.hasOwn(ANNOTATION_FILTERS, key) || (key === 'duplicates' && state.currentWorkspace)) return
+  const slot = ANNOTATION_FILTERS[key]
+  const v = state[slot]
+  state[slot] = v === '' ? 'with' : v === 'with' ? 'without' : ''
   render()
 })
-// Package / repository detail slide — `<slide-triage-tabs>` dispatches
-// this when an Invalid / Deleted tab is clicked. Routes the toggle
-// to the matching state slice based on `kind`; clicking the active
-// bucket clears it (back to `live`).
+// `<slide-triage-tabs>`' Invalid / Deleted tabs; the active one again clears.
 report.addEventListener('slide-triage-toggle', (e) => {
   const { kind, value } = e.detail
-  if (kind === 'package') {
-    state.packageSlideTriage = state.packageSlideTriage === value ? null : value
-  } else if (kind === 'repository') {
-    state.repositorySlideTriage = state.repositorySlideTriage === value ? null : value
-  } else {
-    return
-  }
+  if (!Object.hasOwn(ENTITY, kind)) return
+  const key = ENTITY[kind].triage
+  state[key] = state[key] === value ? null : value
   render()
 })
 report.addEventListener('view-mode-change', (e) => {
   if (e.detail.kind === 'files') {
-    // Files-tab toggle — flips state.filesViewMode (table | list).
-    // Files-tab mode is session-local too; re-render is enough for this
-    // tab because neither layout preference is persisted.
     state.filesViewMode = e.detail.mode
     render()
     return
   }
   state.viewMode = e.detail.mode
-  // Switching away from kanban drops the popover gid — the modal
-  // only renders inside the kanban template, so a stale gid here
-  // would leak across view-mode changes when the user returns.
+  // The kanban modal only renders in the kanban, and a stale focus gid would
+  // re-anchor the queue on what was read last, long after filters moved on.
   if (state.viewMode !== 'kanban') state.kanbanPopoverGid = null
-  // Same idea for focus view: a stale focusGid would re-anchor the
-  // queue on whatever the user was looking at last time, even after
-  // filters / sort / loaded report have moved on. Letting it default
-  // back to the first-filtered item is the friendlier behaviour.
   if (state.viewMode !== 'focus') state.focusGid = null
   render()
 })
 
-// `<severity-mode-switch>` — flip the global Corrected / Original severity
-// lens. Mirrors view-mode-change: set the slot, persist to localStorage
-// (state.ts reads it back on boot), full re-render. A full render is
-// needed because the mode changes badges, severity-chip counts, the
-// severity sort order, and the header status bar across the whole view.
+// `<severity-mode-switch>`: the global Corrected / Original lens, persisted
+// (state.ts reads it on boot).
 report.addEventListener('severity-mode-change', (e) => {
   const mode = e.detail?.mode
   if (mode !== 'corrected' && mode !== 'original') return
@@ -3020,64 +1892,38 @@ report.addEventListener('severity-mode-change', (e) => {
   render()
 })
 
-// `<repo-chip>` events (see view/repo-chip.js). The component owns
-// the editing UI and the focus management; we only need to mirror
-// the events to `state` and trigger the re-render that catches up
-// the rest of the chrome (`fileUrl()` / `commitUrl()` -driven row
-// links, the `prettyRepoLabel` shown on the chip face).
+// `<repo-chip>` (view/repo-chip.js) owns the editing UI. Every keystroke
+// saves the URL per report, so it survives a reload uncommitted; commit and
+// cancel (which hands back the URL the edit opened with) also end editing.
 report.addEventListener('repo-edit-start', () => {
   if (isManagedUiMode()) return
   state.repoEditing = true
   render()
 })
-report.addEventListener('repo-input', (e) => {
-  if (isManagedUiMode()) return
-  // Live-save: every keystroke updates `state.repoUrl` and persists
-  // to localStorage per-report, so the value survives a reload even
-  // if the user never explicitly commits via Enter / blur.
-  state.repoUrl = e.detail.url
-  saveRepoUrlFor(state.currentFile, state.repoUrl)
-})
-report.addEventListener('repo-commit', (e) => {
+function setRepoUrl(e, done) {
   if (isManagedUiMode()) return
   state.repoUrl = e.detail.url
   saveRepoUrlFor(state.currentFile, state.repoUrl)
+  if (!done) return
   state.repoEditing = false
   render()
-})
-report.addEventListener('repo-cancel', (e) => {
-  if (isManagedUiMode()) return
-  // The component sends back the value the input was opened with;
-  // restore it so the rolled-back URL drives the chip's display
-  // and the per-report persistence both flip back in step.
-  state.repoUrl = e.detail.url
-  saveRepoUrlFor(state.currentFile, state.repoUrl)
-  state.repoEditing = false
-  render()
-})
+}
+report.addEventListener('repo-input', (e) => { setRepoUrl(e, false) })
+report.addEventListener('repo-commit', (e) => { setRepoUrl(e, true) })
+report.addEventListener('repo-cancel', (e) => { setRepoUrl(e, true) })
 
-// Escape closes the bundle source viewer when it's open. Listen at
-// the document level so the keypress lands regardless of which
-// element holds focus (the modal isn't a focusable container, and
-// we don't want to force-focus on open just to catch keys).
+// Escape closes the bundle source viewer's side panel, then the viewer —
+// except in the Code slide, where the open file is the tree's selection (no
+// overlay, no close affordance), and deselecting it would strand the reader
+// on the "pick a file" placeholder.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return
-  // Escape closes the side panel first when one's open — pressing
-  // Escape twice fully exits the viewer. Otherwise close the modal.
   if (state.bundleSourceFindingIdx != null) {
     state.bundleSourceFindingIdx = null
     renderPreservingSourceScroll()
     return
   }
-  if (state.bundleSourceFile) {
-    // The Code slide is the one place `bundleSourceFile` is plain
-    // navigation state (the tree's selected file) rather than an
-    // overlay — the modal there is suppressed and the pane has no
-    // close affordance. Escape deselecting it dumped the user on
-    // the "pick a file" placeholder mid-read. The Search sidebar
-    // stays Esc-closable: its × button advertises the key.
-    if (state.currentView === 'bundles' && state.bundleDetailsTab === 'code') return
-    selectBundleTab(state.bundleDetailsTab)
-    render()
-  }
+  if (!state.bundleSourceFile || (state.currentView === 'bundles' && state.bundleDetailsTab === 'code')) return
+  selectBundleTab(state.bundleDetailsTab)
+  render()
 })

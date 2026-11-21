@@ -17,6 +17,14 @@ import { ADD_ROW_ICON, REMOVE_ROW_ICON, ROW_ACTION_STYLES } from './row-actions.
 import { codeScanFiles, formatBytes, sourceMetrics, sourceStats } from './metrics.js'
 import '../view/bundle-scope-selector.js'
 
+// `set` with `key` (`on`) or without it.
+const toggled = (set, key, on) => {
+  const next = new Set(set)
+  if (on) next.add(key)
+  else next.delete(key)
+  return next
+}
+
 const SCAN_MODE_ICONS = {
   code: appMarkup(CODE_ICON_SVG),
   report: appMarkup(REPORT_ICON_SVG),
@@ -34,7 +42,6 @@ export class ScanPage extends LitElement {
     _tab: { state: true },
     _mode: { state: true },
     _bundles: { state: true },
-    _repositories: { state: true },
     _reportMode: { state: true }, _reportInput: { state: true }, _reportRestore: { state: true },
     _scans: { state: true },
     _selectedRepoId: { state: true },
@@ -52,51 +59,30 @@ export class ScanPage extends LitElement {
 
   constructor() {
     super()
-    this.loadModels = fetchScanModels
-    this.canRun = true
-    this.hideHeading = false
-    this._tab = 'new'
-    this._mode = 'code'
-    this.source = null
-    this.selection = null
-    this.scopeLabel = 'Repository'
+    Object.assign(this, { loadModels: fetchScanModels, canRun: true, hideHeading: false, source: null, selection: null, scopeLabel: 'Repository',
+      sourceLoading: false, loadBundle: null, _tab: 'new', _mode: 'code', _loadingBundle: false, _bundleError: null, _bundles: [],
+      _reportMode: 'link', _reportInput: null, _reportRestore: null, _scans: [], _selectedRepoId: null,
+      _selectedBundleId: null, _reason: '', _prompts: [{ id: 1, text: '' }],
+      _options: { analyzer: 'generic', model: null, effort: null, cached: false, isolate: false },
+      _regimes: [], _appModel: null, _appModelAutomatic: true, _regimesReady: false, _notice: null })
+    this._clearExclusions()
     this._pendingSelection = null
-    this.sourceLoading = false
-    this.loadBundle = null
-    this._loadingBundle = false
-    this._bundleError = null
-    this._bundles = []
-    this._repositories = []
-    this._reportMode = 'link'
-    this._reportInput = null
-    this._reportRestore = null
-    this._scans = []
-    this._selectedRepoId = null
-    this._selectedBundleId = this._bundles[0]?.id ?? null
-    this._reason = this._bundles[0]?.reasons[0]?.id ?? ''
+    this._nextPromptId = 1
+    this._timers = new Set()
+  }
+
+  _clearExclusions() {
     this._excluded = new Set()
     this._excludedModules = new Set()
-    this._nextPromptId = 1
-    this._prompts = [{ id: 1, text: '' }]
-    this._options = { analyzer: 'generic', model: null, effort: null, cached: false, isolate: false }
-    this._regimes = []
-    this._appModel = null
-    this._appModelAutomatic = true
-    this._regimesReady = false
-    this._notice = null
-    this._timers = new Set()
   }
 
   willUpdate(changed) {
     if (changed.has('selection')) this._pendingSelection = this.selection
     if (changed.has('source')) {
       this._bundles = this.source?.bundles ?? []
-      this._repositories = this.source?.repositories ?? []
       this._scans = this.source?.scans ?? []
     }
     if (changed.has('source') || changed.has('selection')) {
-      this._excluded = new Set()
-      this._excludedModules = new Set()
       const repo = this._repositories.find(item => item.id === this._selectedRepoId)
       const requested = this._pendingSelection
       const bundle = requested
@@ -104,9 +90,7 @@ export class ScanPage extends LitElement {
         : this._bundles.find(item => item.id === this._selectedBundleId && item.repoId === this._selectedRepoId)
           ?? (this.scopeLabel === 'Workspace' ? null : this._bundles.find(item => item.id === this._selectedBundleId))
           ?? (repo ? this._bundles.find(item => item.repoId === repo.id) : this._bundles[0])
-      this._selectedRepoId = bundle?.repoId ?? requested?.repoId ?? repo?.id ?? this._repositories[0]?.id ?? 'unattached'
-      this._selectedBundleId = bundle?.id ?? null
-      this._reason = bundle?.reasons?.[0]?.id ?? ''
+      this._show(bundle?.repoId ?? requested?.repoId ?? repo?.id ?? this._repositories[0]?.id ?? 'unattached', bundle)
       if (requested) {
         this._tab = 'new'
         this._mode = ['report', 'dependencies'].includes(requested.mode) ? requested.mode : 'code'
@@ -151,6 +135,8 @@ export class ScanPage extends LitElement {
     this._timers.clear()
   }
 
+  get _repositories() { return this.source?.repositories ?? [] }
+
   get _repoBundles() { return this._bundles.filter((bundle) => bundle.repoId === this._selectedRepoId) }
 
   get _bundle() { return this._repoBundles.find((bundle) => bundle.id === this._selectedBundleId) }
@@ -167,6 +153,13 @@ export class ScanPage extends LitElement {
   }
 
   get _files() { return codeScanFiles(this._scopeFiles) }
+
+  // The mode's files (`all`): code's, a scope's, or the bundle's; and those the
+  // source filter leaves in.
+  _scanFiles() {
+    const all = this._mode === 'code' ? this._files : this._mode === 'dependencies' ? this._scopeFiles : (this._bundle?.files ?? [])
+    return { all, included: all.filter((file) => !this._excluded.has(file.path) && !this._excludedModules.has(file.module)) }
+  }
 
   render() {
     return html`<div class="wrap">
@@ -187,10 +180,9 @@ export class ScanPage extends LitElement {
   _newScan() {
     const mode = this._mode
     const bundle = this._bundle
-    const files = mode === 'code' ? this._files : mode === 'dependencies' ? this._scopeFiles : (bundle?.files ?? [])
+    const { all: files, included } = this._scanFiles()
     const excluded = this._excluded
     const excludedModules = this._excludedModules
-    const included = files.filter((file) => !excluded.has(file.path) && !excludedModules.has(file.module))
     const includedMetrics = sourceMetrics(bundle?.files ? included : null)
     const moduleStats = new Map()
     for (const file of files) {
@@ -225,13 +217,11 @@ export class ScanPage extends LitElement {
     const bundles = this._mode === 'code' ? this._repoBundles.map(item => item.files ? { ...item, files: codeScanFiles(item.files) }
       : item.summary ? { ...item, summary: { ...item.summary, files: item.summary.codeFiles } } : item) : this._repoBundles
     const stats = sourceStats(bundle, files, this._mode)
-    const counts = new Map()
-    for (const item of this._bundles) counts.set(item.repoId, (counts.get(item.repoId) ?? 0) + 1)
     const showRepositoryPicker = this._repositories.length > 1
     // Sourcemaps have no named graph scopes; Stasis may discover them after loading.
     const reserveScope = ['code', 'agentic', 'dependencies'].includes(this._mode) && bundle != null
       && (!bundle.filename.toLowerCase().endsWith('.map') || bundle.reasons?.some(reason => reason.id !== 'all'))
-    const repositories = this._repositories.map(repo => { const count = counts.get(repo.id) ?? 0; return { value: repo.id, label: repo.label, detail: `${count} ${count === 1 ? 'bundle' : 'bundles'}`, special: repo.id === 'unattached' } })
+    const repositories = this._repositories.map(repo => { const count = this._bundles.filter(item => item.repoId === repo.id).length; return { value: repo.id, label: repo.label, detail: `${count} ${count === 1 ? 'bundle' : 'bundles'}`, special: repo.id === 'unattached' } })
     return html`<section class="panel source-panel" aria-busy=${this._loadingBundle}><div class="panel-head"><h2>Source</h2></div><div class=${`source-choice ${showRepositoryPicker ? '' : 'single-repository'}`}><!-- A single repository is implicit. -->${showRepositoryPicker ? html`<div class="field"><span>${this.scopeLabel}</span>${this.scopeLabel === 'Workspace' ? html`<workspace-selector .options=${repositories} .value=${this._selectedRepoId} @workspace-change=${e => this._selectRepoById(e.detail.value)}></workspace-selector>` : html`<repository-selector .options=${repositories} .value=${this._selectedRepoId} @repository-change=${e => this._selectRepoById(e.detail.value)}></repository-selector>`}</div>` : nothing}<div class="field">${showRepositoryPicker || this.createBundleHref ? this._bundleLabel() : nothing}${bundles.length > 0 ? html`<bundle-selector .bundles=${bundles} .value=${bundle?.id ?? null} @bundle-change=${event => this._selectBundleById(event.detail.value)}></bundle-selector>` : this._emptyBundles()}</div><div class="source-footer"><div class="bundle-stats" aria-label="Bundle statistics"><div class="metric"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="4" rx="5" ry="2"/><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/></svg><strong>${bundle?.size ?? '—'}</strong><span>bundle size</span></div><div class="metric">${SCAN_MODE_ICONS.report}<strong>${stats.files ?? '—'}</strong><span>files</span></div><div class="metric">${SCAN_MODE_ICONS.code}<strong>${stats.lines == null ? '—' : stats.lines.toLocaleString()}</strong><span>LoC</span></div><div class="metric">${appMarkup(BUNDLE_ICON_SVG)}<strong>${stats.packages ?? '—'}</strong><span>packages</span></div></div>${reserveScope ? html`<div class="scope-slot">${this._scopeField(bundle)}</div>` : nothing}</div></div></section>`
   }
 
@@ -246,7 +236,6 @@ export class ScanPage extends LitElement {
   }
 
   _scopeField(bundle) {
-    if (!['code', 'agentic', 'dependencies'].includes(this._mode)) return nothing
     const reasons = (bundle?.reasons ?? []).filter(reason => reason.id !== 'all')
     if (reasons.length === 0) return nothing
     return html`<bundle-scope-selector .reasons=${reasons} .value=${this._reason} label=${this._mode === 'agentic' ? 'Choose agentic scope' : 'Choose scan scope'} @scope-change=${event => this._changeReason(event.detail.value)}></bundle-scope-selector>`
@@ -265,38 +254,36 @@ export class ScanPage extends LitElement {
 
   _scanRow(scan) {
     const reportAction = scan.status === 'completed'
-      ? (scan.reportSaved ? html`<button type="button" class="action" @click=${() => this._deleteSavedReport(scan)}>Delete saved report</button>` : html`<button type="button" class="action" @click=${() => this._saveReport(scan)}>Save report</button>`)
+      ? (scan.reportSaved ? html`<button type="button" class="action" @click=${() => this._setReportSaved(scan, false)}>Delete saved report</button>` : html`<button type="button" class="action" @click=${() => this._setReportSaved(scan, true)}>Save report</button>`)
       : nothing
     return html`<div class="scan-row"><div class="scan-main"><div class="scan-title"><strong data-tooltip-truncated data-tooltip=${scan.bundleName}>${scan.bundleName}</strong><span class=${`status ${scan.status}`}>${scan.status}</span></div><span class="scan-meta">${scan.reason} · ${scan.files} ${scan.mode === 'report' ? scan.reportMode === 'merge' ? 'results' : 'reports' : 'files'} · ${scan.createdAt}${scan.duration ? ` · ${scan.duration}` : ''}${scan.reportSaved ? ' · Report saved' : scan.status === 'completed' ? ' · Report available' : ''}</span></div><span class="scan-actions">${reportAction}${scan.status === 'running' ? html`<button type="button" class="action" @click=${() => this._stopScan(scan)}>Stop</button>` : nothing}${scan.status === 'stopped' ? html`<button type="button" class="action" @click=${() => this._restartScan(scan)}>Restart as new scan</button>` : nothing}</span><span aria-hidden="true"></span></div>`
   }
 
-  _selectBundle(bundle) {
+  // `bundle` of repository `repoId` (none for a repository without bundles),
+  // at its first scope.
+  _show(repoId, bundle) {
+    this._selectedRepoId = repoId
+    this._selectedBundleId = bundle?.id ?? null
+    this._reason = bundle?.reasons?.[0]?.id ?? ''
+    this._clearExclusions()
+  }
+
+  // Chosen: what was asked for before is forgotten.
+  _select(repoId, bundle) {
     this._pendingSelection = null
-    this._selectedRepoId = bundle.repoId
-    this._selectedBundleId = bundle.id
-    this._reason = bundle.reasons?.[0]?.id ?? ''
-    this._excluded = new Set()
-    this._excludedModules = new Set()
+    this._show(repoId, bundle)
     this._notice = null
     void this._loadSelectedBundle()
   }
 
   _selectBundleById(id) {
     const bundle = this._repoBundles.find((candidate) => candidate.id === id)
-    if (bundle != null) this._selectBundle(bundle)
+    if (bundle != null) this._select(bundle.repoId, bundle)
   }
 
   _selectRepoById(id) {
     if (id === this._selectedRepoId || !this._repositories.some(repo => repo.id === id)) return
-    this._selectedRepoId = id
-    this._pendingSelection = null
-    const bundle = this._bundles.find((candidate) => candidate.repoId === id)
-    this._selectedBundleId = bundle?.id ?? null
-    this._reason = bundle?.reasons[0]?.id ?? ''
-    this._excluded = new Set()
-    this._excludedModules = new Set()
-    this._notice = null
-    void this._loadSelectedBundle()
+    this._select(id, this._bundles.find((candidate) => candidate.repoId === id))
   }
 
   _changeMode(mode) {
@@ -304,30 +291,18 @@ export class ScanPage extends LitElement {
     this._mode = mode
     this._reportInput = null
     this._reportRestore = null
-    this._excluded = new Set()
-    this._excludedModules = new Set()
+    this._clearExclusions()
     this._notice = null
   }
 
   _changeReason(value) {
     this._reason = value
-    this._excluded = new Set()
-    this._excludedModules = new Set()
+    this._clearExclusions()
   }
 
-  _toggleFile(file, included) {
-    const next = new Set(this._excluded)
-    if (included) next.delete(file.path)
-    else next.add(file.path)
-    this._excluded = next
-  }
+  _toggleFile(file, included) { this._excluded = toggled(this._excluded, file.path, !included) }
 
-  _toggleModule(module) {
-    const next = new Set(this._excludedModules)
-    if (next.has(module)) next.delete(module)
-    else next.add(module)
-    this._excludedModules = next
-  }
+  _toggleModule(module) { this._excludedModules = toggled(this._excludedModules, module, !this._excludedModules.has(module)) }
 
   _setOption(key, value) {
     if (this._options[key] === value) return
@@ -343,9 +318,8 @@ export class ScanPage extends LitElement {
   }
 
   _promptPlaceholder(index) {
-    const ordinal = ['', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'][index]
-    if (ordinal != null) return `What should the ${ordinal ? `${ordinal} ` : ''}agent focus on?`
-    return `What should agent ${index + 1} focus on?`
+    const ordinal = ['', 'second ', 'third ', 'fourth ', 'fifth ', 'sixth ', 'seventh ', 'eighth ', 'ninth ', 'tenth '][index]
+    return ordinal == null ? `What should agent ${index + 1} focus on?` : `What should the ${ordinal}agent focus on?`
   }
 
   async _addPrompt() {
@@ -366,9 +340,7 @@ export class ScanPage extends LitElement {
     const bundle = this._bundle
     const reportInput = this._reportInput?.mode === this._reportMode ? this._reportInput : null
     const reports = reportInput?.inputs ?? []
-    const files = mode === 'code'
-      ? this._files.filter((file) => !this._excluded.has(file.path) && !this._excludedModules.has(file.module))
-      : mode === 'dependencies' ? this._scopeFiles : (bundle?.files ?? [])
+    const files = this._scanFiles().included
     if (mode === 'report' && (!reportInput?.source || reports.length === 0)) return
     if (mode !== 'report' && (!bundle || files.length === 0)) return
     const scan = { id: `scan-${Date.now()}`, mode, bundleId: mode === 'report' ? (this._reportMode === 'merge' ? reportInput.source.id : null) : bundle?.id ?? null, bundleName: mode === 'report' ? reportInput.source.label : bundle.filename, reason: mode === 'report' ? this._reportMode === 'merge' ? 'Merge scan results' : 'Link saved reports' : this._reasonData?.label ?? 'All files', status: 'running', createdAt: 'Just now', duration: '', files: mode === 'report' ? reports.length : files.length, reportSaved: false, cached: this._options.cached, isolate: mode === 'code' && this._options.isolate, model: this._options.model, effort: this._options.effort }
@@ -425,7 +397,7 @@ export class ScanPage extends LitElement {
     }
     const bundle = this._bundles.find(candidate => candidate.id === scan.bundleId && (scan.repoId == null || candidate.repoId === scan.repoId))
     if (!bundle) return
-    this._selectBundle(bundle)
+    this._select(bundle.repoId, bundle)
     this._mode = scan.mode ?? 'dependencies'
     if (scan.mode === 'agentic') this._prompts = (scan.prompts?.length > 0 ? scan.prompts : ['']).map(text => ({ id: ++this._nextPromptId, text }))
     if (scan.regimes?.length > 0) {
@@ -435,21 +407,15 @@ export class ScanPage extends LitElement {
       this._appModelAutomatic = scan.appModelAutomatic !== false
       this._regimesReady = false
     }
-    this._reason = bundle.reasons.find((reason) => reason.label === scan.reason)?.id ?? bundle.reasons[0]?.id ?? ''
-    this._reason = scan.scopeId ?? this._reason
+    this._reason = scan.scopeId ?? bundle.reasons.find((reason) => reason.label === scan.reason)?.id ?? bundle.reasons[0]?.id ?? ''
     this._tab = 'new'
     this._notice = 'New scan settings restored from the stopped run.'
   }
 
-  _saveReport(scan) {
-    scan.reportSaved = true
-    this._notice = 'Report saved. You can delete it from Reports and save this completed scan again.'
-    this.requestUpdate()
-  }
-
-  _deleteSavedReport(scan) {
-    scan.reportSaved = false
-    this._notice = 'Saved report deleted. The completed scan can be saved again.'
+  // A completed scan's report saved, or deleted again.
+  _setReportSaved(scan, saved) {
+    scan.reportSaved = saved
+    this._notice = saved ? 'Report saved. You can delete it from Reports and save this completed scan again.' : 'Saved report deleted. The completed scan can be saved again.'
     this.requestUpdate()
   }
 }

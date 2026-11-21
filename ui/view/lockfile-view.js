@@ -3,6 +3,7 @@
 // its source's place, as a pretty-printed copy is (pretty-source.js). Its
 // readers load the first time a lockfile is viewed (lockfile-read.js).
 import { state } from '#client/index.js'
+import { touch } from './server-asks.js'
 
 // The lockfiles the viewer reads, by name (lockfile-read.js): npm's; pnpm's,
 // of a git branch too; Yarn's, of which the reader tells Yarn 1's from a
@@ -42,10 +43,7 @@ export function viewedLockfile(details, path, content, sources, notify) {
   const format = lockfileFormat(path)
   if (format === null) return null
   const key = `${details.integrity}\0${path}`
-  const read = reads.get(key) ?? { status: 'loading' }
-  reads.delete(key)
-  reads.set(key, read)
-  for (const old of reads.keys()) if (reads.size > KEPT_READS) reads.delete(old)
+  const read = touch(reads, key, KEPT_READS, () => true, () => ({ status: 'loading' }))
   if (read.status === 'loading' && !read.started) {
     read.started = true
     const manifestName = lockfileManifest(format)

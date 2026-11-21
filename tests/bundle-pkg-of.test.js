@@ -1,4 +1,4 @@
-// `ui/view/bundle-pkg-of.js` — the package classifier the bundle
+// `common/bundle-pkg-of.js` — the package classifier the bundle
 // Graph / treemap / size-distribution / compare views bucket source
 // paths with. Pure string logic, no Lit / DOM / `state`, so the test
 // imports it straight.
@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-const { bundlePkgOf, ownSourceFirst, pkgLabel } = await import('../ui/view/bundle-pkg-of.js')
+const { bundlePkgOf, ownSourceFirst, pkgLabel } = await import('../common/bundle-pkg-of.js')
 
 describe('bundlePkgOf', () => {
   it('buckets node_modules files by package name', () => {

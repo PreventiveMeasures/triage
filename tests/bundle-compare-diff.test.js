@@ -1,4 +1,4 @@
-// `ui/view/bundle-compare-diff.js` — the pure diff behind the Compare
+// `common/bundle-compare-diff.js` — the pure diff behind the Compare
 // slide in the bundles view (view/bundle-compare.js). It takes two
 // `Map<path, content>` file maps plus a `pkgOf` bucketing function
 // and returns per-file (onlyBase / onlyOther / changed) + per-package
@@ -14,13 +14,13 @@ import assert from 'node:assert/strict'
 import { describe, it, test } from 'node:test'
 import { layoutDir, layoutPackageDirs, treeLayout } from '@preventive/compare'
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { bundleCompareFiles, bundleCompareScopes, bundleCompareSideScopes } from '../ui/view/bundle-compare-inputs.js'
-import { prepareComparison } from '../ui/view/bundle-comparison-local.js'
+import { bundleCompareFiles, bundleCompareScopes, bundleCompareSideScopes } from '../common/bundle-compare-inputs.js'
+import { prepareComparison } from '../common/bundle-comparison.js'
 import { scanScopeOptions } from '../ui/scan/scopes.js'
 import { DIFF_CONTEXT, diffRows, fileLineCounts, lineDiff, markHighlighted, markSegments, textLines, typeFolds, whitespaceHidden, whitespaceInsensitive } from '../ui/view/bundle-compare-code-model.js'
-import { bundlePackageVersions } from '../ui/view/bundle-sources.js'
-import { bundleFileMeta, comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, versionDirection } from '../ui/view/bundle-compare-diff.js'
-import { bundlePkgOf } from '../ui/view/bundle-pkg-of.js'
+import { bundlePackageVersions } from '../common/bundle-sources.js'
+import { bundleFileMeta, comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, versionDirection } from '../common/bundle-compare-diff.js'
+import { bundlePkgOf } from '../common/bundle-pkg-of.js'
 
 // All fixtures use ASCII content so a string's byte length equals its
 // `.length` — keeps the expected-bytes assertions readable.

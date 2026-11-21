@@ -3,32 +3,25 @@ import { setHydrationConflictResolver } from './client-sync.js'
 // Up front, not in the dialogs' bundle (lazy-dialogs.js says why).
 import { resolveTriageConflicts } from './dialogs/triage-conflict-dialog.js'
 
-// Wires the per-finding conflict dialog into both the report-attach
-// hydration path AND the chain-receive path (a peer's broadcast — or
-// our own first-sync catch-up — whose baseState triage disagrees
-// per-property with the user's unsynced local overlay for the same
-// finding-id). triage-sync fires the resolver registered here with a
-// `context` tag so the dialog strings reflect what just happened.
-// The headless lookup helper builds the per-finding metadata map
-// (severity / file:line / description) from the already-ingested
-// `state.reports`, then `resolveTriageConflicts` drives the lit dialog.
-
+// The per-finding conflict dialog for triage-sync, whenever synced triage
+// disagrees per property with the user's unsynced local overlay: on a
+// report's attach, or a received chain (a peer's broadcast, or our own
+// first-sync catch-up). Its `context` picks the strings; the lookup gives
+// each finding's severity / file:line / description from `state.reports`.
+const DIALOG_BUTTONS = { importedSideLabel: 'Apply from chain', applyButton: 'Apply' }
 const DIALOG_STRINGS = {
   attach: {
     title: 'Synced triage on report attach',
     intro: 'have triage from your workspace that disagrees with your local view on',
-    // Disclose that non-conflicting chain values were already
-    // gap-filled into state.* before this dialog opened.
+    // Discloses that non-conflicting chain values were already applied.
     trailingNote: 'Other findings in this report whose chain value didn\'t conflict were applied automatically; this list only covers disagreements. Pick which side to keep.',
-    importedSideLabel: 'Apply from chain',
-    applyButton: 'Apply',
+    ...DIALOG_BUTTONS,
   },
   chain: {
     title: 'Triage conflict from peer update',
     intro: 'were changed by a peer (or by another tab) in a way that disagrees with your local triage on',
     trailingNote: 'Other findings whose remote value didn\'t conflict were applied automatically; this list only covers disagreements. Pick which side to keep for each — a "keep current" pick re-publishes your local value to the chain on your next save.',
-    importedSideLabel: 'Apply from chain',
-    applyButton: 'Apply',
+    ...DIALOG_BUTTONS,
   },
 }
 
@@ -38,13 +31,10 @@ export function installHydrationConflictResolver() {
     try {
       return await resolveTriageConflicts(conflicts, lookup, DIALOG_STRINGS[context] ?? DIALOG_STRINGS.attach)
     } catch {
-      // Stacked-modal failure — the user can't pick. Surface that we
-      // kept local for the disagreements so a chain catch-up doesn't
-      // silently override their view, then fall through to the
-      // null-returns-keep-local path in triage-sync. The "try again"
-      // suffix from `makeStackedModalError` doesn't apply — chain
-      // catch-up is passive and the local-wins default already
-      // propagates back to the chain on next save.
+      // Another dialog is open, so the user can't pick: say local was kept
+      // (lest a chain catch-up silently override their view), then fall to
+      // triage-sync's null-keeps-local path. No "try again": the catch-up is
+      // passive, and local wins back to the chain on the next save.
       const n = conflicts.length
       const what = context === 'attach' ? 'A report attach' : 'A workspace sync'
       const recovery = context === 'attach'

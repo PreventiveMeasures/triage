@@ -1,69 +1,46 @@
-// Sidebar storage-status line — makes the origin's storage-bucket
-// state VISIBLE, because browser eviction of best-effort storage is
-// the main real-world way a user "loses" reports without ever
-// touching a delete button (see client/persistence.js for the
-// per-engine rules). Three concerns live here:
-//
-//   1. Paint: a WARNING-ONLY banner above the sidebar actions row.
-//      It renders solely when there is local data to lose (reports
-//      or bundles) AND the bucket is confirmed best-effort
-//      ("Storage at risk", explanation + usage in the tooltip) —
-//      an empty profile, a granted, or an unknowable persistence
-//      state paints NOTHING. Healthy storage is the expected steady
-//      state; a permanent "everything is fine" ornament is just
-//      visual noise, and warning about data that doesn't exist is
-//      worse.
-//   2. Auto-request policy: ask for persistent storage once per
-//      session, and only once there is local data to protect —
-//      Firefox shows a permission prompt on persist(), and popping
-//      one at a first-time visitor with an empty workspace is rude.
-//      Chromium/Safari resolve silently either way. Wired to the
-//      boot probe AND to onFileMutated saves, so the first import
-//      (the moment data starts existing) triggers the ask.
-//   3. Manual retry: clicking the line re-requests under a user
-//      gesture. Chromium's silent grant is engagement-based
-//      (bookmark, repeat use, install, notifications), so a later
-//      manual attempt can succeed where boot's failed.
-//
-// Safari can't be fixed from script at all — persist() doesn't
-// exempt a regular tab from ITP's 7-day cleanup; only home-screen /
-// Dock installs are. The not-persisted tooltip says so on WebKit
-// rather than pretending the click can help.
+// The sidebar's storage-status line: the browser evicting best-effort
+// storage is the main way a user "loses" reports without touching a delete
+// button (client/persistence.js has the per-engine rules), so it shows.
+//   1. Warning only: it paints solely with local data to lose (reports or
+//      bundles) in a bucket confirmed best-effort. An empty profile, a
+//      granted or an unknowable state paints nothing — no "all fine"
+//      ornament, no warning about data that doesn't exist.
+//   2. Persistent storage is requested once per session, and only once
+//      there is data to protect: Firefox prompts on persist(), rude to a
+//      first-time visitor with an empty workspace (Chromium and Safari
+//      answer silently). Asked at the boot probe and on saves, so the first
+//      import triggers it.
+//   3. A click asks again under a user gesture: Chromium's silent grant is
+//      engagement-based (bookmark, repeat use, install, notifications), so
+//      a later ask can succeed where boot's failed.
+// Safari can't be helped from script — persist() doesn't exempt a regular
+// tab from ITP's 7-day cleanup, only Home Screen / Dock installs — and the
+// tooltip says so there rather than pretend the click helps.
 
 import { getStorageInfo, hasAnyBundles, isManagedUiMode, listFiles, onFileMutated, requestPersistentStorage } from '#client/index.js'
 import { ensureClientMode } from './sidebar.js'
 import { openStoragePersistDialog } from './lazy-dialogs.js'
 
-// Set by `initStorageStatus(el)` once the sidebar has rendered the
-// `#storage-status` button into its shadow DOM. Before that the
-// module's functions no-op on the null button.
+// The sidebar's button, once initStorageStatus hands it over.
 let button = null
-// Last getStorageInfo snapshot driving the paint. Null until the
-// first refresh resolves (button stays hidden).
+// The getStorageInfo snapshot painted; null until the first refresh.
 let info = null
-// Whether any local reports/bundles exist — the "is there anything
-// to lose" half of the paint predicate, refreshed together with
-// `info`. Defaults to false so the banner can't flash on an empty
-// profile before the first probe lands.
+// Whether local reports / bundles exist, refreshed with `info`; false until
+// then, so the banner can't flash on an empty profile.
 let hasLocalData = false
-// One auto-request per session (manual clicks are always allowed).
-// Guards the Firefox prompt from re-firing on every import.
+// Guards the one auto-request (and Firefox's prompt) per session.
 let autoRequested = false
-// Trailing debounce for refresh — renderSidebar fires on every
-// mutation burst (drops, deletes, sync downloads), and estimate()
-// per keystroke-ish cadence is wasteful. 1s trailing keeps the
-// number honest without the spam.
+// A trailing 1s debounce: renderSidebar fires on every mutation burst.
 let refreshTimer = 0
 
-// Which grant model this browser follows. iOS/iPadOS browsers are
-// all WebKit (CriOS / FxiOS / EdgiOS included) and desktop Safari
-// carries no Blink token, so "AppleWebKit and not a Blink UA" is the
-// ITP-governed population; the Blink tokens are slash-anchored where
-// a WebKit sibling shares the prefix (EdgiOS vs Edg/, OPT vs OPR/).
-// Desktop Firefox is the only Firefox with the prompt model (FxiOS
-// is WebKit and lacks the `Firefox/` token). Everything else is
-// treated as Chromium-style silent heuristics. UA sniffing is fine
-// at instruction-copy stakes.
+// Which grant model this browser follows. Every iOS/iPadOS browser is
+// WebKit (CriOS / FxiOS / EdgiOS included) and desktop Safari carries no
+// Blink token, so "AppleWebKit and not Blink" is the ITP-governed population;
+// the Blink tokens are slash-anchored where a WebKit sibling shares the
+// prefix (EdgiOS vs Edg/, OPT vs OPR/). Desktop Firefox alone prompts (FxiOS
+// is WebKit, without `Firefox/`); the rest is Chromium's silent heuristics.
+// UA sniffing is fine at instruction-copy stakes; the instructions dialog
+// reads the same answer, so the copy can't drift apart.
 export function persistGrantFlavor() {
   const ua = navigator.userAgent
   if (/AppleWebKit/u.test(ua) && !/Chrome\/|Chromium|Edg\/|OPR\/|Android/u.test(ua)) return 'webkit'
@@ -71,16 +48,11 @@ export function persistGrantFlavor() {
   return 'chromium'
 }
 
-// The instructions dialog reads the browser's flavor here too
-// (persistGrantFlavor), so tooltip copy, console breadcrumbs, and
-// the dialog's per-engine bodies can't drift apart. 'webkit' is the
-// ITP-governed population (Safari + every iOS browser).
 function isItpGoverned() {
   return persistGrantFlavor() === 'webkit'
 }
 
-// Human-scale size for the label; navigator.storage.estimate() is
-// already fuzzed by the browser, so one decimal is plenty.
+// navigator.storage.estimate() is fuzzed already: one decimal is plenty.
 function formatStorageSize(n) {
   if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`
@@ -90,11 +62,6 @@ function formatStorageSize(n) {
 
 function paint() {
   if (!button) return
-  // Warning-only: paint solely when there is local data to lose AND
-  // the bucket is CONFIRMED best-effort. An empty profile, a
-  // granted, an unknowable, and an unsupported state all hide the
-  // banner — no "everything is fine" ornament, no warning about
-  // data that doesn't exist.
   if (isManagedUiMode() || !info || info.persisted !== false || !hasLocalData) {
     button.hidden = true
     return
@@ -111,20 +78,12 @@ function paint() {
     + usageDetail
 }
 
-// Chromium's denial is silent, so the breadcrumb explains WHY and
-// what would flip it — otherwise a user clicking the banner sees
-// "not granted" with no effect and reads it as a bug.
-//
-// The `localhost` special case is structural, not a heuristic
-// shortfall: Chromium's important-sites ranking (which gates the
-// grant) keys every signal — engagement, notifications, installed
-// app, bookmarks — by REGISTERABLE DOMAIN, with an explicit
-// fallback to the host only for IP literals
-// (ImportantSitesUtil::GetRegisterableDomainOrIPFromHost). Plain
-// `localhost` has no registerable domain and is not an IP, so its
-// signals are dropped before ranking and persist() can never be
-// granted there, no matter what the user enables. 127.0.0.1 IS an
-// IP literal (and still a secure context), so it can pass.
+// Chromium's denial is silent, so the breadcrumb says why and what would
+// flip it. Plain `localhost` is structural, not a heuristic shortfall:
+// Chromium ranks site importance by registerable domain, falling back to the
+// host only for IP literals (ImportantSitesUtil::
+// GetRegisterableDomainOrIPFromHost), so localhost's signals are all dropped
+// and persist() can never be granted there; 127.0.0.1 can pass.
 function logRequestOutcome(granted, viaGesture) {
   const suffix = viaGesture ? ' (user gesture)' : ''
   if (granted) {
@@ -146,10 +105,9 @@ function logRequestOutcome(granted, viaGesture) {
 async function refreshStorageStatus() {
   await ensureClientMode()
   if (!button || isManagedUiMode()) { paint(); return }
-  // Both halves of the paint predicate refresh together so the
-  // banner can't show a stale combination (e.g. warn after the last
-  // report was deleted). An enumeration failure reads as "no data"
-  // — for a warning-only surface, failing quiet beats failing loud.
+  // Both halves together, so the banner can't pair stale ones (a warning
+  // after the last report went). A failed enumeration reads as no data:
+  // for a warning-only surface, failing quiet beats failing loud.
   const [nextInfo, nextHasData] = await Promise.all([
     getStorageInfo(),
     (async () => {
@@ -161,7 +119,6 @@ async function refreshStorageStatus() {
   paint()
 }
 
-// Debounced refresh for high-frequency callers (renderSidebar).
 export function scheduleStorageStatusRefresh() {
   if (!button || refreshTimer) return
   refreshTimer = setTimeout(() => {
@@ -170,19 +127,16 @@ export function scheduleStorageStatusRefresh() {
   }, 1000)
 }
 
-// The once-per-session auto-request — see the policy note up top.
-// The `autoRequested` re-check after the await guards the flip
-// synchronously, so a save-burst can't fire persist() twice. An
-// enumeration failure inside refreshStorageStatus reads as "no
-// data", which also means the one auto-ask isn't burnt on it.
+// The once-per-session auto-request. Re-checked after the await, so a save
+// burst can't ask twice; a failed enumeration (no data) doesn't burn it.
 async function maybeAutoRequest() {
   if (autoRequested) return
   await refreshStorageStatus()
   if (isManagedUiMode() || info?.persisted !== false || !hasLocalData || autoRequested) return
   autoRequested = true
   const granted = await requestPersistentStorage()
-  // Breadcrumb either way — an operator debugging "reports vanished"
-  // needs to know whether this profile's bucket was ever protected.
+  // Either way: debugging "reports vanished" needs to know whether this
+  // profile's bucket was ever protected.
   logRequestOutcome(granted, false)
   await refreshStorageStatus()
 }
@@ -192,14 +146,9 @@ async function onClick() {
     autoRequested = true // a manual ask supersedes the auto one
     const granted = await requestPersistentStorage()
     logRequestOutcome(granted, true)
-    if (!granted) {
-      // The denial is silent (Chromium) or structural (WebKit) — a
-      // click that visibly does nothing reads as a bug, so open the
-      // per-engine "how to actually fix this" dialog. Its Try-again
-      // button can itself succeed (resolves 'granted'); either way
-      // the refresh below repaints from the fresh persisted() state.
-      await openStoragePersistDialog()
-    }
+    // A click that visibly does nothing reads as a bug: open the per-engine
+    // instructions (whose Try again can itself succeed).
+    if (!granted) await openStoragePersistDialog()
   }
   await refreshStorageStatus()
 }
@@ -208,9 +157,8 @@ export function initStorageStatus(el) {
   button = el
   if (!button) return
   button.addEventListener('click', () => { void onClick() })
-  // Every report save is a chance to (a) show fresher numbers and
-  // (b) fire the one auto-request now that data exists. Deletes
-  // just refresh.
+  // Each save is a chance at fresher numbers and the one auto-request now
+  // that data exists; deletes just refresh.
   onFileMutated((_name, kind) => {
     scheduleStorageStatusRefresh()
     if (kind === 'save') void maybeAutoRequest()

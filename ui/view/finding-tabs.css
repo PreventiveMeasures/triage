@@ -84,9 +84,8 @@
 
   &.tab-deleted .tab-label { text-decoration: line-through; opacity: .6; }
   &.tab-inprogress .tab-label::after { content: ' ◐'; opacity: .6; }
-  &.tab-fixed .tab-label { opacity: .65; }
+  &:is(.tab-fixed, .tab-invalid) .tab-label { opacity: .65; }
   &.tab-fixed .tab-label::after { content: ' ✓'; opacity: .6; }
-  &.tab-invalid .tab-label { opacity: .65; }
   &.tab-invalid .tab-label::after { content: ' ⊘'; opacity: .6; }
   &.tab-ignored .tab-label { opacity: .55; }
   &.tab-ignored .tab-label::after { content: ' 👁'; opacity: .6; font-size: .7em; }

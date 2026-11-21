@@ -1,127 +1,38 @@
-// `<sync-upload-dialog>` — unified upload prompt for the workspace's
-// remote inventory, so the page-header sync badge can surface a
-// single "M local" chunk covering reports + bundles. Each item
-// carries its kind so the dialog dispatches per-item to the right
-// session method
-// (`putFile` for reports, `putBundleToRemote` for bundles).
+// The sync badge's "M local" prompt: uploads reports and bundles to the
+// workspace's remote inventory, each by its own session method.
 //
-// Public API:
 //   openSyncUploadDialog({ workspaceId, items })
 //     items: Array<{ kind: 'report', identifier: filename }
 //                 | { kind: 'bundle', identifier: integrity, label?: string }>
-//   → Promise<{ uploaded, failed }> where each entry carries
-//     `{ kind, identifier }`.
-
-import { html, nothing, unsafeCSS } from 'lit'
+//   → Promise<{ uploaded, failed }>, each entry `{ kind, identifier }`
+import { html } from 'lit'
 import { readFileBytes } from '#client/index.js'
 import { putBundleToRemote, putFile } from '../client-sync.js'
-import { AppDialog, openAppDialog } from './app-dialog.js'
-import listCSS from './dialog-list.css'
-import { itemDisplayLabel, transferErrorsList, transferItemsList, transferSummary } from './shared.js'
+import { TransferDialog, openTransferDialog } from './sync-transfer.js'
 
-class SyncUploadDialog extends AppDialog {
-  static styles = [...AppDialog.styles, unsafeCSS(listCSS)]
-
-  static properties = {
-    workspaceId: { type: String },
-    items: { type: Array },
-    _uploading: { state: true },
-    _errors: { state: true },
-    _done: { state: true },
-    _settled: { state: true },
+class SyncUploadDialog extends TransferDialog {
+  static copy = {
+    verb: 'Upload',
+    heading: 'Upload to remote',
+    key: 'uploaded',
+    one: (label) => html`Upload <strong>"${label}"</strong> to the workspace's remote inventory?`,
+    many: (count, kinds) => html`Upload <strong>${count}</strong> local ${kinds} to the workspace's remote inventory?`,
+    note: html`<p class="nwd-note ui-hint">
+      End-to-end encrypted with the workspace key — only workspace
+      members can decrypt the uploaded content.
+    </p>`,
   }
 
-  constructor() {
-    super()
-    this.workspaceId = ''
-    this.items = []
-    this._uploading = false
-    this._errors = []
-    this._done = false
-    this._settled = false
-  }
-
-  // Focus the Upload action. The base `_finish` (close + resolve) is
-  // inherited unchanged; `_onClose` / `_onCancel` resolve the
-  // empty-result shape callers expect.
-  focusInitial() {
-    this.renderRoot.querySelector('button[data-role="upload"]')?.focus()
-  }
-
-  _onClose = () => this._finish({ uploaded: [], failed: [] })
-  _onCancel = () => this._finish({ uploaded: [], failed: [] })
-
-  _onUpload = async () => {
-    if (this._uploading) return
-    this._uploading = true
-    this._errors = []
-    const uploaded = []
-    const failed = []
-    for (const item of this.items) {
-      try {
-        let result
-        if (item.kind === 'bundle') {
-          result = await putBundleToRemote(this.workspaceId, item.identifier)
-        } else {
-          const bytes = await readFileBytes(item.identifier)
-          result = await putFile(this.workspaceId, item.identifier, bytes)
-        }
-        if (result.ok) uploaded.push({ kind: item.kind, identifier: item.identifier })
-        else {
-          const reason = result.reason ?? 'unknown'
-          failed.push({ kind: item.kind, identifier: item.identifier, reason })
-          this._errors = [...this._errors, { label: itemDisplayLabel(item), reason }]
-        }
-      } catch (err) {
-        const reason = err?.message ?? String(err)
-        failed.push({ kind: item.kind, identifier: item.identifier, reason })
-        this._errors = [...this._errors, { label: itemDisplayLabel(item), reason }]
-      }
-    }
-    this._uploading = false
-    this._done = true
-    if (failed.length === 0) this._finish({ uploaded, failed })
-  }
-
-  render() {
-    const { count, singular, kindLabel } = transferSummary(this.items)
-    const intro = singular
-      ? html`Upload <strong>"${itemDisplayLabel(this.items[0])}"</strong> to the workspace's remote inventory?`
-      : html`Upload <strong>${count}</strong> local ${kindLabel} to the workspace's remote inventory?`
-    const list = singular ? nothing : transferItemsList(this.items)
-    const uploadLabel = this._uploading
-      ? (singular ? 'Uploading…' : `Uploading ${count} ${kindLabel}…`)
-      : (singular ? 'Upload' : `Upload ${count}`)
-    return html`<dialog @close=${this._onClose}>
-      <header><h3>Upload to remote</h3></header>
-      <p class="lwd-body">${intro}</p>
-      ${list}
-      <p class="nwd-note ui-hint">
-        End-to-end encrypted with the workspace key — only workspace
-        members can decrypt the uploaded content.
-      </p>
-      ${transferErrorsList(this._errors)}
-      <footer class="nwd-actions">
-        <span class="nwd-spacer"></span>
-        <button type="button" data-role="cancel" @click=${this._onCancel} ?disabled=${this._uploading}>
-          ${this._done && this._errors.length > 0 ? 'Close' : 'Cancel'}
-        </button>
-        ${this._done && this._errors.length > 0 ? nothing : html`<button
-          type="button"
-          data-role="upload"
-          @click=${this._onUpload}
-          ?disabled=${this._uploading || count === 0}
-        >${uploadLabel}</button>`}
-      </footer>
-    </dialog>`
+  async transfer({ kind, identifier }) {
+    const result = kind === 'bundle'
+      ? await putBundleToRemote(this.workspaceId, identifier)
+      : await putFile(this.workspaceId, identifier, await readFileBytes(identifier))
+    return result.ok ? undefined : result.reason ?? 'unknown'
   }
 }
 
 customElements.define('sync-upload-dialog', SyncUploadDialog)
 
-export function openSyncUploadDialog({ workspaceId, items } = {}) {
-  return openAppDialog('sync-upload-dialog', {
-    workspaceId: workspaceId ?? '',
-    items: Array.isArray(items) ? [...items] : [],
-  })
+export function openSyncUploadDialog(options) {
+  return openTransferDialog('sync-upload-dialog', options)
 }

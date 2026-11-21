@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
-import '../view/scan-model-picker.js'
+import { loadLatest } from '../view/scan-model-picker.js'
 import './depth-toggle.js'
 import { effortName, modelName } from '../view/scan-models.js'
 import { REGIME_MODES, duplicateRegimes, normalizeAppModel, normalizeRegimes, sharedRegimeModel } from './regimes.js'
@@ -65,29 +65,17 @@ export class RegimeEditor extends LitElement {
     this._notify()
   }
   async _load() {
-    this._controller?.abort()
-    const controller = this._controller = new AbortController()
     this._loading = true
     this._error = null
     this._notify()
-    let received = false
-    const apply = catalogue => {
-      if (controller.signal.aborted) return
-      received = true
+    const loaded = () => { this._loading = false; this._notify() }
+    await loadLatest(this, (signal, apply) => this.loadModels(signal, apply), catalogue => {
       this._catalogue = catalogue
       // One catalogue request per editor, shared by every row's model picker.
       this._sharedModels = () => Promise.resolve(catalogue)
       this._setRows(this._rows.length > 0 ? this._rows : this.value)
-      this._loading = false
-      this._notify()
-    }
-    try {
-      apply(await this.loadModels(controller.signal, apply))
-    } catch (err) {
-      if (!controller.signal.aborted && !received) this._error = String(err?.message ?? err)
-    } finally {
-      if (!controller.signal.aborted) { this._loading = false; this._notify() }
-    }
+      loaded()
+    }, loaded)
   }
   _change(id, patch) {
     const row = this._rows.find(candidate => candidate.id === id)
@@ -155,8 +143,7 @@ export class RegimeEditor extends LitElement {
     .mode-choice:hover span { background: var(--surface-active); }
     .mode-choice input:checked + span { color: var(--accent); background: rgb(from var(--accent) r g b / .1); box-shadow: inset 2px 0 var(--accent); font-weight: 600; }
     .mode-choice input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
-    button { border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); color: var(--text); background: var(--bg); font: inherit; font-size: .74rem; cursor: default; }
-    button { padding: .4rem .55rem; user-select: none; }
+    button { padding: .4rem .55rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); color: var(--text); background: var(--bg); font: inherit; font-size: .74rem; cursor: default; user-select: none; }
     button:hover:not(:disabled) { background: var(--surface-active); }
     button:disabled { opacity: .35; }
     .row-actions { position: relative; display: flex; align-items: center; align-self: stretch; min-height: 4.65rem; padding: .8rem 0 .25rem; }

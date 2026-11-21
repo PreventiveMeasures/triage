@@ -1,19 +1,11 @@
-/* `<finding-card>` shadow-DOM styles. Host classes (`is-critical`,
-   `mark-{red|blue|green|gray}`, `has-conflict`, `deleted`,
-   `multi-case`, `finding`) are stamped by the component so external
-   selectors like `.flat-group .finding` still match the host.
+/* `<finding-card>` shadow-DOM styles. The component stamps host classes
+   (`is-critical`, `mark-*`, `has-conflict`, `multi-case`, `finding`, …)
+   so light-DOM selectors like `.flat-group .finding` still match.
 
-   Visible card chrome (padding, border, background, outline) lives
-   on a shadow-DOM `.card` wrapper, not `:host`: per CSS Scoping,
-   light-DOM rules targeting the host beat shadow `:host` declarations,
-   so theme.css's global `*, *::before, *::after { padding: 0; margin: 0 }`
-   reset would wipe the card's padding. Light DOM can't reach shadow
-   children, so styling `.card` is bulletproof against future resets too.
-
-   The host stays a plain `display: block` container; host-state
-   selectors (`:host(.is-critical)`, `:host(:last-child)`,
-   `:host([in-group])`, etc.) project onto `.card` via combinators so
-   the styled element is always the inner wrapper. */
+   Card chrome lives on the inner `.card`, not `:host`: light-DOM rules on
+   the host beat shadow `:host` declarations, so theme.css's global
+   `* { padding: 0; margin: 0 }` reset would wipe it. Host-state selectors
+   project onto `.card` via combinators. */
 
 :host { display: block; }
 :host(.hidden) { display: none; }
@@ -23,18 +15,14 @@
 
 .card {
   padding: .5rem .75rem;
-  /* Zero where the action row is pinned to the bottom of a pane: the
-     card's own bottom padding would sit UNDER that row, holding it off
-     the edge on a short finding while the sticky case sat flush on it.
-     The row carries its own bottom padding there instead. */
+  /* Zero where the action row is pinned to the bottom of a pane; the row
+     carries its own bottom padding there. */
   padding-bottom: var(--finding-card-pad-bottom, .5rem);
   border-bottom: 1px solid var(--border);
   font-size: .875rem;
-  /* A surface that wants the action row against the bottom of a fixed
-     pane — rather than wherever the prose happens to end — turns this
-     into a column that fills its host, and the row's `margin-top: auto`
-     does the rest. The kanban dialog's fullscreen mode sets it; unset,
-     this stays a block and the other two declarations are inert. */
+  /* The kanban dialog's fullscreen mode makes this a column filling its
+     host, so the row's `margin-top: auto` pins it to the pane's bottom;
+     unset, this stays a block and the other two declarations are inert. */
   display: var(--finding-card-display, block);
   flex-direction: column;
   flex: 1;
@@ -42,53 +30,27 @@
 :host(:last-child) .card { border-bottom: none; }
 /* Reserve a card's worth of height while the lazy body is pending. */
 .card.card-pending { min-height: 8rem; }
-/* Full finding cards keep a neutral reading surface in every context.
-   Severity has its badge; color labels have a swatch in the left rail.
-   Compact table rows retain their fills in finding-row.css. */
+/* Full cards keep a neutral surface in every context (severity has its
+   badge, color labels a swatch); table rows keep fills in finding-row.css. */
 :host(.has-conflict) .card { outline: 2px dashed var(--accent); outline-offset: -2px; }
-/* The regular popup's outer frame already marks conflicts. Fullscreen
-   has no frame, so it keeps the card outline above. */
+/* The regular popup's frame already marks conflicts; fullscreen has none. */
 :host(.has-conflict[popup][context='kanban-detail']) .card { outline: none; }
 
-/* Deep-link arrival ring. `link-target` is stamped on the host by
-   view/finding-link-nav.js after it scrolls a `#finding=…` target into
-   view, and cleared on a timer — the animation is the whole signal, so
-   nothing has to be dismissed. Inset box-shadow rather than an outline
-   so it composes with the `.has-conflict` outline above instead of
-   replacing it, and fades via relative-color alpha so a marker tint
-   underneath stays untouched. */
+/* Deep-link arrival ring (`link-target`, stamped and cleared on a timer by
+   finding-link-nav.js; keyframes in finding-marks.css). An inset shadow so
+   it composes with the `.has-conflict` outline. */
 :host(.link-target) .card { animation: link-target-flash 1.6s ease-out; }
-@keyframes link-target-flash {
-  0%, 30% { box-shadow: inset 0 0 0 2px var(--accent); }
-  100% { box-shadow: inset 0 0 0 2px rgb(from var(--accent) r g b / 0); }
-}
 @media (prefers-reduced-motion: reduce) {
-  /* Same ring, held flat for the same duration — the JS timer removes
-     the class either way. */
   :host(.link-target) .card { animation: none; box-shadow: inset 0 0 0 2px var(--accent); }
 }
 
-/* Suppressed in-body line row when the parent wrapper already
-   paints location info above the card (flat-group mode). */
+/* The flat-group wrapper already paints the location above the card. */
 :host([in-group]) .line-row { display: none; }
 
-/* With that row gone, whatever follows it becomes the description
-   column's first visible block — and its top margin, which exists to
-   separate it from the row above, turns into stray padding that drops
-   the opening line of prose below the severity badge it should start
-   level with. Only bites when the description has no title line
-   (`splitDescription` leaves a one-paragraph description as a plain
-   `.desc`, which carries the gap); with a `.desc-title` first there's
-   no margin to shed. The closing notes (`.conf-reason`,
-   `.revalidate-verdict`, `.severity-reason`) also shed their divider
-   chrome — a dashed rule across the top of the column is a separator
-   with nothing left above it to separate. (Each of those leads only
-   when the finding carries it and nothing above it: no description,
-   recommendation, or earlier note.)
-   Screen always hides the row; print re-shows it on `.multi-case`
-   cards (see the @media print block), where the margin is doing its
-   real job again — hence the media split instead of one blanket
-   rule. */
+/* With that row gone, the next block's top margin (or a closing note's
+   dashed divider) separates it from nothing, dropping the first line below
+   the badge. Screen only: print re-shows the row on `.multi-case` cards,
+   where the gap is real again. */
 @media not print {
   :host([in-group]) .line-row + * { margin-top: 0; }
   :host([in-group]) .line-row + :is(.conf-reason, .revalidate-verdict, .severity-reason) { padding-top: 0; border-top: 0; }
@@ -113,9 +75,8 @@
   & span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 }
 
-/* Workspace-mode lift: when the action row carries the wide report
-   chip, the "introduced in" span gets its own row here. Indent matches
-   `.marks` so it aligns with the description column under the badge. */
+/* Workspace mode: "introduced in" on its own row when the action row
+   carries the wide report chip, indented as `.marks` is. */
 .marks-commit-row {
   margin-top: .4rem;
   padding-left: 4.75rem;
@@ -127,39 +88,16 @@
   gap: .25rem .75rem;
   &.active { display: grid; }
 }
-/* The description column has to be allowed to be NARROWER than its
-   content. `1fr` is `minmax(auto, 1fr)`, and that `auto` floor is the
-   widest thing in the track — for a snippet with a long line, the
-   whole line, because a `<pre>` that scrolls still reports its
-   content's width as its minimum. So one long line grew the track
-   past the card and took the section's right edge with it, instead of
-   scrolling: `.code-block`'s `max-width` cap never bit, since it
-   resolves against a column that had already stretched to fit.
-   `min-width: 0` puts the floor back at zero. The track then takes
-   the card's width, the cap resolves against a column that fits — and
-   inside a list item against the ITEM, so the list's own indent comes
-   off it — and the overflow goes where it was meant to, into the
-   `<pre>`'s horizontal scroll. `.finding-left` keeps its own
-   `min-width`, hence the exclusion rather than a blanket rule.
-
-   `overflow-wrap` comes with it: prose is `pre-wrap`, which breaks
-   only at spaces, so with the floor gone a token too long for the
-   line — a deep `node_modules` path, a hash — would run out past the
-   card instead of stretching it. `break-word` breaks one only when it
-   wouldn't fit on a line of its own, so ordinary text is untouched;
-   the snippets are `white-space: pre`, which doesn't wrap at all, so
-   their long lines still scroll rather than folding. */
+/* `1fr` is `minmax(auto, 1fr)`, and a scrolling `<pre>` still reports its
+   longest line as its minimum, so one long snippet line widened the track
+   past the card. `min-width: 0` lets the column shrink so the overflow goes
+   into the `<pre>`'s scroll (and `.code-block`'s cap resolves against a
+   column that fits); `break-word` keeps a long token in `pre-wrap` prose
+   from running out past the card. `.finding-left` keeps its own min-width. */
 .tab-body > :not(.finding-left) { min-width: 0; overflow-wrap: break-word; }
 
-/* Description's first line becomes a bold title; the rest is a muted
-   body block. Inline `"quoted"` / `` `code` `` segments get tag-style
-   highlights via render-finding.js's renderHighlighted() — in the
-   title too, which is why `.desc-title` joins the anchor rule below.
-   The rationale
-   (`.conf-reason`) sits below a dashed divider in italic muted type so
-   it reads as an explanatory note, not body prose. Single-line
-   descriptions stay plain `.desc` so one-paragraph JSON findings aren't
-   jarringly bolded. */
+/* A multi-line description's first line is a bold title, the rest a muted
+   body; a single-line one stays plain `.desc`. */
 .desc-title {
   grid-column: 2;
   font-size: 1.08em; font-weight: 600;
@@ -172,14 +110,8 @@
   color: rgb(from var(--text) r g b / .82);
   margin-top: .4rem;
 }
-/* Labelled body sections — the report's own narrative fields. Every
-   parser emits them as `**Label:** …` paragraphs (parse-piolium's
-   `**Root Cause:**` / `**Severity note:**` / `**Note:**` and whatever
-   else the source named, parse-md's `**Impact:**` /
-   `**Reproduction:**`); format.js's descriptionSections hands each to
-   the card as a header + body pair so a long section reads as its own
-   block instead of one bold run buried in the prose. The finding's own
-   `recommendation` field and the Evidence list wear the same header. */
+/* Labelled body sections (the reports' `**Label:** …` paragraphs, via
+   format.js descriptionSections), the recommendation and the evidence. */
 .section,
 .evidence,
 .recommendation {
@@ -191,16 +123,8 @@
   color: var(--muted); font-weight: 600;
   font-size: .62rem; text-transform: uppercase; letter-spacing: .06em;
 
-  /* Small tick in the label's own colour (green under
-     `.recommendation`) — at this type size the headers need something
-     with weight to hang off, and it echoes the accent rail the comment
-     / fix blocks carry lower down. It hangs in the GUTTER: the negative
-     margin is its own width plus the gap after it, so the flex line
-     starts that far left and the label text lands back on the same
-     edge as the body under it. A tick that pushed its header out of
-     the text column would be doing the opposite of marking it.
-     `print-color-adjust` because a painted background is exactly what a
-     printer drops by default. */
+  /* A tick in the label's color, hung in the gutter (its width plus the
+     gap) so the label text stays flush with the body under it. */
   &::before {
     content: ''; flex: none;
     width: 2px; height: .58rem;
@@ -210,91 +134,31 @@
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
 }
-/* Source preview — the `</>` beside a code link, and the few lines it
-   opens (render-finding.js codePreview). The button is a MARK ON A
-   LINE OF TEXT, not a control docked beside one: no border, no fill,
-   baseline-aligned with the `file:line` it follows. The link is still
-   the link; this only says the source is here if you want it.
-
-   `--muted` at full strength — the metadata tone of the `file:line` it
-   follows, which is where it belongs, and NOT that tone faded further.
-   A 12px glyph is already quiet next to a line of type; dimming it on
-   top of that leaves something the reader has to go looking for, which
-   is the opposite of a mark.
-
-   ONE state change, not two. It used to fade up on row hover and then
-   go accent on its own — but the first of those fired from anywhere on
-   a row that runs the width of the card, so both marks lit while the
-   pointer was two hundred pixels away from either, and lit again over
-   a whole evidence note. Two highlights that mean different things and
-   answer to different boxes is a puzzle, not a hint. The mark that
-   changes is the mark you are on. */
+/* Source preview: the `</>` mark after a `file:line` (render-finding.js
+   codePreview). A mark on a line of text, not a docked control: no
+   border or fill, baseline-aligned, and only the mark under the pointer
+   changes. Shared mark styles are in finding-marks.css. */
 .code-preview-btn {
   display: inline-flex; align-items: center;
-  /* Set off from the location it follows — pushed up against the last
-     digit it read as part of the text rather than as something to
-     reach for. */
   margin-left: .35rem;
-  padding: 0 .15rem;
   border: 0; background: transparent;
-  color: var(--muted);
   vertical-align: -2px;
 
   &.open { color: var(--accent); }
 }
 
-/* GitHub mark, beside the `</>`. Same weight and same states as it —
-   these are two marks on a line of text, not a button bar — so the
-   pair reads as one affordance with two halves rather than a widget
-   parked after the location.
-
-   The reference it stands for is drawn by the shared tooltip
-   (view/tooltip.js), off `data-tooltip` — so there is no tooltip
-   element here to be positioned against anything, and no wrapper to
-   position it against. */
+/* GitHub mark beside the `</>`; its reference is the shared tooltip's
+   (view/tooltip.js, off `data-tooltip`). */
 .gh-ref-btn {
   display: inline-flex; align-items: center;
   margin-left: .25rem;
-  padding: 0 .15rem;
-  color: var(--muted);
   vertical-align: -2px;
 }
 
-/* A 12px glyph on a 19px line leaves three pixels of dead row above it
-   and four below — so the pointer is on the mark or not on it for
-   reasons the reader can't see, and the tooltip flickers as they cross
-   it. Worse, the row's hover already lights the mark up, promising a
-   target the size of the line.
-   So: the target IS the line. A pseudo-element rather than padding,
-   because padding on an atomic inline grows the line box and would
-   push the row apart; this changes hit-testing and nothing else. The
-   two marks split the gap between them exactly — 2px each — so
-   there is no seam to fall into and no overlap to make the wrong
-   tooltip appear. */
-:is(.code-preview-btn, .gh-ref-btn) {
-  position: relative;
-
-  &::before { content: ''; position: absolute; inset: -.25rem -2px; }
-  &:hover { color: var(--accent); }
-  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: var(--ui-radius, 2px); }
-}
-
-/* The hover tooltip — the same snippet the `</>` opens, shown while
-   the pointer is on it. A look that costs neither a click nor any of
-   the prose's space, so the reader can check a citation in passing and
-   click only the ones worth keeping open.
-
-   Positioned against the row rather than the button, because
-   `.line-num` is a span and a snippet is flow content. One `</>` per
-   row and per evidence item, so `:has()` needs no way to tell them
-   apart. Hidden with `visibility`, which keeps it out of the
-   accessibility tree and unhittable while still letting it be
-   measured.
-
-   `margin-top` is the pinned preview's own top margin, not a smaller
-   gap that looked right on its own: hover then click and the snippet
-   has to STAY where it was, or the two lines the reader was reading
-   jump a couple of pixels under the pointer. */
+/* The `</>`'s hover tooltip: the snippet it opens. Positioned against the
+   row (`.line-num` is a span), hidden with `visibility` so it stays out
+   of the accessibility tree yet measurable. Its `margin-top` matches the
+   pinned preview's so hover-then-click doesn't shift the snippet. */
 .code-preview-tip {
   position: absolute;
   z-index: 20;
@@ -303,10 +167,7 @@
   width: max-content; max-width: min(100%, 46rem);
   visibility: hidden;
   filter: drop-shadow(0 2px 6px rgb(0 0 0 / .35));
-  /* The pane's surface is glass, which is right on a card and wrong
-     floating over prose — so the tip lays the page under it, and the
-     preview composites onto exactly what it composites onto when
-     clicked. */
+  /* The page under it, so the preview composites as it does when pinned. */
   background: var(--bg);
   border-radius: var(--ui-radius, 4px);
 
@@ -316,57 +177,29 @@
   visibility: visible;
 }
 
-/* The snippet. Numbered gutter beside the code, both scrolling as one
-   so a long line takes its line numbers with it — the `<pre>` is the
-   scroll container and the gutter rides inside it, rather than the two
-   being separate columns that drift apart.
-
-   `--lineno-width` is set per snippet from the widest number in it
-   (codeSnippetTemplate), so the code starts at the same column on
-   every line without the gutter being sized for a file it isn't
-   showing. Same `--code-*` palette as the description's fenced blocks,
-   so a preview and a quoted snippet colour identically. */
+/* The snippet: the `<pre>` is the scroll container with the gutter inside
+   it, so long lines take their numbers along. `--lineno-width` comes from
+   the widest number in the snippet (codeSnippetTemplate). */
 .code-preview {
   margin: .3rem 0 .1rem;
   border: 1px solid var(--border);
   border-radius: var(--ui-radius, 4px);
-  /* The focus view's code pane, in miniature: its glass surface, with
-     the gutter's own faint tint over it (below). Source is a thing
-     being quoted from somewhere else, and the pane already says so
-     better than either a wash of the text colour over the card or a
-     flat well cut out of it. */
+  /* The focus view's code pane in miniature. */
   background: var(--surface);
   backdrop-filter: var(--glass-blur);
-  /* Ten lines, then scroll. A preview is a look at the code, not a
-     second copy of the file — a report citing `20-120` would otherwise
-     unroll a hundred lines into the middle of the prose and push
-     everything after it off the screen. `lh` is the element's own line
-     box, so the cap is ten LINES however the theme sizes them, plus
-     the `.35rem` the gutter and the source each pad top and bottom.
-     The container scrolls on both axes, so a long line and a tall
-     snippet are reachable without the gutter drifting out of step
-     with the code it numbers — vertically it travels with it, and
-     horizontally the gutter is pinned (below). */
+  /* Ten lines (`lh`, however the theme sizes them) plus the gutter's and
+     source's vertical padding, then scroll. */
   max-height: calc(10lh + .7rem);
   overflow: auto;
   display: flex;
-  /* Not `stretch` (the default): once the cap above made the height
-     DEFINITE, stretching sized both columns to the visible box rather
-     than to the snippet, so their content overflowed them from the
-     inside and the gutter's background painted ten lines' worth and
-     stopped — leaving the rest of the numbers sitting on bare card.
-     `flex-start` sizes each to its own content, which is the height of
-     the whole snippet, so the two fill the scrolled area together. */
+  /* Not `stretch`: with a definite height, stretching sized both columns
+     to the visible box and the gutter's background stopped after ten
+     lines. `flex-start` sizes each to the whole snippet. */
   align-items: flex-start;
   white-space: normal;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  /* `rem`, not `em`. Sized against its parent, the same snippet came
-     out at one size beside the location line and a smaller one inside
-     the evidence list — and the hover tooltip, which hangs off the
-     row, disagreed with the panel the click opens, which hangs off the
-     column. A line of source is a line of source: it reads the same
-     wherever the card shows it, and the numbers beside it line up the
-     same way. */
+  /* `rem`, so the snippet, its tooltip and its numbers are one size
+     wherever the card puts them. */
   font-size: .75rem; line-height: 1.5;
 }
 .code-preview-pending {
@@ -382,15 +215,9 @@
   color: var(--muted);
   text-align: right;
   user-select: none;
-  /* Pinned against a horizontal scroll: a long line would otherwise
-     drag the numbers off to the left, taking away the one thing that
-     tells the reader which line they are looking at — at exactly the
-     moment they are looking sideways for it.
-     Which is the one place the stack has to be spelled out rather than
-     layered: pinned means code passes UNDER it, so it has to be
-     opaque, and the pane's surface is not. The layers are the pane's
-     own — the gutter tint over the glass over the page — just painted
-     rather than composited. */
+  /* Pinned against a horizontal scroll, so code passes under it: it must
+     be opaque, so the pane's layers (tint over glass over page) are
+     painted rather than composited. */
   position: sticky;
   left: 0;
   z-index: 1;
@@ -403,7 +230,7 @@
     width: var(--lineno-width, 3ch);
     opacity: .7;
   }
-  /* The line the link named — the whole point of opening this. */
+  /* The line the link named. */
   & .cited { opacity: 1; color: var(--accent); font-weight: 600; }
 }
 .code-preview-source {
@@ -411,31 +238,17 @@
   padding: .35rem .6rem;
   white-space: pre;
   color: var(--text);
-  /* `font: inherit` and not just the family: a `<pre>` carries the UA's
-     `font-family: monospace; font-size: 1em`, and that pair trips the
-     monospace default-size adjustment — the code comes out a notch
-     smaller than the gutter beside it, its line boxes shorter, and the
-     two columns drift a row apart by the bottom of the snippet. Which
-     puts the accent on the wrong line, on the one element whose whole
-     job is to point at the right one. */
+  /* The whole `font`: the UA's `<pre>` monospace/1em pair triggers the
+     monospace size adjustment, and the code would drift off its numbers. */
   font: inherit;
 
   & code { font: inherit; }
 }
 
-/* Header of a section that COLLAPSES — Evidence, Reproduction, and
-   the two recommendations (render-finding.js evidenceTemplate /
-   sectionTemplate make those a `<details>`), so the header is a
-   `<summary>`: the native disclosure carries the keyboard and
-   screen-reader behaviour, and the open state lives on the element.
-   The UA's own marker is dropped for a chevron that matches the
-   toolbar's — two borders rotated — pointing right when closed and
-   down when open, sitting last in the label's flex line (after
-   Evidence's count). */
+/* A collapsing section's header (render-finding.js evidenceTemplate /
+   sectionTemplate make those `<details>`): the UA marker swapped for the
+   toolbar's chevron, last in the label's line. */
 summary.section-label {
-  /* No hand pointer: the chevron already says this opens, and a row of
-     section headings that turn into buttons under the cursor reads as
-     a toolbar rather than as the document it is. */
   cursor: default;
   list-style: none;
 
@@ -453,8 +266,7 @@ summary.section-label {
   }
 }
 details[open] > summary.section-label::after { transform: translateY(-2px) rotate(45deg); }
-/* How many sites are under the fold — the one thing a collapsed
-   section owes the reader. */
+/* How many sites are under the fold. */
 .evidence-count { font-weight: 500; opacity: .8; }
 
 .section-body {
@@ -463,73 +275,40 @@ details[open] > summary.section-label::after { transform: translateY(-2px) rotat
   margin-top: .1rem;
 }
 
-/* Paragraph inside a prose block (`.desc`, `.section-body`, …). These
-   boxes are `pre-wrap`, so the blank line a report writes between
-   paragraphs came through as a literal empty line — a FULL line of
-   space, which at these line-heights reads as a gap between sections
-   rather than between paragraphs. That empty line can't be styled:
-   it's a line box, not an element, and no selector reaches it. So
-   render-finding.js's proseTemplate makes paragraphs real elements and
-   the gap becomes this margin — `.5lh` being, by definition, half the
-   blank line it replaces. */
+/* Paragraphs in the `pre-wrap` prose boxes are real elements
+   (proseTemplate), so the blank line between them becomes half a line. */
 .para + .para { margin-top: .5lh; }
-/* A markdown list, drawn as one (render-finding.js listTemplate). The
-   prose boxes are `pre-wrap`, so a list used to arrive as its own
-   source text: `1.` and `-` sitting in the run, every item flat
-   against the left margin, a wrapped step reading as the next one.
-   The element brings the hanging indent that separates them.
-
-   The indent is set in `em` so it tracks the type rather than the
-   root. Items get a smaller gap than paragraphs do (`.para` above): a
-   list is one thought broken into steps, and the paragraph measure
-   between them would read as separate blocks. */
+/* Markdown lists (listTemplate), indented in `em` to track the type;
+   items closer than paragraphs, as one thought in steps. */
 .md-list {
   margin: 0;
   padding-inline-start: 1.2em;
 }
 .md-list li + li { margin-top: .25lh; }
-/* And the paragraph measure where a list meets the prose around it —
-   the lead-in line above it, the sentence that picks up after it. The
-   markdown had a blank line there; listSegments drops it with the rest
-   of the block's chrome, so the space comes back as a margin. */
 .para + .md-list,
 .md-list + .para,
 .md-list + .md-list { margin-top: .5lh; }
-/* The markers are structure, not text: muted, so the eye reads the
-   steps and not their numbering. Off `currentColor` rather than
-   `--text` so they follow whatever colour the block around them
-   carries — under `.recommendation` that is green, and a grey marker
-   beside green text would break the one thing that rule is for. */
+/* Muted markers off `currentcolor`, so they follow the block (green under
+   `.recommendation`). */
 .md-list li::marker { color: rgb(from currentcolor r g b / .45); }
-/* A task item (render-finding.js listTemplate): its box where the
-   bullet would be, out of the flow so an item going on into a nested
+/* A task item's box where the bullet would be, out of flow so a nested
    list keeps it beside its first line. */
 .md-list li.md-task { list-style: none; position: relative; }
 .md-task > input {
   position: absolute; inset-inline-start: -1.2em; top: calc((1lh - .9em) / 2);
   width: .9em; height: .9em; margin: 0; font: inherit;
 }
-/* A description's `##` heading and `---` rule (render-finding.js
-   lineBlockTemplate): the heading bold, the top two levels a step
-   larger, with more room above than below so it sits with what it
-   heads; the rule the hairline every other divider here is. */
+/* `##` headings (the top two levels a step larger) and `---` rules. */
 .md-heading { font-weight: 600; }
 .md-heading:is([aria-level='1'], [aria-level='2']) { font-size: 1.15em; }
 .md-heading:not(:first-child) { margin-top: .75lh; }
 .md-heading + * { margin-top: .25lh; }
 .md-rule { margin: .75lh 0; border: 0; border-top: 1px solid var(--border); }
-/* The fix is the one section that carries its own colour, header
-   included — a green heading over green text reads as one block rather
-   than as a muted label someone stuck on top of it. */
+/* The fix carries its own color, header included. */
 .recommendation .section-label,
 .recommendation .section-body { color: var(--green); }
-/* The two closing notes: the confidence rationale, and under it the
-   revalidation pass's verdict. One rule because they read as one kind
-   of thing — a remark ABOUT the finding rather than part of it — and
-   the stack only holds together if the second doesn't outweigh the
-   first. The verdict's one-word outcome carries in the rail's stamp;
-   down here it is prose in the same muted italic under the same dashed
-   divider. */
+/* The closing notes, remarks about the finding: the confidence rationale
+   and the revalidation verdict. */
 .conf-reason,
 .revalidate-verdict {
   grid-column: 2; white-space: pre-wrap;
@@ -539,15 +318,9 @@ details[open] > summary.section-label::after { transform: translateY(-2px) rotat
   border-top: 1px dashed var(--border);
 }
 
-/* Verdict stamp — the card's outlined-chip idiom (`.badge-orig` /
-   `.badge-varies`), coloured by which way the pass went: the finding
-   still stands (critical), it was knocked down (muted — the row is
-   dismissed and so is its chip), or the pass couldn't tell (the amber
-   every other unresolved state on this card wears). Lives in the
-   `.finding-left` rail under the confidence, so it centres with the
-   badge above it and carries no inline margins of its own. `nowrap`
-   because the rail is narrow and "CONFIRMED" would otherwise break
-   across two lines inside its own outline. */
+/* Verdict stamp in the `.finding-left` rail, the outlined-chip idiom:
+   red where the finding stands, yellow for a partial confirmation, amber
+   where the pass couldn't tell, muted otherwise. */
 .revalidate-stamp {
   display: inline-block;
   margin-top: .1rem;
@@ -558,39 +331,22 @@ details[open] > summary.section-label::after { transform: translateY(-2px) rotat
   color: var(--muted); border: 1px solid var(--border);
   white-space: nowrap;
 
-  /* Red for a finding the pass left standing — the stamp says the
-     vulnerability is real, so it wears the severity colour rather
-     than a reassuring one. Yellow for a PARTIAL confirmation, which
-     is still a yes: narrowed, not knocked down, so it sits a step
-     below the red and well above the muted default the refuted and
-     unreachable stamps keep. */
   &.confirmed { color: var(--critical); border-color: rgb(from var(--critical) r g b / .55); }
   &.partial   { color: var(--yellow); border-color: rgb(from var(--yellow) r g b / .55); }
   &.unknown   { color: var(--warning); border-color: rgb(from var(--warning) r g b / .55); }
 }
 
-/* `## Evidence` list from a claude-security import — one row per cited
-   site, rendered from the finding's structured rows (see
-   render-finding.js evidenceTemplate). A real <ol> is what earns this
-   its own block: the notes are long, and only markup keeps a wrapped
-   note indented under its reference — the body text's leading spaces
-   only ever indent the first line. Markers sit in the padding so the
-   whole row hangs off one edge. */
+/* Structured `## Evidence` rows (evidenceTemplate): a real `<ol>` keeps a
+   wrapped note indented under its reference. */
 .evidence-list {
   margin: .25rem 0 0; padding-left: 1.6rem;
   display: flex; flex-direction: column; gap: .15rem;
 
-  /* Anchor for the source-preview tooltip, as `.line-row` above. */
+  /* Anchor for the source-preview tooltip. */
   & > li { position: relative; }
 
   & li::marker { color: var(--muted); font-size: .9em; }
-  /* The row the Code panel is currently showing. A dot outside the
-     ordinal, in the list's own left padding: the numbering stays a
-     numbering (a marker that changed shape or colour would read as a
-     different KIND of row), and the mark sits where the eye scans for
-     "which one of these am I on". Only ever drawn with the panel
-     open — see render-finding.js, where nothing is "current" in a view
-     that has no panel to be current in. */
+  /* The row the open Code panel shows: a dot outside the ordinal. */
   & > li.current::before {
     content: '';
     position: absolute;
@@ -600,20 +356,11 @@ details[open] > summary.section-label::after { transform: translateY(-2px) rotat
     background: var(--accent);
   }
   & > li.current::marker { color: var(--accent); }
-  /* Rows that are just a `file:line` reference read as one list and
-     are set tight. A row carrying a NOTE needs the air back: its note
-     wraps, and at the tight gap the last wrapped line runs straight
-     into the next reference. */
+  /* A row with a wrapping note needs air before the next reference. */
   & li:has(.evidence-note):not(:last-child) { margin-bottom: .3rem; }
 }
-/* The reference line of a row. Not underlined at rest — a column of
-   these reads as locations, not as a list of links being offered —
-   but underlined under the pointer, where it IS one.
-   Two elements wear this: an `<a>` out to GitHub, and in the focus
-   view a `role="link"` span into the code panel beside the card
-   (render-finding.js evidencePanelRef). Both are plain inline text, so
-   a path too long for the line wraps and the marks after it stay on
-   its last line. */
+/* A row's reference: an `<a>` to GitHub, or in the focus view a
+   `role="link"` span into the code panel. Underlined only on hover. */
 .evidence-ref {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .92em; overflow-wrap: anywhere;
@@ -622,47 +369,31 @@ details[open] > summary.section-label::after { transform: translateY(-2px) rotat
   &:is(a, [role='link']):hover { text-decoration: underline; }
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: var(--ui-radius, 2px); }
 }
-/* The location links and the marks beside them keep the ordinary text
-   cursor: the colour change on hover already says they are live, and a
-   hand pointer over a line of `file:42` reads as if the text itself
-   were a control. */
 :is(.line-num a, .evidence-ref, .gh-ref-btn) { cursor: default; }
-/* No link to give this row — same type, muted, so the missing target
-   reads as absent rather than broken. In the focus view that is the
-   bundle saying it doesn't carry the file; everywhere else it is the
-   row citing something no repository here can resolve. `:not([role])`
-   keeps the panel reference out of it: that one is a span too, but it
-   goes somewhere. */
+/* A reference with nowhere to go, muted (the panel span has a role). */
 span.evidence-ref:not([role]) { color: var(--muted); }
-/* format.js's flowText has already rejoined the note's soft line breaks
-   (the report wrapped them at its own width, not the card's), so what
-   `pre-wrap` preserves here is only a break that carried meaning — a
-   snippet, a list. Same contract as `.desc` / `.section-body`. */
+/* flowText already rejoined soft breaks; `pre-wrap` keeps meaningful ones. */
 .evidence-note {
   white-space: pre-wrap; line-height: 1.5;
   color: rgb(from var(--text) r g b / .78);
   margin-top: .1rem;
 }
 
-/* Inline `[label](url)` links carried by the body text — the
-   claude-security `## Evidence` list cites every site that way and
-   parse-md.js keeps the section in the description (render-finding.js
-   renderHighlighted turns each ref into an anchor). Same accent +
-   hover-underline treatment as the comment / fix-link blocks below;
-   the shadow root gets no `a` styling from theme.css. */
+/* Links in the body text and the comment / fix blocks: theme.css's `a`
+   rules don't reach the shadow root. */
 .desc-title a,
 .desc a,
 .section-body a,
 .conf-reason a,
-.revalidate-verdict a {
+.revalidate-verdict a,
+.comment-block a,
+.fix-block a {
   color: var(--accent); text-decoration: none;
   &:hover { text-decoration: underline; }
 }
 
-/* Inline highlights — `"quoted"` gets a soft accent-tinted chip,
-   `` `code` `` a monospace one. A quote keeps its marks (punctuation
-   the sentence needs); a code span sheds its backticks, which are
-   markdown syntax for the chip itself — see render-finding.js. */
+/* Inline highlights: `"quoted"` keeps its marks; `` `code` `` drops its
+   backticks (render-finding.js) and the padding stands in for them. */
 .inline-quote {
   background: rgb(from var(--accent) r g b / .1);
   padding: 1px; border-radius: 3px;
@@ -672,41 +403,25 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   background: var(--surface-active);
   border-radius: 3px;
   border: 1px solid var(--border);
-  /* The padding stands in for the backticks, which render-finding.js
-     strips: without it the text sits flush against the chip's border. */
   padding: 0 .25em;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .9em;
   color: var(--text);
 }
 
-/* Fenced code blocks — the PoC / vulnerable-lines snippets the reports
-   embed, split out of the prose by format.js's codeBlockSegments and
-   drawn by render-finding.js's codeBlockTemplate. The block gets its
-   own box, and two white-space values that both matter: `normal` on
-   the wrapper, because it sits inside a `pre-wrap` `.desc` where the
-   template's own newlines would otherwise print as blank lines around
-   the chrome; and `pre` on the code itself, so a long line SCROLLS
-   under the reader rather than folding — a wrapped snippet reads as a
-   different snippet. The fence's language tag (```ts) heads the block
-   when it named one. Not Prism's Markdown token of the same name
-   (`.token.code-block`), whose lines this box would run together. */
+/* Fenced code blocks (codeBlockTemplate). `normal` on the wrapper so the
+   template's newlines don't print inside the `pre-wrap` `.desc`; `pre` on
+   the code so long lines scroll. `:not(.token)` keeps Prism's Markdown
+   `.token.code-block` out. */
 .code-block:not(.token) {
   white-space: normal;
   margin: .5rem 0;
   border: 1px solid var(--border);
   border-radius: var(--ui-radius, 4px);
-  /* A neutral tint of the text colour rather than `--surface-active`
-     (which `.inline-code` wears): that token is the theme's ACTIVE
-     fill — a saturated blue in the light themes — and a whole block
-     of it reads as a selection, not as code. */
+  /* Not `--surface-active`, the light themes' saturated active fill. */
   background: rgb(from var(--text) r g b / .05);
   overflow: hidden;
-  /* Sized to the code, not to the column: a two-word snippet in a
-     box ruled to the full width reads as an empty panel someone
-     forgot to fill. `fit-content` takes the widest line (or the
-     language header, when that is wider) and the cap hands anything
-     longer back to the `<pre>`'s own horizontal scroll. */
+  /* Sized to the widest line; longer ones scroll in the `<pre>`. */
   width: fit-content;
   max-width: 100%;
 
@@ -729,23 +444,16 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   & code { font: inherit; }
 }
 
-/* Prism token theme lives in styles/code-tokens.css now, adopted into
-   this shadow root by finding-card.js — the export preview dialog
-   adopts the same file, so the two colour a snippet identically. */
-
 .line-row {
   display: flex; justify-content: space-between;
   align-items: baseline; gap: .5rem; flex-wrap: wrap;
   padding-right: var(--finding-line-end-inset, 0);
-  /* Anchor for the source-preview tooltip (`.code-preview-tip`). */
+  /* Anchor for `.code-preview-tip`. */
   position: relative;
 }
 .run-meta { color: var(--muted); font-size: .65rem; }
 
-/* "Code →" shortcut in the `.finding-left` rail — surfaces when the
-   finding's `fileHash` matches a source in an analyzed bundle; click
-   jumps to that bundle's Code view at the file. Below the Confidence
-   stack; pill chrome sized to the 4rem column. */
+/* "Code →" in the rail, when the finding's file is in an analyzed bundle. */
 .finding-code-btn {
   display: inline-block;
   margin-top: .35rem;
@@ -761,35 +469,24 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 .marks {
   display: flex; gap: .35rem; justify-content: flex-end;
   margin-top: .4rem; align-items: center;
-  /* A surface that gives the card a fixed-height pane can pin this row
-     to the bottom of it, so the buttons that act on the finding stay
-     reachable while a long description scrolls under them. It sets both
-     properties (the kanban dialog's fullscreen mode, in
-     styles/findings.css); everywhere else they are unset, which leaves
-     the row static, `bottom` inert and the background transparent. */
+  /* Pinned to the bottom of a fixed-height pane where a surface sets these
+     (the kanban dialog's fullscreen mode, styles/findings.css). */
   position: var(--finding-marks-position, static);
   bottom: 0;
   background: var(--finding-marks-bg, transparent);
   padding-bottom: var(--finding-marks-pad-bottom, 0);
-  /* Indent by the badge column's width so .marks-left's leading items
-     (commit ref, multi-tab strip) align under the description /
-     recommendation in column 2 of the .tab-body grid.
-     4.75rem = .finding-left's 4rem min-width + the .75rem gap. */
+  /* `.finding-left`'s 4rem + the .75rem gap, so `.marks-left` aligns with
+     the description column. */
   padding-left: 4.75rem;
   user-select: none;
 }
 
 .finding-left {
   align-self: start; text-align: center; min-width: 4rem;
-  /* The WCO block in styles/findings.css adds any clearance needed for
-     OS window controls in the fullscreen popup. */
+  /* Clearance for OS window controls in the fullscreen popup (styles/findings.css). */
   padding-top: var(--finding-left-inset, 0);
-  /* And, in a surface that scrolls the card inside a fixed pane, the
-     rail holds its place while the description moves — the severity and
-     confidence are what the reader is judging the prose against, so
-     they should still be on screen at the bottom of a long one. It
-     needs no ground to cover: nothing scrolls under it, the description
-     is a column over. Unset elsewhere, so `top` is inert. */
+  /* Sticky where a surface scrolls the card in a fixed pane, so severity
+     and confidence stay beside a long description. */
   position: var(--finding-left-position, relative);
   top: var(--finding-mark-sticky-top, 0);
 
@@ -806,12 +503,9 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   & strong { color: var(--text); font-size: .85rem; }
 }
 
-/* Confidence arc — used only by the table view's side-details panel
-   (see confTemplate in render-finding.js). Arc length set inline on
-   the inner <circle> via stroke-dasharray; only the colored arc shows,
-   no track behind the unfilled portion. `--col` flips on the severity
-   class to match the badge hue. SVG rotated -90deg so 0% starts at
-   12 o'clock and grows clockwise. */
+/* Confidence arc (table side panel and focus view; confTemplate): the arc
+   length comes from stroke-dasharray, `--col` follows the severity, and
+   the SVG is turned so 0% starts at 12 o'clock. */
 .conf-ring {
   --col: var(--muted);
   position: relative;
@@ -857,20 +551,14 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: .04em;
-  margin-top: .1rem;
-  margin-bottom: .3rem;
+  margin-block: .1rem .3rem;
   font-weight: 500;
 }
 
-/* "N of M" duplicate-case subhead is print-only — on screen the tab
-   strip already conveys "this group has N tabs". */
+/* The "N of M" case subhead is print-only; on screen the tabs say it. */
 .print-case-label { display: none; }
 
-/* Row-internal building blocks duplicated into each shadow root to keep
-   cards self-contained. Source: ui/styles/findings.css. */
-
-/* Shadow DOM doesn't inherit the global theme.css chrome rule, so
-   reassert non-selectable cursor on display-only chrome here. */
+/* Display-only chrome: theme.css's chrome rule doesn't reach the shadow root. */
 .badge,
 .tabs,
 .tab,
@@ -878,8 +566,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 .run-meta,
 .conf-ring { cursor: default; user-select: none; }
 
-/* Inline explanation of a severity correction in the card body — mirrors
-   the .conf-reason note (muted italic, dashed divider above). */
+/* A severity correction's explanation, styled as `.conf-reason`. */
 .severity-reason {
   margin-top: .4rem; padding-top: .35rem; border-top: 1px dashed var(--border);
   font-size: .82em; font-style: italic; color: var(--muted);
@@ -889,32 +576,19 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   font-size: .85em; letter-spacing: .04em; margin-right: .35rem;
 }
 
-/* Group tabs share finding-tabs.css with the other finding surface. */
-
 .duplicates-block .file-icon { flex-shrink: 0; }
 
-/* Focus-view context — set via `context="focus"` on the host (see
-   findingCardPlaceholder in render.js). Two tweaks make the centered
-   card read as a workbench, not a list row:
-     1. Hide the triage chevron and inline the popover into the action
-        strip so Fixed / Invalid / Delete / Ignore become one-click
-        buttons. The popover is forced out of `display: none` via
-        `display: flex` and positioned statically so it lays out as a
-        normal sibling instead of floating in the top layer.
-     2. Larger action-button hit targets — the focus view has vertical
-        room and the bottom action row is the primary triage
-        affordance, so bigger reads as intentional, not cramped. */
+/* Focus view (`context="focus"`): the triage chevron hides and its popover
+   is inlined into the action row as one-click buttons, with larger hit
+   targets. */
 :host([context='focus']) .triage-menu-wrap > .mark-triage-menu { display: none; }
 :host([context='focus']) .triage-menu-wrap {
-  /* Flex carrier so the inlined popover (its only remaining child
-     once the chevron is hidden) stretches next to the action row. */
+  /* So the inlined popover stretches beside the action row. */
   display: inline-flex;
 }
 :host([context='focus']) .triage-menu[popover] {
-  /* UA CSS sets [popover] to position: fixed; inset: 0; and (closed)
-     display: none. Override to pull it out of the top layer into the
-     action row. !important on `display` is needed because the UA's
-     "display: none when popover not open" rule wins otherwise. */
+  /* Out of the top layer into the row; `!important` because the UA's
+     closed-popover `display: none` wins otherwise. */
   position: static; inset: auto;
   display: inline-flex !important;
   flex-flow: row wrap;
@@ -937,57 +611,30 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   letter-spacing: .04em;
 }
 :host([context='focus']) .triage-menu-item.active {
-  background: rgb(from var(--accent) r g b / .12);
-  border-color: var(--accent);
-  color: var(--accent);
+  --state: var(--accent);
+  background: rgb(from var(--state) r g b / .12);
+  border-color: var(--state);
+  color: var(--state);
 }
 :host([context='focus']) .triage-menu-item:not(:disabled):hover { background: var(--surface-active); }
-:host([context='focus']) .triage-menu-inprogress.active {
-  background: rgb(from var(--warning, #d97706) r g b / .12);
-  border-color: var(--warning, #d97706);
-  color: var(--warning, #d97706);
-}
-:host([context='focus']) .triage-menu-fixed.active {
-  background: rgb(from var(--green, #4ade80) r g b / .12);
-  border-color: var(--green, #4ade80);
-  color: var(--green, #4ade80);
-}
-:host([context='focus']) .triage-menu-deleted.active {
-  background: rgb(from var(--critical) r g b / .12);
-  border-color: var(--critical);
-  color: var(--critical);
-}
+:host([context='focus']) .triage-menu-inprogress.active { --state: var(--warning); }
+:host([context='focus']) .triage-menu-fixed.active { --state: var(--green); }
+:host([context='focus']) .triage-menu-deleted.active { --state: var(--critical); }
 :host([context='focus']) .triage-menu-item.active::before { content: ''; margin: 0; }
 
-/* Larger action chrome in focus context — more air around the buttons
-   so the centered triage UI doesn't read as a footnote. Drop the
-   list-view marks indent (`padding-left: 4.75rem`, which aligns
-   .marks-left under the description) so the action row spans the full
-   card width below the left rail. The top margin + hairline divider
-   make the widened row read as its own band, not text trailing off the
-   description. */
+/* Focus action row: full card width under the rail (no `.marks` indent),
+   set off as its own band. */
 :host([context='focus']) .marks {
   gap: .5rem;
-  /* `auto` in the fullscreen dialog, which pushes the row to the bottom
-     of a card shorter than its pane. Where the prose does fill the pane
-     that resolves to 0 and the row's own border and padding carry the
-     separation. */
+  /* `auto` in the fullscreen dialog, pushing the row to the pane's bottom. */
   margin-top: var(--finding-marks-margin-top, .65rem);
   padding-left: 0;
   padding-top: .55rem;
   border-top: 1px solid var(--border);
   flex-wrap: wrap;
 }
-/* Same un-indent for the lifted commit row so it spans the full card
-   width too. */
 :host([context='focus']) .marks-commit-row { padding-left: 0; }
-:host([context='focus']) .mark-comment,
-:host([context='focus']) .mark-fix,
-:host([context='focus']) .mark-flag,
-:host([context='focus']) .mark-copy,
-:host([context='focus']) .mark-link,
-:host([context='focus']) .mark-issue,
-:host([context='focus']) .mark-claude {
+:host([context='focus']) :is(.mark-comment, .mark-fix, .mark-flag, .mark-copy, .mark-link, .mark-issue, .mark-claude) {
   height: 1.75rem;
   padding: 0 .55rem;
   gap: .35rem;
@@ -995,17 +642,14 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   font-size: .72rem;
 }
 :host([context='focus']) .mark-btn-label {
-  /* Label text after the icon — muted so the icon stays the primary
-     cue and the label reads as supporting context, not competing. */
   color: inherit;
   font-weight: 500;
   letter-spacing: .02em;
 }
 
-/* Top-edge indicators are outside the content flow: toggling a label or
-   bookmark never moves the severity, confidence, or description. Fixed
-   slots keep the bookmark in place when its color label changes.
-   Dialogs include their pane padding in --finding-mark-inset. */
+/* Top-edge color label and bookmark, outside the flow so toggling them
+   moves nothing; fixed slots keep the bookmark in place. Dialogs include
+   their pane padding in --finding-mark-inset. */
 .finding-top-marks {
   position: absolute;
   top: calc(var(--finding-left-inset, 0px) - var(--finding-mark-inset, .5rem));
@@ -1036,9 +680,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 }
 :host(:not([popup])) :is(.finding-color-mark, .finding-bookmark-mark) { height: 10px; }
 
-/* Comment + fix-link blocks in the tab body — quote-style notes below
-   the description / recommendation / confidence reason, shown when the
-   active tab carries a free-text annotation or a fix URL. */
+/* The active tab's comment and fix link, as quote-style notes. */
 .comment-block,
 .fix-block {
   margin-top: .5rem;
@@ -1050,24 +692,13 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 }
 .comment-block {
   white-space: pre-wrap;
-  /* Linkified GitHub issue / PR / commit / advisory refs
-     (parseCommentRefs) — same accent-underline treatment as the fix-link
-     anchor below. */
-  & a { color: var(--accent); text-decoration: none; }
-  & a:hover { text-decoration: underline; }
-  /* A self-ref (`#finding=…`) navigates in place instead of opening a
-     tab, so it carries a standing dotted underline rather than the
-     hover-only one its outbound siblings use: the reader can tell which
-     links leave the page before clicking one. */
+  /* A self-ref (`#finding=…`) navigates in place, so its underline stands
+     dotted: the reader can tell which links leave the page. */
   & a.comment-self-ref { text-decoration: underline dotted; text-underline-offset: 2px; }
   & a.comment-self-ref:hover { text-decoration: underline solid; }
 }
 .comment-block:has(.managed-comment) { white-space: normal; }
-.fix-block {
-  word-break: break-all;
-  & a { color: var(--accent); text-decoration: none; }
-  & a:hover { text-decoration: underline; }
-}
+.fix-block { word-break: break-all; }
 .fix-block:has(managed-fix-link) {
   display: flex;
   align-items: center;
@@ -1080,22 +711,9 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   & .fix-label { flex: none; font-size: .75rem; font-weight: 500; }
   & managed-fix-link { flex: 1; min-width: 0; }
 }
-/* "Duplicates:" — the findings a links file says are this one reported
-   again (render-finding.js), sitting under everything the report said
-   and above the reader's own comment and fix.
-   It used to carry the rule alone, on no ground — which read as a
-   stray line beside the two tinted slabs under it rather than as one
-   of the card's blocks. It has a ground now, and stays quieter than
-   those two by HUE rather than by going without: theirs is keyed to
-   `--accent`, this one to `--muted`, because it isn't the reader's
-   note or an action to take, it's a cross-reference. Derived from the
-   token rather than written literally so it follows every theme (the
-   light / green / pink palettes each redefine `--muted`); .1 alpha is
-   a lift you can see the edges of without competing with the accent
-   blocks. The rule moves to `--muted` with it — a `--border` rule on
-   a tint that light is the one thing on the block you can't see.
-   `flex-wrap` so a finding linked to a dozen others wraps instead of
-   stretching the card. */
+/* "Duplicates:" (the findings a links file says report this one again):
+   a cross-reference, so keyed to `--muted` where the comment and fix
+   blocks are keyed to `--accent`. Wraps rather than stretching the card. */
 .duplicates-block {
   display: flex; align-items: baseline; flex-wrap: wrap;
   gap: .1rem .4rem;
@@ -1105,23 +723,15 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   background: rgb(from var(--muted) r g b / .1);
   border-radius: var(--ui-radius, 0 4px 4px 0);
   font-size: .82rem; color: var(--text);
-  /* No `margin-right` on this label, unlike its comment / fix
-     siblings: the flex `gap` above already spaces it off the first
-     ref, and the two together read as a stutter. */
+  /* The flex gap spaces the label; no margin as its siblings have. */
   & .duplicates-label { color: var(--muted); font-weight: 600; }
-  /* Producer sticker + id, as one link. Inline-flex so the two sit on
-     a shared baseline-ish centre line and travel together when the row
-     wraps. */
+  /* Producer sticker + id, one link travelling together when it wraps. */
   & a.duplicate-ref {
     display: inline-flex; align-items: center; gap: .25rem;
     color: var(--accent);
     text-decoration: none;
   }
-  /* Same standing dotted underline as `a.comment-self-ref` above, for
-     the same reason: these navigate in place rather than opening a
-     tab, and the difference should be visible before the click. It
-     sits on the id alone — an underline running under a sticker reads
-     as a drawing mistake, not as a link. */
+  /* In-place navigation, dotted as `a.comment-self-ref`; on the id alone. */
   & a.duplicate-ref .duplicate-ref-id {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: .78rem;
@@ -1137,16 +747,10 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 }
 
 .line-num { color: var(--muted); font-size: .8rem; }
-/* No underline, including the UA's own — theme.css's `a` rules stop at
-   the shadow boundary, so this link was the one on the card that came
-   out underlined. It reads as a location, which is what it is, and the
-   GitHub mark that now follows it says it goes somewhere. Colour on
-   hover carries the rest. */
+/* A location, not underlined (the UA's included); hover color says it's live. */
 .line-num a { color: inherit; text-decoration: none; }
 
-/* npm chip in the focus view's line-row — small accent-tinted pill
-   so the upstream link reads as supplementary metadata next to the
-   file:line github link rather than competing with it. */
+/* npm chip in the focus view's line row, quieter than the file:line link. */
 .npm-link {
   display: inline-block;
   padding: 0 .4rem;
@@ -1156,46 +760,25 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 }
 .npm-link:hover { border-color: var(--accent); color: var(--accent); }
 
-/* Print rules live here, not in styles/print.css's `.finding {…}`
-   block, because a light-DOM selector can't reach across the shadow
-   boundary. `:host` rules carry the per-card print behaviours
-   (break-inside, multi-case banner); the in-body rules
-   (`.tab-body`, `.tabs`, etc.) only apply inside the shadow root. */
+/* Print rules live here because styles/print.css can't reach the shadow
+   root (shared badge rules are in finding-marks.css). */
 @media print {
   .card {
-    /* Kept whole on one page by default — a finding split down the
-       middle is harder to read than a page that ends early. The
-       light-DOM print sheet lifts this for the card that opens the
-       report (`--finding-print-break: auto` in styles/print.css),
-       where holding a tall finding together is what stranded the
-       report header alone on page one. */
+    /* Kept whole by default; styles/print.css lifts it for the card that
+       opens the report, which would otherwise strand the header. */
     break-inside: var(--finding-print-break, avoid);
-    /* A card that runs onto the next page takes its frame with it:
-       without this the padding and the border belong to the first
-       fragment alone, and the continuation starts hard against the
-       top of the sheet with an open-ended box around it. */
+    /* A card running onto the next page takes its frame with it. */
     box-decoration-break: clone;
     padding: .45rem .25rem;
   }
-  /* Pure on-screen affordance — the bundle source viewer is an
-     interactive surface that doesn't have a paper analogue. */
-  .finding-code-btn { display: none !important; }
-  /* Same — clipboard copy, deep link, GitHub-issue, and claude
-     handoff buttons have no paper meaning. */
+  /* On-screen affordances with no paper meaning. */
+  .finding-code-btn,
   .mark-copy,
   .mark-link,
   .mark-issue,
-  .mark-claude { display: none !important; }
-  /* Drop the on-screen pill chrome from the npm chip — on paper
-     the boxed outline next to the file:line reads inconsistently
-     with the surrounding flat text. */
+  .mark-claude,
+  .tabs { display: none !important; }
   .npm-link { border: 0; padding: 0; }
-  :host(.triage-fixed),
-  :host(.triage-invalid),
-  :host(.triage-deleted),
-  :host(.triage-ignored) { opacity: 1; }
-  /* A deep-link ring is a transient on-screen cue; on paper it would
-     read as a permanent mark on one arbitrary card. */
   :host(.link-target) .card { animation: none; box-shadow: none !important; }
   :host(.multi-case) .card::before {
     content: 'Multiple reports of one finding';
@@ -1207,28 +790,11 @@ span.evidence-ref:not([role]) { color: var(--muted); }
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
-  .marks { display: none !important; }
-  .tabs { display: none !important; }
-  /* Each report of the finding is one block, and the seam between two
-     of them is where a page should break when a card of several has
-     to. `break-inside: avoid` is what makes that seam worth more to
-     the fragmenter than any line inside the report below it: a block
-     told to keep whole is moved to a fresh page rather than split, and
-     moving it IS the break before it.
-
-     Everything but the FIRST report, which keeps flowing. A block the
-     fragmenter is told to keep whole is one it moves before it splits,
-     so an unbreakable first report leaves the card's opening — the
-     banner, the "1 of 2" label — stranded at the foot of the page
-     while the report itself starts overleaf. Breaking before the first
-     report is never the answer: there is nothing above it to keep it
-     company. It flows instead, and the seams that follow are the ones
-     the fragmenter prefers.
-
-     For a single-report card the block IS the card, so it answers to
-     the same property the card does — the escape hatch that lets the
-     card opening the report start under the header rather than move
-     past it (styles/print.css). */
+  /* Each report is a block kept whole, so the seams between reports are
+     where a multi-report card breaks. Not the first one: a block kept
+     whole is moved before it is split, which would strand the banner and
+     "1 of 2" label at the foot of the page. A single report is the card,
+     so it follows the card's escape hatch (styles/print.css). */
   .tab-body { display: grid !important; break-inside: var(--finding-print-break, avoid); }
   :host(.multi-case) .tab-body { break-inside: auto; }
   :host(.multi-case) .tab-body + .tab-body { break-inside: avoid; }
@@ -1249,80 +815,41 @@ span.evidence-ref:not([role]) { color: var(--muted); }
     break-inside: var(--finding-print-break, avoid);
   }
 
-  /* Evidence prints LAST, whatever order the report wrote it in. On
-     screen it sits where the narrative cites it, folded shut behind
-     its summary; paper has no fold (see the `details` rule below), so
-     printed in place a list of thirty citations pushes the finding's
-     impact and recommendation pages away from the finding. Ordering
-     needs a flex line to act on, hence the column: `order` on the
-     evidence alone would do nothing to a block container.
-     `flex-shrink: 0` keeps the blocks at their content height —
-     a flex item's default shrink would squeeze them. */
+  /* Evidence prints last: paper has no fold, and thirty citations in place
+     would push impact and recommendation pages away. `order` needs a flex
+     column; `flex-shrink: 0` keeps blocks at their content height. */
   .finding-body {
     display: flex; flex-direction: column;
     & > * { flex-shrink: 0; }
   }
 
-  /* What a page break may and may not land in. The rule of thumb is
-     the size of the block: prose is long and breaks like prose, in
-     paragraphs, with two lines of it kept together on each side of a
-     seam; the short blocks that would read as debris on their own —
-     the location row, the title, the notes under the finding — go
-     whole or not at all.
-
-     Making the long blocks unbreakable too was worse than the problem
-     it solved: a description of two pages cannot be kept whole, and a
-     fragmenter that is told to try moves it to a page of its own
-     first, leaving most of a sheet blank behind it. */
+  /* Prose breaks like prose (two lines each side of a seam); short blocks
+     go whole. A long block kept whole would be moved to its own page,
+     leaving most of a sheet blank. */
   .line-row, .desc-title, .conf-reason, .severity-reason { break-inside: avoid; }
   .section-label { break-after: avoid; }
   .desc, .section-body { orphans: 2; widows: 2; }
 
-  /* A labelled section is a block: the citations, and equally the
-     impact, the reproduction and the recommendation. A break before
-     one is what the reader wants — the finding ends, and the steps to
-     reproduce it or the fix for it start together on the next page —
-     and `break-inside: avoid` buys exactly that, since a block told to
-     keep whole is moved rather than split. A section too long for any
-     page still splits (the citations between rows, never inside one)
-     and pays for the attempt with the tail of the page it left.
-
-     The lead narrative is not in here: it is the prose the section
-     labels interrupt, and it breaks like prose (above). */
+  /* A labelled section starts whole on the next page rather than split;
+     one too long for any page still splits, the citations between rows. */
   .section, .recommendation, .evidence { break-inside: avoid; }
   .evidence { order: 99; }
   .evidence > summary { break-after: avoid; }
   .evidence-list > li { break-inside: avoid; }
-  /* On screen the .flat-group-loc header stands in for the in-body
-     .line-row (file/line/meta), so :host([in-group]) suppresses the
-     duplicate. In print with duplicates (.multi-case) every tab body
-     stacks visibly and the header's run-meta is hidden by print.css,
-     so each tab body needs its own per-run metadata — re-show every
-     in-body row (active included). Single-tab and sampled in-group
-     findings keep the screen rule and stay hidden so file:line isn't
-     doubled; their metadata stays in the header. */
+  /* Multi-case cards print every tab body, and print.css hides the group
+     header's run-meta, so each body gets its line row back. Others keep
+     the screen rule so file:line isn't doubled. */
   :host([in-group].multi-case:not([print-one-sample])) .tab-body .line-row { display: flex; }
-  /* Same first-visible-block reset as the screen rule up top, minus
-     the `.multi-case` cards the rule above just gave their line row
-     back — there the following block's top margin is a real gap
-     again. */
+  /* The screen's first-visible-block reset, minus those cards. */
   :host([in-group]:is(:not(.multi-case), [print-one-sample])) .line-row + * { margin-top: 0; }
   :host([in-group]:is(:not(.multi-case), [print-one-sample])) .line-row + .conf-reason { padding-top: 0; border-top: 0; }
-  /* In print at 9pt the line-row crowds: `(found analyzing X)` between
-     file:line and run-meta forces meta onto a wrapped second line.
-     Push the discovered-in span onto its own row so meta stays on the
-     top line next to file:line; `order: 99` keeps it from rearranging
-     ahead of meta. */
+  /* At 9pt the discovered-in span would push run-meta onto a second line. */
   .line-row .discovered-in { flex-basis: 100%; order: 99; }
   .print-case-label {
     display: block;
     grid-column: 1 / -1;
-    /* Which report this is, so it belongs to the report below it —
-       said here for the engines that read it on a grid item. Chrome
-       is not one of them (it honours `break-inside` on the tracks and
-       drops this), so what actually keeps the label with its case
-       there is the `break-inside: avoid` the tab body above keeps for
-       a multi-report card. */
+    /* For engines that honor it on a grid item; Chrome keeps the label
+       with its case through the tab body's `break-inside: avoid`. */
     break-after: avoid;
     font-size: .65rem; font-weight: 600; color: #555;
     background: #eee;
@@ -1334,80 +861,36 @@ span.evidence-ref:not([role]) { color: var(--muted); }
     print-color-adjust: exact;
   }
   .value-label { color: #777; }
-  .badge {
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-    &.critical      { background: #a30b0f !important; color: #fff !important; }
-    &.high          { background: #b8400a !important; color: #fff !important; }
-    &.medium        { background: #855107 !important; color: #fff !important; }
-    &.low           { background: #374151 !important; color: #fff !important; }
-    &.high_bug      { background: #7a3e0c !important; color: #fff !important; }
-    &.bug           { background: #4d4538 !important; color: #fff !important; }
-    &.informational { background: #0550ae !important; color: #fff !important; }
-  }
-  /* Dual-badge companion + correction note print as plain dark-gray text
-     (no fill) so paper reads `HIGH  ▼ was C̶R̶I̶T̶`. */
-  .badge-orig {
-    background: transparent !important; color: #555 !important; border-color: #999 !important;
-  }
-  .badge-varies { color: #555 !important; border-color: #999 !important; }
-  /* The verdict stamp keeps its outline on paper — the shape is what
-     carries it there — but drops the screen colour with everything
-     else in this block. */
   .revalidate-stamp { color: #555 !important; border-color: #999 !important; }
-  .badge-arrow, .badge-corr-mark, .badge-pre { color: #555 !important; }
   .severity-reason { color: #555 !important; }
-  /* Strip on-screen link colors so a linked filename — or an inline
-     `[label](url)` ref in the body — reads identically to the
-     bare-text fallback. The body selectors repeat the on-screen rule's
-     specificity so they lose to nothing here. */
+  /* Linked filenames and body links read as plain text; the body selectors
+     repeat the screen rule's specificity. */
   a, .line-num, .line-num a { color: inherit; }
   .desc-title a, .desc a, .section-body a, .conf-reason a, .revalidate-verdict a, .evidence-ref { color: inherit; }
 
-  /* Sections collapse on screen, but paper has no disclosure to
-     click: what is under the fold prints or it is lost. Every
-     `<details>` in this root is one of them, so the rule needs no
-     list. Both halves of it are needed because engines hide a closed
-     `<details>` two different ways — the older one puts `display:
-     none` on the non-summary children, the current one hides the
-     `::details-content` box — and neither override touches the other.
-     The chevron goes with the interaction it stood for. */
+  /* Every `<details>` prints open. Engines hide a closed one either by
+     `display: none` on its children or via `::details-content`, so both. */
   details:not([open]) > :not(summary) { display: block; }
   details::details-content { content-visibility: visible; }
   summary.section-label {
     cursor: default;
     &::after { display: none; }
   }
-  /* Both marks are offers to open something, and paper can't take
-     either — the GitHub one says what it says through a tooltip, which
-     leaves a decorative octocat behind on a printout. An open preview
-     still prints: it is content by then, and the reader chose it. */
+  /* Offers to open something; an open preview still prints. */
   .code-preview-btn, .gh-ref-btn { display: none; }
 
-  /* Inline `` `code` `` spans read as a chip on screen (1px border +
-     tinted bg); on paper that chrome crowds dense prose and reads as
-     noise. Keep the monospace font so code still stands out — and the
-     side padding, which is now the only thing separating the span
-     from the word before it. */
+  /* Inline code keeps its font and side padding, not its chip. */
   .inline-code { border: 0; background: transparent; }
 
-  /* A snippet can't scroll on paper: let its long lines wrap so the
-     block prints whole, and drop the screen fill for a plain outline
-     (a painted background is the first thing a printer discards). */
+  /* Snippets wrap to print whole, outlined instead of filled. */
   .code-block:not(.token) {
     background: transparent;
     border-color: #bbb;
 
     & .code-block-lang { color: #555; border-bottom-color: #bbb; }
     & pre { white-space: pre-wrap; overflow: visible; }
-    /* Syntax colours are a screen affordance: half the palette is
-       pale enough to print as near-white on a mono printer, and on a
-       colour one it competes with the page's black text. Flatten to
-       ink, keeping the comment's lighter gray + italic so a commented
-       line still reads as one. `!important` because the screen rules
-       above name the token KIND (`.token.keyword`) and so outrank a
-       flat `.token` here — the alternative is restating all fourteen
-       of them. */
+    /* Syntax colors flattened to ink, comments lighter. `!important`
+       because the token rules name the kind (`.token.keyword`). */
     & .token { color: #333 !important; }
     & .token.comment,
     & .token.prolog,

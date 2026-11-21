@@ -1,51 +1,29 @@
-// Which workspace the sync surfaces are talking about, and which of
-// its files they can act on.
-//
-// The sync-status badge (render.js), the upload dialog it opens, and
-// the objstore recovery dialog all need the same two answers: which
-// workspace is in view, and which of its files live on this device.
-// This module is where those are decided — headless, so the rule that
-// decides what can be uploaded is testable without a browser, and so
-// the badge's own module stays presentation.
-//
-// The rule is membership ∩ this device, and BOTH halves matter:
-//
-//   - Membership, not `state.reports`, because the loaded reports are
-//     the workspace's FINDINGS-bearing members. A links file is a
-//     member like any other (client/linked-findings.js) and carries no
-//     findings, so it never enters `state.reports` — and reading the
-//     upload set from there left it local-only forever, with no badge
-//     ever saying so and peers never receiving it.
-//
-//   - This device, because a member whose bytes aren't here is exactly
-//     what the sidebar draws as a muted "missing" row. Offering to
-//     upload one would be offering to upload nothing, and the dialog
-//     would fail the item on a read that can't succeed.
+// Which workspace the sync surfaces (the badge, its upload dialog, the
+// objstore recovery dialog) are about, and which of its files they can act
+// on — headless, so the upload rule tests without a browser. That rule is
+// membership ∩ this device:
+//   - membership, not `state.reports`: a links file is a member but carries
+//     no findings, so never loads, and read from there it stayed local-only
+//     forever, unbadged, never reaching peers;
+//   - this device: a member without bytes here is the sidebar's muted
+//     "missing" row, and an upload of it would fail on its read.
 
 import { listWorkspaces, state } from '#client/index.js'
 
-// The members of `members` this device can hand to the workspace's
-// remote, in membership order.
-//
-// `stored` is the OPFS listing (cached on `state.storedFiles` by
-// renderSidebar, the same way `state.bundles` is) — the direct answer
-// to "is it here". `loaded` is the currently-loaded reports' names,
-// and is a belt to that braces: a report in `state.reports` was read
-// off disk to get there, so it is present by construction, and
-// including it means this can never offer LESS than the loaded set
-// even on a paint that beats the first OPFS listing.
+// The members this device can hand the workspace's remote, in membership
+// order. `stored` is the OPFS listing (`state.storedFiles`, from
+// renderSidebar); `loaded` the loaded reports' names, present by
+// construction, so a paint beating the first listing still offers them.
 export function syncableMembers(members, stored, loaded) {
   const here = new Set(stored)
   for (const name of loaded) here.add(name)
   return members.filter((name) => here.has(name))
 }
 
-// Resolve which workspace + which of its files the sync-status badge
-// applies to. `mode` differentiates a single-file view (one member,
-// opened on its own) from a workspace-merged view (all of them), so
-// the badge template can pick between the `local` / `cloud` chip and
-// the "N cloud / M local" aggregate. Returns null when the active view
-// isn't a workspace member at all.
+// The workspace + files the badge applies to: `mode` 'single' for one
+// member opened on its own (a report, or a links file's page), 'workspace'
+// for the merged view — the `local` / `cloud` chip or the "N cloud / M
+// local" aggregate. Null outside any workspace.
 export function resolveWorkspaceContext() {
   if (state.currentWorkspace) {
     const ws = listWorkspaces().find((w) => w.id === state.currentWorkspace)
@@ -53,16 +31,13 @@ export function resolveWorkspaceContext() {
     return {
       mode: 'workspace',
       workspaceId: state.currentWorkspace,
-      // No workspace record for the id in `state` shouldn't happen —
-      // but if it does, the loaded reports are still the truth about
-      // what is open, and a badge counting them beats no badge.
+      // Without a record for the id (shouldn't happen), the loaded reports
+      // are still what is open, and a badge counting them beats none.
       fileNames: ws
         ? syncableMembers(ws.reports ?? [], state.storedFiles ?? [], loaded)
         : loaded,
     }
   }
-  // Single-file view — a report, or a links file on its own page. Both
-  // are members by filename, so neither needs a special case here.
   if (state.currentFile) {
     const ws = listWorkspaces().find((w) => Array.isArray(w.reports) && w.reports.includes(state.currentFile))
     if (!ws) return null

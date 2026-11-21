@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, createBundleSummary, parseBundleMetadata } from '../ui/view/bundle-metadata.js'
-import { bundleFileKinds, bundleFileSizes, bundleFilesAsMap, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from '../ui/view/bundle-sources.js'
-import { bundleGraphReasons, bundleImportsAsMap } from '../ui/view/bundle-graph-inputs.js'
+import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, createBundleSummary, parseBundleMetadata } from '../common/bundle-metadata.js'
+import { bundleFileKinds, bundleFileSizes, bundleFilesAsMap, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from '../common/bundle-sources.js'
+import { bundleImportsAsMap } from '../ui/view/bundle-graph-inputs.js'
+import { bundleReasons as bundleGraphReasons } from '../common/bundle-reasons.js'
 import { computeFileHash } from '@preventive/report'
 
 function details() {

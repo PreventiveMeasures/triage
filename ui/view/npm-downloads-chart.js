@@ -1,7 +1,7 @@
 // A package's downloads (npm-overview.js): its latest week's or month's and
-// its last year's, over a chart of them across the year, with the switch
-// between weeks and months and the hovered period's downloads at its top
-// right. Drawn at its own pixel width, so its text keeps its shape.
+// its last year's, over a chart across the year with a weeks/months switch
+// and the hovered period's readout. Drawn at its own pixel width, so its
+// text keeps its shape.
 import { LitElement, html, nothing, svg } from 'lit'
 import { styleMap } from './style-map.js'
 import { dayOf, npmDownloadMonths, npmDownloadTier, npmDownloadWeeks, npmTierLevel, npmTierLow } from '../../risk/npm/downloads.js'
@@ -9,8 +9,7 @@ import { dayOf, npmDownloadMonths, npmDownloadTier, npmDownloadWeeks, npmTierLev
 const HEIGHT = 72
 // The plot runs to the card's right edge, as the switch over it does.
 const PAD = { top: 6, right: 0, bottom: 18, left: 40 }
-// A month's bar: at most this wide, the rest of its band air, its top end
-// rounded.
+// A month's bar: at most this wide, its top end rounded.
 const BAR_WIDTH = 24
 const BAR_RADIUS = 4
 export const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
@@ -24,8 +23,7 @@ const monthYear = dateFormat({ month: 'short', year: 'numeric' })
 const monthName = dateFormat({ month: 'long', year: 'numeric' })
 
 export const npmTierName = tier => tier === Infinity ? 'unpopular' : `top ${tier.toLocaleString('en')}`
-// Its tier, in its tint: yellow at most where `known` says why, in its
-// tooltip, past the top 20,000 (npm-overview.js knownNote).
+// Its tier in its tint, yellow at most past the top 20,000 where `known` says why (npm-overview.js knownNote).
 const tierChip = (tier, known) => {
   const capped = known && npmTierLow(tier)
   return html`<dd class=${`npm-downloads-tier ${capped ? 'is-mid' : npmTierLevel(tier)}`} data-tooltip=${capped ? known : nothing}>${npmTierName(tier)}</dd>`
@@ -39,19 +37,16 @@ const PERIODS = {
 // `1,229 downloads, Oct 2 – Oct 8, 2026`.
 const downloadsIn = (count, when) => `${whole.format(count)} downloads, ${when}`
 
-// The last complete month's downloads, `{ total, month }`, the month named as
-// the chart's readout names it (`September 2026`); null without one.
+// A month's downloads (`{ total, from }`) as a tooltip says them, `{ total, month }` (`September 2026`).
+export const npmMonthSaid = ({ total, from }) => ({ total, month: monthName(from) })
+
+// The last complete month's downloads as npmMonthSaid has them; null without one.
 export function npmLastMonth(downloads) {
   const last = npmDownloadMonths(downloads).at(-1)
   return last ? npmMonthSaid(last) : null
 }
 
-// A month's downloads (`{ total, from }`, as npmDownloadMonths has it) as a
-// tooltip says them: `{ total, month }`, the month by its name.
-export const npmMonthSaid = ({ total, from }) => ({ total, month: monthName(from) })
-
-// A round number at or above `max`, for the axis's top: 1, 2, 2.5 or 5
-// times a power of ten.
+// A round number at or above `max` for the axis's top: 1, 2, 2.5 or 5 times a power of ten.
 export function niceCeiling(max) {
   if (!(max > 0)) return 1
   const power = 10 ** Math.floor(Math.log10(max))
@@ -59,10 +54,8 @@ export function niceCeiling(max) {
 }
 
 class NpmDownloadsChart extends LitElement {
-  // `status` is its downloads' load, as npmPackageData has it: 'loading',
-  // 'error' (until it asks again) or 'ready' (`downloads` null where the
-  // server has none). `known` says why its tier is yellow at most, null
-  // where it isn't (tierChip).
+  // `status` is its downloads' load (npmPackageData), `downloads` null where
+  // the server has none; `known` why its tier is yellow at most (tierChip).
   static properties = {
     downloads: { attribute: false }, status: {}, known: { attribute: false }, _width: { state: true }, _at: { state: true }, _unit: { state: true },
   }
@@ -99,22 +92,19 @@ class NpmDownloadsChart extends LitElement {
   }
 
   // What doesn't follow the pointer, made again only when the downloads, the
-  // unit or the width change: the periods charted, the figures with their
-  // tooltips, and the chart's lines and labels.
+  // unit or the width change.
   willUpdate(changed) {
     const period = PERIODS[this._unit]
     const { downloads } = this
     if (changed.has('downloads') || changed.has('_unit')) this._periods = period.of(downloads)
     if (changed.has('downloads')) {
-      // The latest week's and month's both, each its own figure: the one not
-      // shown keeps its room, so switching moves nothing.
+      // The latest week's and month's both: the one not shown keeps its room, so switching moves nothing.
       this._latest = downloads == null ? null : Object.fromEntries(Object.entries(PERIODS).map(([unit, { of, name }]) => {
         const latest = of(downloads).at(-1)
         return [unit, { total: latest?.total ?? 0, tooltip: latest && downloadsIn(latest.total, name(latest)) }]
       }))
       this._tier = npmDownloadTier(downloads)
-      // The last 365 days: the downloads reach back further, to the first of
-      // the month they start in, so that month is whole.
+      // The last 365 days, of downloads reaching back to the first of their month.
       const year = downloads?.days.slice(-365)
       const total = year?.reduce((sum, count) => sum + count, 0)
       this._year = downloads == null ? null
@@ -159,8 +149,7 @@ class NpmDownloadsChart extends LitElement {
     }
   }
 
-  // One of its figures, in short with its unit (`1.2K/week`), in full in its
-  // tooltip; while it isn't known, what stands for it.
+  // One of its figures in short with its unit (`1.2K/week`), in full in its tooltip.
   _stat(label, figure, per) {
     return html`<div class="npm-stat"><dt class="sr-only">${label}</dt>
       <dd data-tooltip=${figure?.tooltip || nothing}>${this._figure(figure, per)}</dd></div>`
@@ -170,8 +159,7 @@ class NpmDownloadsChart extends LitElement {
     return html`${figure ? compact.format(figure.total) : this.status === 'loading' ? '…' : '—'}<span class="npm-stat-per">/${per}</span>`
   }
 
-  // The latest week's or month's, as the switch has it, over the other's,
-  // hidden, so the figure is as wide as the wider of the two.
+  // The latest week's or month's over the other's, hidden, so it is as wide as the wider.
   _latestStat() {
     const shown = this._latest?.[this._unit]
     return html`<div class="npm-stat"><dt class="sr-only">${PERIODS[this._unit].label} downloads</dt>
@@ -179,8 +167,7 @@ class NpmDownloadsChart extends LitElement {
         class=${unit === this._unit ? '' : 'is-held'} aria-hidden=${unit === this._unit ? nothing : 'true'}>${this._figure(this._latest?.[unit], unit)}</span>`)}</dd></div>`
   }
 
-  // Weekly or monthly, over the readout of the period under the pointer,
-  // which keeps its line while there is none.
+  // Weekly or monthly, and the readout of the period under the pointer, which keeps its line while there is none.
   _controls(at) {
     return html`<div class="npm-downloads-controls">
       <span class="bundles-overview-sort" role="group" aria-label="Downloads by">
@@ -193,8 +180,7 @@ class NpmDownloadsChart extends LitElement {
   }
 
   render() {
-    // Nothing to chart where the server has no downloads; until they come,
-    // the chart holds its place, so nothing moves when they arrive.
+    // Nothing to chart where the server has no downloads; until they come, the chart holds its place.
     const charted = this.downloads != null || this.status !== 'ready'
     const at = this._at === null ? null : this._periods[this._at] ?? null
     return html`<div class="npm-downloads-head">

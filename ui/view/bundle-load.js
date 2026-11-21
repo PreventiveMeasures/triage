@@ -1,13 +1,7 @@
-// Shared async open-bundle pipeline, consolidated so error handling
-// etc. live in one place. Every caller needs the same readBundle →
-// branch by extension → JSON.parse / brotliDecompress → set
-// bundleDetails + render → kick the SHA-512 file-hash index → kick
-// the findings index flow: the sidebar bundle row click
-// (`.file-item[data-bundle-integrity]` in sidebar.js), the
-// finding-card "Code →" shortcut (`data-finding-code-bundle` in
-// events.js), the `<bundle-compare>` swap button (`bundle-swap` in
-// events.js), the bundle-only drop branch in `ingest.js`, and the
-// boot-time `LAST_FILE_KEY` bundle restore in `view.js`.
+// Opening a bundle: read and parse it, set state.bundleDetails and render,
+// then hash its files and index findings against them. One pipeline for the
+// sidebar's bundle rows, a finding card's Code, Compare's swap, a bundle
+// dropped (ingest.js) and the boot restore (view.js).
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { ensureBundleFindingsIndexed, hasBundleFileHashes, isManagedUiMode, readBundle, readBundleIndex, recordBundleFileHashes, saveBundleIndex, state } from '#client/index.js'
 import { fetchBundleContents, fetchBundleMetadata } from './client-managed.js'
@@ -16,12 +10,23 @@ import { brotliDecompress } from './brotli-decompress.js'
 import { graph2 } from './graph/state.js'
 import { render } from './render.js'
 import { beginViewNavigation, currentViewSignal } from './view-navigation.js'
-import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, parseBundleContents, parseBundleMetadata } from './bundle-metadata.js'
+import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, parseBundleContents, parseBundleMetadata } from '../../common/bundle-metadata.js'
 
+// Loads in flight, each `{ job, signal }`: deduplicated while they run, as
+// completed source bodies belong to their view, never to a cache of bundles.
 const sourceLoads = new Map()
 const metadataLoads = new Map()
 const hashLoads = new Map()
 const sourceUpgrades = new WeakMap()
+
+function inFlight(loads, key, job, signal) {
+  loads.set(key, { job, signal })
+  job.finally(() => { if (loads.get(key)?.job === job) loads.delete(key) }).catch(() => {})
+  return job
+}
+
+const bundleEntry = integrity => (state.bundles ?? []).find((b) => b.integrity === integrity)
+const kindOf = entry => entry.name.toLowerCase().endsWith('.map') ? 'sourcemap' : 'stasis'
 
 async function cachedMetadata(integrity) {
   try {
@@ -55,19 +60,17 @@ export function takeHandedOffBundle(integrity, accept = () => true) {
   return details
 }
 
-// In-flight deduplication only: completed source bodies are owned by their
-// active view, never retained in a process-wide preload/cache of bundles.
+// A bundle's details, with its sources or its metadata alone: the active
+// view's own where it has them, or a swap's handed over, else read.
 export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
   if (!entry.managedId && isManagedUiMode()) return Promise.reject(new DOMException('Local bundle closed', 'AbortError'))
   const loads = sources ? sourceLoads : metadataLoads
-  const kind = entry.name.toLowerCase().endsWith('.map') ? 'sourcemap' : 'stasis'
+  const kind = kindOf(entry)
+  // The active view's details, or a swap's, where they are of this kind and bundle.
+  const fits = details => details.kind === kind && details.managedId === entry.managedId && (!sources || !details.metadataOnly)
   const active = state.bundleDetails
-  // Share the bundle already owned by the active view with finding source
-  // links and comparison/code consumers, without retaining another bundle.
-  if (active?.integrity === integrity && active.kind === kind && active.managedId === entry.managedId && !active.error
-      && (!sources || !active.metadataOnly)) return Promise.resolve(active)
-  const handed = takeHandedOffBundle(integrity, details => details.kind === kind && details.managedId === entry.managedId
-    && (!sources || !details.metadataOnly))
+  if (active?.integrity === integrity && fits(active) && !active.error) return Promise.resolve(active)
+  const handed = takeHandedOffBundle(integrity, fits)
   if (handed) return Promise.resolve(handed)
   const key = `${entry.managedId ?? 'local'}:${integrity}:${kind}`
   const signal = entry.managedId && sources ? currentViewSignal() : undefined
@@ -88,44 +91,32 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
     }
     if (!sources) {
       const cached = await cachedMetadata(integrity)
-      if (cached?.kind === kind && !cached.stale) return cached
-      return buildBundleDetails(integrity, entry)
+      return cached?.kind === kind && !cached.stale ? cached : buildBundleDetails(integrity, entry)
     }
     const [details, cached] = await Promise.all([readBundleDetails(integrity, entry), cachedMetadata(integrity)])
     if (!details.error) {
-      const current = cached?.kind === details.kind && !cached.stale
-      if (current) {
+      // A stale index (an older version: bundle-metadata.js) lends nothing,
+      // its sizes being what the Overview and Treemap got wrong, and is
+      // rewritten, best effort, for later metadata-only opens.
+      if (cached?.kind === details.kind && !cached.stale) {
         details.fileHashes = cached.fileHashes
         details.fileSizes = cached.fileSizes
         details.lineCounts = cached.lineCounts
-      }
-      // A stale index (an older version: see bundle-metadata.js) lends the
-      // parsed bundle nothing — its sizes are what the Overview and Treemap
-      // got wrong — and is rewritten after this explicit open, so later
-      // metadata-only opens read the current one. Persistence is best-effort.
-      if (!current) {
+      } else {
         createBundleMetadata(details).then((index) => saveBundleIndex(integrity, index)).catch(() => {})
       }
     }
     return details
   })()
-  loads.set(key, { job, signal })
-  job.finally(() => { if (loads.get(key)?.job === job) loads.delete(key) }).catch(() => {})
-  return job
+  return inFlight(loads, key, job, signal)
 }
 
-// Reset every per-bundle UI slot and make `integrity` the selected
-// bundle on the bundles view. Shared by the sidebar bundle-row click,
-// the bundle-only drop branch (ingest.js), the `bundle-swap` listener
-// (events.js) and the boot restore (view.js) — each then persists /
-// repaints / calls `openBundle` on its own. Keep the active detail tab
-// between bundles; entering from another view starts on Overview. An explicit
-// tab still takes priority for boot restore and Compare's swap action. From
-// one Code tab to another, ask for the file open there, or asked for in the
-// bundle open while its sources load: the Code view opens it where the bundle
-// has the same path, and makes its usual pick otherwise. Sources that loaded
-// or failed and opened no file leave none to ask for, as does a bundle no
-// longer open, deleted say.
+// Make `integrity` the selected bundle of the bundles view, every
+// per-bundle slot reset; its callers persist, render and openBundle on their
+// own. The detail tab carries between bundles, Overview from another view,
+// an explicit `tab` first. From Code to Code, the file open (or asked for
+// while the sources load) is asked for again: the Code view opens it where
+// the bundle has the path, else makes its usual pick.
 export function selectBundle(integrity, tab = state.currentView === 'bundles' ? state.bundleDetailsTab : 'overview', { workspaceId = null } = {}) {
   const details = state.bundleDetails, request = state.bundleCodeFileRequest
   const pending = request?.bundle === state.selectedBundle && (!details || (details.metadataOnly === true && !details.sourceError))
@@ -152,11 +143,9 @@ export function selectBundle(integrity, tab = state.currentView === 'bundles' ? 
   state.shownTriage = null
 }
 
-// Keep shared downloads alive between source tabs, but stop them when the
-// user returns to metadata or closes its source overlay. Parsed bodies stay
-// available for this bundle; only unfinished requests are cancelled. Import
-// links keep their source/history when moving from Search into Code. What
-// Compare compares with stays, for its tab to open with again.
+// Downloads carry between source tabs, cancelled (unfinished alone) on a
+// return to metadata or the source overlay closed. Import links keep their
+// source and history from Search into Code; Compare's other side stays.
 export function selectBundleTab(tab, { preserveSource = false } = {}) {
   if (bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile) && !bundleNeedsSources(tab, preserveSource ? state.bundleSourceFile : null)) beginViewNavigation()
   state.bundleDetailsTab = tab
@@ -168,35 +157,20 @@ export function selectBundleTab(tab, { preserveSource = false } = {}) {
   state.bundleSourceFindingIdx = null
 }
 
-// Read OPFS bytes, classify by entry name (`.map` → sourcemap, else
-// → stasis), and parse into the `details` object the render path
-// consumes. Errors (read fail, JSON parse fail, brotli fail) come
-// back as a fallback shape rather than thrown — the caller assigns
-// `state.bundleDetails` unconditionally; the render path shows a
-// "failed to parse" placeholder when `details.error` is set.
-//
-// Sourcemap → `details.map` is the map as @preventive/sourcemap reads
-// it, `details.json` its header (bundle-sourcemap.js). Stasis →
-// `details.bundle` is an `@exodus/stasis-core` `Bundle` (handles v0 +
-// v1 uniformly; .sources / .imports / .modules are Map-shaped).
-//
-// buildBundleDetails also exposes this to the focus view's inline code
-// panel and Compare without touching `state.bundleDetails`.
+// A local bundle's OPFS bytes parsed into details: a sourcemap's `map` and
+// header `json` (bundle-sourcemap.js), a Stasis bundle's `bundle`, an
+// @exodus/stasis-core `Bundle` (v0 and v1 alike, its parts Maps). A failed
+// read or parse comes back as `error`, which the view says.
 async function readBundleDetails(integrity, entry) {
   try {
     const bytes = await readBundle(integrity)
-    // Mode discovery/transition can finish while the local read is pending.
-    // Never send those bytes into the Brotli decoder on the managed surface.
+    // Mode discovery can end while the read is pending: never send its bytes
+    // into the Brotli decoder on the managed surface.
     if (isManagedUiMode()) throw new DOMException('Local bundle closed', 'AbortError')
-    const isMap = entry.name.toLowerCase().endsWith('.map')
-    const kind = isMap ? 'sourcemap' : 'stasis'
+    const kind = kindOf(entry)
     try {
-      if (isMap) return parseBundleContents(decodeUtf8(bytes), { integrity, kind, size: bytes.byteLength })
-      // Stasis bundles are brotli-compressed JSON snapshots;
-      // brotliDecompress dispatches native-or-fallback (see
-      // view/brotli-decompress.js). Bundle.parse validates the
-      // wrapper (version, scope, asserts on tampered shapes) and
-      // normalizes both v0 and v1 layouts.
+      if (kind === 'sourcemap') return parseBundleContents(decodeUtf8(bytes), { integrity, kind, size: bytes.byteLength })
+      // A brotli-compressed JSON snapshot; Bundle.parse validates its wrapper.
       const decoded = decodeUtf8(await brotliDecompress(bytes, () => !isManagedUiMode()))
       const bundle = Bundle.parse(decoded)
       return { integrity, kind, size: bytes.byteLength, bundle }
@@ -210,21 +184,16 @@ async function readBundleDetails(integrity, entry) {
   }
 }
 
-// Background SHA-512 hashing of every source file so the bundle
-// graph + Issues tab can join findings by fileHash. No-op when
-// neither parse slot landed (load failed). Caller has already set
-// `state.bundleDetails` and rendered; this attaches `fileHashes`
-// once it lands and re-renders. Stale resolves (user clicked another
-// row mid-hash) drop silently.
+// Every source's SHA-512, hashed in the background, for the graph and the
+// Issues tab to match findings by: attached to the details and rendered
+// while they are still open.
 function kickFileHashes(details) {
   if (details?.managedId || (!details?.json && !details?.bundle)) return
   if (details.fileHashes) { recordBundleFileHashes(details.integrity, details.fileHashes); return }
   ;(async () => {
     try {
       const fileHashes = await computeBundleFileHashes(details)
-      // Cross-bundle hash index always gets the result, even after
-      // navigating away — the report-card's "Code →" lookup needs it
-      // regardless of the bundle panel's visibility.
+      // Recorded even after navigating away, for a finding card's Code.
       recordBundleFileHashes(details.integrity, fileHashes)
       if (state.bundleDetails !== details) return
       details.fileHashes = fileHashes
@@ -237,8 +206,8 @@ function kickFileHashes(details) {
 // an unopened source bundle. A cache miss waits for an explicit bundle open.
 export function prefetchBundleHashes(integrity) {
   if (hasBundleFileHashes(integrity)) return Promise.resolve()
-  if (hashLoads.has(integrity)) return hashLoads.get(integrity)
-  const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
+  if (hashLoads.has(integrity)) return hashLoads.get(integrity).job
+  const entry = bundleEntry(integrity)
   if (!entry || entry.managedId) return Promise.resolve()
   const job = (async () => {
     const details = await cachedMetadata(integrity)
@@ -248,9 +217,7 @@ export function prefetchBundleHashes(integrity) {
       recordBundleFileHashes(integrity, fileHashes)
     } catch {}
   })()
-  hashLoads.set(integrity, job)
-  job.finally(() => { if (hashLoads.get(integrity) === job) hashLoads.delete(integrity) }).catch(() => {})
-  return job
+  return inFlight(hashLoads, integrity, job)
 }
 
 // Start only after the caller has rendered the complete view and the browser
@@ -270,19 +237,12 @@ export async function prefetchBundleHashesAfterPaint(integrities, isCurrent = ()
   }
 }
 
-// Full open-bundle pipeline. Caller owns the pre-load state setup
-// (selectedBundle, bundleDetails=null, view slots like
-// bundleDetailsTab / shownTriage / graph2.showAll) and the
-// loading-state render(); this owns the parse + post-parse fan-out
-// (set details + render, kick file hashes, kick the cross-report
-// findings indexer). Bails silently when the entry is gone (bundle
-// deleted in another tab between click and now).
-//
-// Stale resolves are dropped via `state.selectedBundle !== integrity`
-// after each await, so a fast click into another bundle doesn't let
-// the previous load clobber the new one's panel.
+// The open pipeline once its caller has selected the bundle (selectBundle)
+// and rendered it loading: parse, set the details and render, hash its
+// files, index findings. A bundle gone (deleted in another tab) or no
+// longer selected once read is let be.
 export async function openBundle(integrity) {
-  const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
+  const entry = bundleEntry(integrity)
   if (!entry) return
   let details
   try {
@@ -308,7 +268,7 @@ export function ensureBundleSources(details = state.bundleDetails) {
   const signal = details.managedId ? currentViewSignal() : undefined
   const pending = sourceUpgrades.get(details)
   if (pending && pending.signal === signal) return pending.job
-  const entry = (state.bundles ?? []).find((b) => b.integrity === details.integrity)
+  const entry = bundleEntry(details.integrity)
   if (!entry) return Promise.resolve(null)
   const job = buildBundleDetails(details.integrity, entry).then((full) => {
     signal?.throwIfAborted()
@@ -331,7 +291,5 @@ export function ensureBundleSources(details = state.bundleDetails) {
     if (err.name === 'AbortError') return null
     throw err
   })
-  sourceUpgrades.set(details, { job, signal })
-  job.finally(() => { if (sourceUpgrades.get(details)?.job === job) sourceUpgrades.delete(details) }).catch(() => {})
-  return job
+  return inFlight(sourceUpgrades, details, job, signal)
 }

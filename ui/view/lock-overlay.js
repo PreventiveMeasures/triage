@@ -1,10 +1,8 @@
-// Full-screen overlay shown when the passkey vault is enabled but
-// this tab hasn't unlocked it. Locked ⇒ every list / badge / drop
-// target needs decrypted state we can't read, so a half-functional
-// UI would just spam "vault locked" errors — cover everything with
-// one unlock affordance instead. The button calls `unlockEncryption`
-// DIRECTLY (no intermediate dialog): the overlay itself IS the
-// unlock prompt.
+// Full-screen overlay while the passkey vault is enabled but this tab hasn't
+// unlocked it: every list, badge and drop target needs decrypted state, so
+// one unlock affordance covers everything rather than a UI spamming "vault
+// locked" errors. The overlay IS the unlock prompt: its button calls
+// `unlockEncryption` directly.
 
 import { isEncryptionEnabled, isManagedUiMode, isPasskeyEnvironmentSupported, isUnlocked, onVaultStateChange, unlockEncryption, wipeAllVaultData } from '#client/index.js'
 import { ensureClientMode } from './sidebar.js'
@@ -14,38 +12,26 @@ let overlayEl = null
 let busy = false
 let abortController = null
 
-// Translate browser-raw WebAuthn errors into user-readable strings.
-// The raw `.message` from a `SecurityError` / `InvalidStateError` /
-// network-bound RP-id mismatch reads like spec text ("The relying
-// party ID is not a registrable domain suffix…") — informative for
-// a developer but useless for a user trying to unlock. NotAllowed
-// is filtered upstream (vault treats it as silent cancel) but we
-// keep it here for defense-in-depth.
+// WebAuthn's raw messages read like spec text ("The relying party ID is not
+// a registrable domain suffix…"). A cancel says nothing (the vault already
+// treats NotAllowed as one).
+const UNLOCK_ERRORS = {
+  NotAllowedError: '',
+  AbortError: '',
+  SecurityError: 'The site identity does not match the one this passkey was registered for. If you opened DeepView through a different URL (different subdomain, different port), reload via the original URL.',
+  InvalidStateError: 'The passkey state on this device is inconsistent. Try reloading the page or removing and re-creating the passkey.',
+  NotSupportedError: 'This browser does not support the WebAuthn PRF extension this site needs. Try a recent Chrome, Safari, or Edge with a platform authenticator.',
+  NetworkError: 'A network error prevented the passkey from completing. Check your connection and try again.',
+  UnknownError: 'The authenticator returned an unknown error. Try again, or use a different passkey.',
+}
+
 function friendlyUnlockError(err) {
   if (!err) return 'Could not unlock. Try again.'
   const name = err.name ?? ''
-  switch (name) {
-    case 'NotAllowedError':
-    case 'AbortError':
-      return ''
-    case 'SecurityError':
-      return 'The site identity does not match the one this passkey was registered for. If you opened DeepView through a different URL (different subdomain, different port), reload via the original URL.'
-    case 'InvalidStateError':
-      return 'The passkey state on this device is inconsistent. Try reloading the page or removing and re-creating the passkey.'
-    case 'NotSupportedError':
-      return 'This browser does not support the WebAuthn PRF extension this site needs. Try a recent Chrome, Safari, or Edge with a platform authenticator.'
-    case 'NetworkError':
-      return 'A network error prevented the passkey from completing. Check your connection and try again.'
-    case 'UnknownError':
-      return 'The authenticator returned an unknown error. Try again, or use a different passkey.'
-    default: {
-      // Unrecognised — surface the message as a last resort so the
-      // user has SOMETHING to search for. Truncate so a paragraph-
-      // long spec quote doesn't blow out the overlay layout.
-      const msg = err.message ?? String(err)
-      return msg.length > 200 ? msg.slice(0, 197) + '…' : msg
-    }
-  }
+  if (Object.hasOwn(UNLOCK_ERRORS, name)) return UNLOCK_ERRORS[name]
+  // Something to search for, cut short of blowing out the card's layout.
+  const msg = err.message ?? String(err)
+  return msg.length > 200 ? msg.slice(0, 197) + '…' : msg
 }
 
 function ensureOverlay() {
@@ -84,15 +70,12 @@ function ensureOverlay() {
     btn.textContent = 'Waiting…'
     abortController = new AbortController()
     try {
-      // A `false` result means the user cancelled the OS prompt —
-      // silent, overlay stays so they can retry.
+      // A cancelled OS prompt resolves `false`: the overlay stays, to retry.
       await unlockEncryption({ signal: abortController.signal })
     } catch (err) {
       const msg = friendlyUnlockError(err)
       errEl.textContent = msg
-      // Hide via the `hidden` attribute when the message is empty —
-      // an empty `<p>` still claims its `margin-bottom` per the CSS,
-      // so the overlay card visibly jumps on benign cancel paths.
+      // An empty `<p>` still claims its margin, jumping the card on a cancel.
       errEl.hidden = !msg
     } finally {
       busy = false
@@ -104,14 +87,10 @@ function ensureOverlay() {
   const wipeLink = overlayEl.querySelector('.lock-overlay-wipe')
   wipeLink.addEventListener('click', async (e) => {
     e.preventDefault()
-    // Guard against the unlock button being in-flight when the
-    // user clicks wipe — both paths would otherwise mutate vault
-    // state concurrently (the unlock can succeed while wipe is
-    // mid-clear, producing a session key bound to nothing).
+    // Not while an unlock is in flight: it could succeed mid-wipe, binding a
+    // session key to nothing.
     if (busy || !shouldShow()) return
-    // Two-step confirm — losing a passkey is one thing, but losing
-    // ALL the encrypted local data is the kind of irreversible step
-    // that deserves explicit acknowledgement.
+    // Two confirms: all the encrypted local data goes, irrecoverably.
     if (!confirm(
       'Wipe ALL local DeepView data and start over?\n\n'
       + 'This deletes your encrypted triage, all reports, and the '
@@ -122,22 +101,14 @@ function ensureOverlay() {
     )) return
     if (!confirm('Really wipe everything? This cannot be undone.')) return
     try {
-      // Do NOT pass `refuseIfEnabled: true` here. The lock-overlay
-      // is rendered *because* the vault is enabled (and this tab
-      // hasn't unlocked it), so the refuse-check would trip on the
-      // very first click. The earlier audit fix added the flag
-      // by analogy with the orphan-setup-dialog wipe path, but the
-      // two surfaces have inverted preconditions: the orphan path
-      // runs when the vault is NOT enabled (metadata absent) and
-      // wants to detect a sibling racing an enable; the
-      // lost-passkey path runs when the vault IS enabled and the
-      // user has explicitly chosen "wipe everything".
+      // No `refuseIfEnabled: true`: this overlay shows *because* the vault is
+      // enabled, the inverse of the orphan-setup-dialog wipe, which runs with
+      // the vault not enabled and guards against a sibling racing an enable.
       await wipeAllVaultData()
     } catch (err) {
       alert(`Wipe failed: ${err?.message ?? err}. Try again or clear localStorage manually via DevTools.`)
       return
     }
-    // Reload so the page restarts with a clean slate.
     location.reload()
   })
   document.body.append(overlayEl)
@@ -158,16 +129,13 @@ async function render() {
   if (shouldShow()) {
     const el = ensureOverlay()
     el.hidden = false
-    // Move focus to the unlock button so Enter triggers it. Done
-    // on every show because dialogs / other interactions may have
-    // pulled focus elsewhere.
+    // Focus the unlock button on every show, so Enter triggers it.
     const btn = el.querySelector('button')
     if (btn) btn.focus()
   } else if (overlayEl) {
     overlayEl.hidden = true
-    // Abort any in-flight unlock attempt so the OS prompt closes
-    // when the vault transitions out of locked (e.g. sibling tab
-    // disabled the vault).
+    // Leaving the locked state (a sibling tab disabled the vault, say)
+    // closes an in-flight unlock's OS prompt.
     if (abortController) {
       try { abortController.abort() } catch {}
     }

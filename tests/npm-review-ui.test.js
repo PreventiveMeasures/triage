@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { managedRoutePath, parseManagedRoute } from '../common/managed/routes.js'
-import { bundleCompareFiles } from '../ui/view/bundle-compare-inputs.js'
+import { bundleCompareFiles } from '../common/bundle-compare-inputs.js'
 import { withinComparisonLimits } from '../ui/view/bundle-compare-files.js'
-import { computeBundleDiff } from '../ui/view/bundle-compare-diff.js'
+import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import { prepareComparison } from '../common/bundle-comparison.js'
 import { templates } from './_lit.js'
 

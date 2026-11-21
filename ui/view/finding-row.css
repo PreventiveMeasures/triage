@@ -1,34 +1,14 @@
-/* `<finding-row>` shadow-DOM styles. The host element IS the row —
-   classes like `is-critical` / `mark-red` / `selected` (set on the
-   host by finding-row.js) drive the row-level backgrounds and outline.
-   The grid layout and the score / body / tabs sub-cells live here; the
-   row-internal building blocks (`.badge`, `.tab`, `.line-num`) are
-   inlined so the shadow root is self-contained. The mark-dot color
-   picker is its own component (see
-   view/color-marker.js). CSS variables (--surface, --border, --text,
-   etc.) inherit through the shadow boundary so theme switching works. */
+/* `<finding-row>` shadow-DOM styles. The host IS the row: its classes
+   (`is-critical`, `mark-*`, `selected`, set by finding-row.js) drive the
+   row backgrounds and outline. Chrome lives on the inner `.row`, not
+   `:host`, because light-DOM rules on the host beat shadow `:host`
+   declarations and theme.css's global `* { padding: 0 }` reset would wipe
+   it; host-state selectors project onto `.row`.
 
-/* Visible chrome (grid layout, padding, border, backgrounds, hover /
-   selected outlines) lives on a shadow-DOM `.row` wrapper, not `:host`:
-   per CSS Scoping, light-DOM rules targeting the host beat shadow
-   `:host` declarations regardless of specificity, so theme.css's global
-   `* { padding: 0; margin: 0 }` reset would wipe the row's padding.
-   Shadow children aren't reachable from light DOM, so styling `.row` is
-   bulletproof.
-
-   The host stays a plain `display: block` container; host-state
-   selectors (`:host(.is-critical)`, `:host(:last-child)`,
-   `:host(.selected)`, etc.) project onto `.row` via combinators so the
-   styled element is always the inner wrapper.
-
-   Two-column grid: fixed-width score column left, body column right.
-   The body's three sub-rows (title / meta / tabs) join this same grid
-   via `display: contents` on .row-body so the score column can
-   `grid-row: 1 / 3` — centering against title + meta only, ignoring the
-   optional tabs row. The implicit grid creates row 3 only when a
-   `.tabs-row` child exists, so single-tab findings stay two rows tall
-   with no trailing gap. minmax(0, …) on column 2 lets `.title` /
-   `.row-loc` shrink for text-overflow ellipsis. */
+   Two-column grid, score left, body right. `.row-body` is
+   `display: contents`, so its title / meta / tabs rows join this grid and
+   the score can span title + meta alone (`grid-row: 1 / 3`); row 3 exists
+   only when a `.tabs-row` does. `minmax(0, …)` lets the text ellipsise. */
 :host { display: block; }
 
 .row {
@@ -56,31 +36,20 @@
 :host(.has-conflict) .row { outline: 2px dashed var(--accent); outline-offset: -2px; }
 :host(.selected) .row { outline: 2px solid var(--accent); outline-offset: -2px; }
 
-/* Deep-link arrival ring — see the twin block in finding-card.css.
-   Inset box-shadow rather than an outline so it reads THROUGH the
-   `.selected` outline the same arrival puts on this row, instead of
-   fighting it for the one outline slot. */
+/* Deep-link arrival ring (keyframes in finding-marks.css): an inset shadow,
+   so it reads through the `.selected` outline the same arrival sets. */
 :host(.link-target) .row { animation: link-target-flash 1.6s ease-out; }
-@keyframes link-target-flash {
-  0%, 30% { box-shadow: inset 0 0 0 2px var(--accent); }
-  100% { box-shadow: inset 0 0 0 2px rgb(from var(--accent) r g b / 0); }
-}
 @media (prefers-reduced-motion: reduce) {
   :host(.link-target) .row { animation: none; box-shadow: inset 0 0 0 2px var(--accent); }
 }
 
-/* First/last row matches the parent `<finding-table>`'s 6px corner
-   radius so a selected edge row's outline traces the rounded clip, not
-   a square inside it. Structural host pseudos let the row own this
-   without the parent stamping classes per row. */
+/* Edge rows follow `<finding-table>`'s 6px corners, so a selected edge
+   row's outline traces the rounded clip. */
 :host(:first-of-type) .row { border-top-left-radius: var(--ui-radius, 6px); border-top-right-radius: var(--ui-radius, 6px); }
 :host(:last-of-type) .row { border-bottom-left-radius: var(--ui-radius, 6px); border-bottom-right-radius: var(--ui-radius, 6px); }
 
 .row-score {
   grid-column: 1;
-  /* Span the title + meta rows only; the optional tabs row sits in
-     row 3 below, keeping the badge aligned with the upper, "primary"
-     half of the row. */
   grid-row: 1 / 3;
   align-self: center;
   display: flex; flex-direction: column;
@@ -91,19 +60,13 @@
   & .badge { min-width: 4.4rem; text-align: center; }
   & .row-conf {
     color: var(--muted); font-size: .72rem;
-    /* Row-click toggles the details panel and clears any selection
-       here, so read the row as a button, not selectable text. Scoped
-       to the table row's shadow DOM, so these fields stay selectable
-       in the kanban / list / grouped / detail views. */
+    /* Row-click toggles the details panel and clears any selection here,
+       so the row reads as a button; other views keep this selectable. */
     user-select: none;
     & strong { color: var(--text); font-size: .8rem; }
   }
 }
 
-/* `.row-body` is layout-only — its children (title-row / meta-row /
-   tabs-row) become direct grid items of the host so the score column
-   can span the first two rows. The wrapper element is kept in markup
-   for semantic grouping. */
 .row-body { display: contents; }
 
 .title-row {
@@ -114,8 +77,7 @@
     flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-weight: 500;
-    /* Same as `.row-conf`: row-click clears any selection here anyway.
-       This prose stays selectable in the non-table views. */
+    /* As `.row-conf`. */
     user-select: none;
   }
   & .row-type { color: var(--muted); font-size: .68rem; flex-shrink: 0; }
@@ -127,16 +89,11 @@
   display: flex; align-items: center; gap: .55rem;
   & .row-loc {
     color: var(--muted); font-size: .72rem;
-    /* Shrinks (so a long path ellipsises) but does NOT grow: growing
-       to fill the row would push the GitHub mark that follows it all
-       the way over to the action buttons, a hand's width from the path
-       it belongs to. `.marks` claims the far end for itself instead. */
+    /* Shrinks to ellipsise but doesn't grow, which would push the GitHub
+       mark after it over to the action buttons. */
     flex: 0 1 auto; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    /* No underline, the UA's included — theme.css's `a` rules stop at
-       the shadow boundary, and a rule of underlined paths reads as a
-       list of links rather than a list of locations. The GitHub mark
-       beside it says where it goes; hover colour says it is live. */
+    /* A location, not underlined (the UA's included). */
     & a { color: inherit; text-decoration: none; cursor: default; }
     & a:hover { color: var(--accent); }
   }
@@ -148,29 +105,12 @@
   }
 }
 
-/* GitHub mark, the same one the finding card carries
-   (view/finding-card.css has the other copy; the two shadow roots
-   can't share a sheet). No `</>` beside it here: the source preview it
-   opens is a block of code, and a table row is one line high — the
-   row's detail panel is where that belongs.
-
-   The reference it stands for is drawn by the shared tooltip
-   (view/tooltip.js), off `data-tooltip`, which is a fixed element on
-   `<body>`: nothing here has to survive `.row-loc` ellipsising the
-   path beside it, or reach past the table it sits in. */
+/* GitHub mark (shared look in finding-marks.css). No `</>` here: a source
+   preview is a block of code, and a row is one line high. */
 .gh-ref-btn {
   display: inline-flex; align-items: center;
-  position: relative;
   flex-shrink: 0;
-  padding: 0 .15rem;
-  color: var(--muted);
   cursor: default;
-
-  /* The glyph is 12px on a row of .72rem type: a hit zone the size of
-     the mark is a target the reader can miss without seeing why. */
-  &::before { content: ''; position: absolute; inset: -.25rem -2px; }
-  &:hover { color: var(--accent); }
-  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: var(--ui-radius, 2px); }
 }
 
 .tabs-row {
@@ -179,10 +119,7 @@
   & .tabs { display: flex; gap: .25rem; flex-wrap: wrap; }
 }
 
-/* Duplicates of the global components used inside rows. Source:
-   ui/styles/findings.css. */
-
-/* Shadow DOM doesn't inherit the global theme.css chrome rule. */
+/* Display-only chrome: theme.css's chrome rule doesn't reach the shadow root. */
 .badge,
 .tabs,
 .tab,
@@ -191,15 +128,9 @@
 .line-num { color: var(--muted); font-size: .75rem; }
 .line-num a { color: inherit; }
 
-/* Print rules — light-DOM `@media print` in styles/print.css can't
-   reach this shadow root, so the badge / mark-host / interactive
-   overrides live here (mirrors the `<finding-card>` shadow's print
-   block). The badge palette is theme-independent: paper-friendly fixed
-   swatches with `print-color-adjust: exact` so backgrounds aren't
-   stripped by the browser's economy default. mark-* row tints are
-   dropped (colored backgrounds add noise on paper with no triage
-   value), and selection / deletion outlines
-   are neutralized so a paper dump reads as a uniform list. */
+/* Print (styles/print.css can't reach this root; shared badge rules are in
+   finding-marks.css): no row tints or outlines, so a paper dump reads as a
+   uniform list. */
 @media print {
   :host(:hover) .row,
   :host(.mark-red) .row,
@@ -208,39 +139,10 @@
   :host(.mark-gray) .row {
     background: transparent !important;
   }
-  :host(.triage-fixed),
-  :host(.triage-invalid),
-  :host(.triage-deleted),
-  :host(.triage-ignored) { opacity: 1; }
   :host(.selected) .row,
   :host(.has-conflict) .row { outline: none !important; }
-  /* Same for the transient deep-link ring — see finding-card.css. */
   :host(.link-target) .row { animation: none; box-shadow: none !important; }
-
   .row { break-inside: avoid; }
-
-  .marks { display: none !important; }
-
-  .badge {
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-    &.critical      { background: #a30b0f !important; color: #fff !important; }
-    &.high          { background: #b8400a !important; color: #fff !important; }
-    &.medium        { background: #855107 !important; color: #fff !important; }
-    &.low           { background: #374151 !important; color: #fff !important; }
-    &.high_bug      { background: #7a3e0c !important; color: #fff !important; }
-    &.bug           { background: #4d4538 !important; color: #fff !important; }
-    &.informational { background: #0550ae !important; color: #fff !important; }
-  }
-
-  /* Dual-badge companion prints as plain dark-gray text (no fill). */
-  .badge-orig {
-    background: transparent !important; color: #555 !important; border-color: #999 !important;
-  }
-  .badge-varies { color: #555 !important; border-color: #999 !important; }
-  .badge-arrow, .badge-corr-mark, .badge-pre { color: #555 !important; }
-
-  /* Strip on-screen link colors so a linked filename reads
-     identically to the bare-text fallback. */
+  /* A linked filename reads as the bare-text fallback. */
   a, .line-num, .line-num a { color: inherit; }
 }

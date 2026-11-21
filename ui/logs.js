@@ -36,8 +36,7 @@ function readFile(file) {
       showDropError(`Failed to parse JSON: ${err.message}`)
       return
     }
-    const format = detectFormat(parsed)
-    if (format !== 'deepfix-log') {
+    if (!isDeepfixLog(parsed)) {
       showDropError('Unsupported format. Expected a deepfix log: { "file": [...entries] }')
       return
     }
@@ -53,21 +52,14 @@ function readFile(file) {
 
 function showDropError(msg) { dropError.textContent = msg }
 
-// Detect deepfix log format: top-level object where every value is an array of
-// entries, and entries (when present) have a string `type` field.
-function detectFormat(data) {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+// An object of arrays of entries, the first entry found having a string
+// `type`; all empty is still a (degenerate) log.
+function isDeepfixLog(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return false
   const values = Object.values(data)
-  if (values.length === 0) return null
-  if (!values.every((v) => Array.isArray(v))) return null
-  for (const list of values) {
-    if (list.length === 0) continue
-    const first = list[0]
-    if (!first || typeof first !== 'object' || typeof first.type !== 'string') return null
-    return 'deepfix-log'
-  }
-  // All empty arrays — still a valid (degenerate) deepfix log
-  return 'deepfix-log'
+  if (values.length === 0 || !values.every((v) => Array.isArray(v))) return false
+  const first = values.find((list) => list.length > 0)?.[0]
+  return first === undefined || (Boolean(first) && typeof first === 'object' && typeof first.type === 'string')
 }
 
 function formatTime(ts) {
@@ -81,27 +73,27 @@ function stringifyJSON(value) {
   try { return JSON.stringify(value, null, 2) } catch { return String(value) }
 }
 
-// Pick a short single-line preview for a tool input/result.
+// A tool input's or result's short single-line preview.
+const firstLine = (text) => text.split('\n')[0].slice(0, 200)
+
 function toolInputPreview(input) {
   if (input == null) return ''
-  if (typeof input === 'string') return input.split('\n')[0].slice(0, 200)
+  if (typeof input === 'string') return firstLine(input)
   if (typeof input !== 'object') return String(input)
-  for (const k of TOOL_PREVIEW_KEYS) {
-    if (k in input && typeof input[k] === 'string') return `${k}: ${input[k].split('\n')[0].slice(0, 200)}`
-  }
-  return Object.keys(input).join(', ')
+  const key = TOOL_PREVIEW_KEYS.find((k) => k in input && typeof input[k] === 'string')
+  return key ? `${key}: ${firstLine(input[key])}` : Object.keys(input).join(', ')
 }
 
 function toolResultPreview(content) {
   if (content == null) return ''
-  if (typeof content === 'string') return content.split('\n')[0].slice(0, 200)
+  if (typeof content === 'string') return firstLine(content)
   if (Array.isArray(content)) {
     // Anthropic tool_result content: [{ type: 'text', text: '...' }]
     const first = content.find((b) => b && b.type === 'text')
-    if (first && typeof first.text === 'string') return first.text.split('\n')[0].slice(0, 200)
+    if (first && typeof first.text === 'string') return firstLine(first.text)
     return `${content.length} block${content.length === 1 ? '' : 's'}`
   }
-  return stringifyJSON(content).split('\n')[0].slice(0, 200)
+  return firstLine(stringifyJSON(content))
 }
 
 function toolResultText(content) {
@@ -149,25 +141,18 @@ function blocksOf(entry) {
 // kind; otherwise the raw `type`.
 function entryBadge(entry, blocks) {
   if (entry.type === 'user' && blocks.every((b) => b.kind === 'tool_result')) return 'tool_result'
-  if (entry.type === 'assistant' && blocks.every((b) => b.kind === 'tool_use' || b.kind === 'thinking')) {
-    if (blocks.some((b) => b.kind === 'tool_use')) return 'tool_use'
-  }
+  if (entry.type === 'assistant' && blocks.every((b) => b.kind === 'tool_use' || b.kind === 'thinking')
+    && blocks.some((b) => b.kind === 'tool_use')) return 'tool_use'
   return entry.type
 }
 
-function entryMatchesFilter(entry, blocks, needle) {
+function entryMatchesFilter(blocks, needle) {
   if (!needle) return true
-  for (const b of blocks) {
-    if (b.kind === 'text' || b.kind === 'thinking' || b.kind === 'summary' || b.kind === 'system' || b.kind === 'unknown') {
-      if (b.text && b.text.toLowerCase().includes(needle)) return true
-    } else if (b.kind === 'tool_use') {
-      if (b.name.toLowerCase().includes(needle)) return true
-      if (stringifyJSON(b.input).toLowerCase().includes(needle)) return true
-    } else if (b.kind === 'tool_result') {
-      if (toolResultText(b.content).toLowerCase().includes(needle)) return true
-    }
-  }
-  return false
+  return blocks.some((b) => {
+    if (b.kind === 'tool_use') return b.name.toLowerCase().includes(needle) || stringifyJSON(b.input).toLowerCase().includes(needle)
+    if (b.kind === 'tool_result') return toolResultText(b.content).toLowerCase().includes(needle)
+    return Boolean(b.text) && b.text.toLowerCase().includes(needle)
+  })
 }
 
 function entryVisible(entry, blocks) {
@@ -229,7 +214,7 @@ function render() {
   const shown = []
   for (const entry of entries) {
     const blocks = blocksOf(entry)
-    if (entryMatchesFilter(entry, blocks, needle) && entryVisible(entry, blocks)) shown.push([entry, blocks])
+    if (entryMatchesFilter(blocks, needle) && entryVisible(entry, blocks)) shown.push([entry, blocks])
   }
 
   litRender(html`
@@ -279,11 +264,16 @@ viewer.addEventListener('click', (e) => {
   if (e.target.closest('#reset-btn')) { resetView() }
 })
 
+const TOGGLES = {
+  'toggle-tools': (on) => { showTools = on },
+  'toggle-thinking': (on) => { showThinking = on },
+  'toggle-system': (on) => { showSystem = on },
+}
 viewer.addEventListener('change', (e) => {
-  const id = e.target.id
-  if (id === 'toggle-tools') { showTools = e.target.checked; render() }
-  else if (id === 'toggle-thinking') { showThinking = e.target.checked; render() }
-  else if (id === 'toggle-system') { showSystem = e.target.checked; render() }
+  const toggle = TOGGLES[e.target.id]
+  if (!toggle) return
+  toggle(e.target.checked)
+  render()
 })
 
 viewer.addEventListener('input', (e) => {

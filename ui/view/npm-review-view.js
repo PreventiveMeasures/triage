@@ -1,18 +1,15 @@
 import { html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
-import { appMarkup } from './markup.js'
 import { summarizeReview } from '../../common/dependency-reviews.js'
 import { npmComparisonSource } from './npm-compare-source.js'
 import { NEXT_ICON } from './lit-icons.js'
-import { DELETE_ICON_SVG } from './icons.js'
-import { sourceFileIcon } from './source-file-icon.js'
 import { compareSourceOptions, renderComparisonHeader, renderComparisonPicker, renderComparisonSummary } from './bundle-compare-picker.js'
 import { renderComparisonViewer } from './bundle-compare-view.js'
-import { reviewAuthor, reviewBadge, reviewDate, reviewFileStates, reviewNote, reviewProgress, reviewTitle, sameReviewContext, verdictIcon, verdictLabel, verdictLabels } from './npm-review-presentation.js'
+import { discardButton, reviewAuthor, reviewBadge, reviewCoverage, reviewDate, reviewFile, reviewFileStates, reviewNote, reviewProgress, reviewTitle, sameReviewContext, verdictIcon,
+  verdictLabel, verdictLabels } from './npm-review-presentation.js'
 
 const busy = page => page._blocked || page._loading
 const isFrozen = page => page._shownReview?.publishedAt != null
-const coverage = summary => summary.coverage === 'full' ? 'Full' : 'Partial'
 const errorMessage = page => page._error ? html`<p class="npm-review-error" role="alert">${page._error}</p>` : nothing
 const savingMessage = page => page._saveBlocked ? html`<div class="npm-review-saving" role="status">Saving changes…</div>` : nothing
 const listedReviews = page => [page._continuation?.review, ...page._reviews].filter(Boolean).toSorted((a, b) =>
@@ -38,30 +35,34 @@ function reviewActions(page) {
   </div>`
 }
 
+// `rows` with `id` among them, listed though the source hasn't (or not yet) got it.
+const withChoice = (rows, id) => rows.some(row => row.id === id) ? rows : [...rows, ...compareSourceOptions([{ id, name: id, format: 'npm' }])]
+
+// The choice `id` of `rows`, where a patch (its `hash`) changes it, listed
+// twice: tagged by the hash's first 5 digits, then as npm has it (`<id>
+// unpatched`); its tag, `{ name, detail, detailNote }`, for the selects to be as wide as it takes.
+function patchedChoice(rows, id, name, hash, detailNote) {
+  if (!hash) return null
+  const at = rows.findIndex(row => row.id === id), detail = `patch:${hash.slice(0, 5)}`
+  rows.splice(at, 1, { ...rows[at], detail, detailNote }, { ...rows[at], id: `${id} unpatched` })
+  return { name, detail, detailNote }
+}
+
 function reviewHeader(page) {
   const source = page.source ?? npmComparisonSource(page.entry)
+  const { name, version } = page.entry.npm
   const hasBase = Boolean(page._target && page._target !== '(empty)')
-  const choices = compareSourceOptions(source.options, row => `${page.entry.npm.name}@${row.id}`)
-  if (hasBase && !choices.some(row => row.id === page._target)) choices.push(...compareSourceOptions([{ id: page._target, name: page._target, format: 'npm' }]))
-  const versions = compareSourceOptions(source.choices)
-  if (!versions.some(row => row.id === page.entry.npm.version)) versions.push(...compareSourceOptions([{ id: page.entry.npm.version, name: page.entry.npm.version, format: 'npm' }]))
-  // The version reviewed, where its review is of it patched, listed twice: tagged by its patch's hash alone
-  // (its sha256's first 5 digits), marked, and after it as npm has it (`unpatched`), as the others open; the
-  // selects as wide as it takes (`widest`).
-  const at = versions.findIndex(row => row.id === page.entry.npm.version), unpatched = `${page.entry.npm.version} unpatched`
-  const tag = page._patch && { name: `${page.entry.npm.name}@${page.entry.npm.version}`, detail: `patch:${page._patch.hash.slice(0, 5)}`,
-    detailNote: patchNote(readPatch(page)) }
-  if (tag) versions.splice(at, 1, { ...versions[at], detail: tag.detail, detailNote: tag.detailNote }, { ...versions[at], id: unpatched })
-  // Its base likewise, where it is a version as a patch changes it (`_basePatch`), as kept.
-  const baseAt = choices.findIndex(row => row.id === page._target), baseUnpatched = `${page._target} unpatched`
-  const baseTag = hasBase && page._basePatch && { name: page._target, detail: `patch:${page._basePatch.slice(0, 5)}`, detailNote: patchNote(page._base?.npmPatch?.patch) }
-  if (baseTag) choices.splice(baseAt, 1, { ...choices[baseAt], detail: baseTag.detail, detailNote: baseTag.detailNote }, { ...choices[baseAt], id: baseUnpatched })
+  const options = compareSourceOptions(source.options, row => `${name}@${row.id}`)
+  const choices = hasBase ? withChoice(options, page._target) : options
+  const versions = withChoice(compareSourceOptions(source.choices), version)
+  const baseUnpatched = `${page._target} unpatched`, unpatched = `${version} unpatched`
+  const tag = patchedChoice(versions, version, `${name}@${version}`, page._patch?.hash, patchNote(readPatch(page)))
+  const baseTag = patchedChoice(choices, page._target, page._target, hasBase && page._basePatch, patchNote(page._base?.npmPatch?.patch))
   return renderComparisonHeader(renderComparisonPicker({ source: tag || baseTag ? { ...source, widest: tag || baseTag } : source, label: 'Review', disabled: busy(page),
     from: { options: choices, value: hasBase ? page._target : null, label: 'Review base',
       pick: value => void page._navigate(value === baseUnpatched ? page._target : value, value === page._target ? page._basePatch : null) },
-    to: { options: versions, value: page.entry.npm.version, label: 'Version to review', pick: value => void page._navigateTo({
-      view: 'npm', packageName: page.entry.npm.name, packageSpec: value === unpatched ? page.entry.npm.version : value, bundleTab: 'review',
-      ...page._location(page._target, value === page.entry.npm.version),
+    to: { options: versions, value: version, label: 'Version to review', pick: value => void page._navigateTo({
+      view: 'npm', packageName: name, packageSpec: value === unpatched ? version : value, bundleTab: 'review', ...page._location(page._target, value === version),
     }) },
     clear: hasBase ? { label: 'Clear review base', run: () => void page._navigate('(empty)') } : null,
     openLine: detail => page._openLine(detail),
@@ -69,9 +70,8 @@ function reviewHeader(page) {
   }), page._base ? renderComparisonSummary(page._diff) : nothing)
 }
 
-// The patch a patched version's review is of, where it was read, as its tag
-// tells it: as the server read it, else as the page names it, whose path
-// and commit may be left out.
+// The patch a patched version's review is of, as the server read it, else
+// as the page names it (its path and commit perhaps left out).
 const readPatch = page => page._patched?.npmPatch?.patch ?? page._patch
 const patchNote = patch => `As pnpm’s patch${patch?.path ? ` ${patch.path}` : ''} changes it`
 const patchTag = page => page._patch ? html`<span class="npm-review-patched" data-tooltip=${`${patchNote(readPatch(page))}${readPatch(page).commit
@@ -111,7 +111,7 @@ function teamOptions(page, title, teams, selected, change, footer) {
     .checked=${selected.has(team.id)} .disabled=${busy(page)} @click=${() => {
       if (busy(page)) return
       const next = new Set(selected)
-      if (next.has(team.id)) next.delete(team.id); else next.add(team.id)
+      if (!next.delete(team.id)) next.add(team.id)
       change(next)
     }}></mode-switch>`)}${footer}</fieldset>`
 }
@@ -120,7 +120,7 @@ export function renderReviewConfirmation(page, review) {
   const allowed = page._allowedVerdicts, summary = summarizeReview(review.entries, page._files, page._nonTextFiles)
   const notes = review.entries.filter(entry => entry.status && entry.comment.trim() && !page._nonTextFiles.includes(entry.file))
   return html`<form class="npm-review-publish-form" @submit=${event => { event.preventDefault(); void page._publish() }}>
-    <div class="npm-review-dialog-body"><section class="npm-review-coverage"><div><strong>${coverage(summary)} review</strong><span>${summary.checkedFiles} of ${summary.totalFiles} files checked</span></div>
+    <div class="npm-review-dialog-body"><section class="npm-review-coverage"><div><strong>${summary.coverage === 'full' ? 'Full' : 'Partial'} review</strong><span>${summary.checkedFiles} of ${summary.totalFiles} files checked</span></div>
       ${reviewProgress(summary.checkedFiles, summary.totalFiles)}<p>${summary.totalFiles > summary.checkedFiles ? html`${summary.totalFiles - summary.checkedFiles} files not checked.
         <button type="button" class="npm-review-button npm-review-text-button" @click=${() => { page._unchecked = true; page._closePanel() }}>View files</button>` : 'Every file has a verdict.'}</p>
       ${page._needsPackageJson ? html`<p class="npm-review-error">Review ${page._files.includes('package.json')
@@ -128,7 +128,7 @@ export function renderReviewConfirmation(page, review) {
         : 'package.json'} before publishing a partial review.</p>` : nothing}</section>
       ${notes.length > 0 ? html`<section aria-label="File notes"><strong>File notes</strong>
         <ul class="npm-review-publish-notes" tabindex="0" aria-label="Saved file notes">${notes.map(entry => html`<li>
-          <span class="dependency-review-entry-file">${sourceFileIcon(entry.file)}<span>${entry.file}</span></span>
+          ${reviewFile(entry.file)}
           ${reviewNote(entry.comment)}</li>`)}</ul></section>` : nothing}
       <div><strong>Final verdict</strong>${verdictChoices('final-verdict', page._finalStatus, status => { page._finalStatus = status }, busy(page), allowed)}</div>
       ${page._securityLimit === 'reject' ? html`<p class="npm-review-help">Malware detected. Only Reject is available.</p>`
@@ -158,7 +158,7 @@ export function renderReviewEntry(page, review) {
       <strong>${reviewAuthor(review)}</strong>${current ? html`<span class="npm-review-current">Current</span>` : nothing}${reviewBadge(review)}</div>
     <p class="npm-review-help">${review.basePackage ? `${review.basePackage === review.package ? review.baseVersion : `${review.basePackage}@${review.baseVersion}`} → ${review.version}` : 'All package files'}</p>
     <div class="npm-review-entry-result">${published ? verdictLabel(review.status) : nothing}<span class="dependency-review-coverage">
-      ${published ? html`${summary.coverage === 'full' ? 'Full' : html`<span class="dependency-review-partial">Partial</span>`} · ` : nothing}${summary.checkedFiles}${summary.totalFiles === null ? nothing : `/${summary.totalFiles}`} files checked</span></div>
+      ${published ? html`${reviewCoverage(summary)} · ` : nothing}${summary.checkedFiles}${summary.totalFiles === null ? nothing : `/${summary.totalFiles}`} files checked</span></div>
     <p class="npm-review-help">${review.teams.length > 0 ? `${review.teams.map(team => team.name).join(', ')} · ` : ''}${reviewDate(review.publishedAt ?? review.time)}</p>${reviewNote(review.comment)}
     <div class="npm-review-entry-actions">
       <button type="button" class="npm-review-button" ?disabled=${busy(page)} @click=${() => void page._openReview(review)}>Open ${NEXT_ICON}</button>
@@ -167,8 +167,7 @@ export function renderReviewEntry(page, review) {
       ${published && own && page._writable && review.revokedAt === null ? html`<button type="button" class="npm-review-button npm-review-danger" ?disabled=${busy(page)}
         @click=${() => page._change({ action: 'revoke', reviewId: review.id, revision: review.revision })}>Revoke</button>` : nothing}
       ${own ? html`<dependency-review-copy .text=${review.formatted}></dependency-review-copy>` : nothing}
-      ${!published && own && page._writable ? html`<button type="button" class="dependency-review-discard" aria-label="Discard review" ?disabled=${busy(page)}
-        @click=${() => void page._discard(review)}>${appMarkup(DELETE_ICON_SVG)}</button>` : nothing}
+      ${!published && own && page._writable ? discardButton(busy(page), () => void page._discard(review)) : nothing}
     </div>
     ${published && own && page._writable && review.revokedAt === null && remaining.length > 0 ? html`
       <details class="npm-review-share"><summary>Publish to more teams</summary>${teamOptions(page, 'Teams', remaining, selected,
@@ -194,8 +193,8 @@ function panel(page) {
   </dialog>`
 }
 
-// Review decorates the shared comparison tree and viewer. It never renders a
-// second tree or reimplements source/chip wiring.
+// Review's decorations of the shared comparison tree and viewer: verdicts by
+// file, progress by folder, its filters and file actions.
 export function reviewExtensions(page) {
   const entries = page._shownReview?.entries, files = page._files, nonTextFiles = page._nonTextFiles
   if (page._treeProgress?.entries !== entries || page._treeProgress?.files !== files || page._treeProgress?.nonTextFiles !== nonTextFiles) {

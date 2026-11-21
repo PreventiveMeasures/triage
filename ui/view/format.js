@@ -1,76 +1,36 @@
 import { dependencyDirectory } from '../../client/dependency-paths.js'
-import { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, fenceRanges, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, inFence, isHttpUrl, locationLabel, prettyModel, repoDirectory, reportRepoGithub, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker, titledDescription, unescapeMd } from '@preventive/report'
+import { SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, fenceRanges, findingDisplayName, findingTitle, hasSeverityCorrection, inFence, isHttpUrl, locationLabel, prettyModel, repoDirectory, reportRepoGithub, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker, titledDescription, unescapeMd } from '@preventive/report'
 import { html, nothing } from 'lit'
-// Direct relative import, NOT `#client/index.js`: this module rides in
-// the lazy `ui/graph.js` bundle, and the aggregator would drag `state`
-// and the whole client layer in with it (see fileUrl's note below).
-// `client/finding-link.js` depends only on shared codec/route helpers,
-// so pulling it in does not load client state.
+// Direct relative imports, NOT `#client/index.js`: this module rides in the
+// lazy `ui/graph.js` bundle, and the aggregator would drag `state` and the
+// whole client layer in with it. Callers pass in whatever state they read.
 import { parseFindingUrl } from '../../client/finding-link.js'
 import { formatBytes as formatByteSize } from '../scan/metrics.js'
 import { REVALIDATE_FILTERS, hasRevalidateStamp } from '../../common/finding-filters.js'
 import { ignoresOwnRepo } from '../../common/finding-repo.js'
 import { asCommit, repoCommit, sameRepoSlug } from '../../common/repo-commit.js'
 import { codeSpan } from './code-span.js'
-export { PARTIAL_MODES, REVALIDATE_FILTERS, activeRevalidateKinds, hasRevalidateStamp, revalidateFilterKinds } from '../../common/finding-filters.js'
-// What a finding IS — the readers shared with the report library's
-// markdown writer — lives in that library; re-exported here unchanged so
-// the viewer's callers keep one import. `revalidateKindOf` and
-// `runMetaLine` take the layer switch as an argument; the gated forms
-// below (revalidateKind, formatRunMeta) apply this module's state.
-export { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, locationLabel, prettyModel, splitDescription, stripExportMarker, titledDescription }
-// The one http(s)-URL gate every `<a>` in the viewer goes through is
-// the writer's too (@preventive/report/src/md-text.js); one definition.
-export { isHttpUrl }
+export { PARTIAL_MODES, REVALIDATE_FILTERS, revalidateFilterKinds } from '../../common/finding-filters.js'
+// The finding readers shared with the report library's markdown writer,
+// re-exported so the viewer keeps one import; `isHttpUrl` is the one
+// http(s) gate every `<a>` in the viewer goes through.
+export { SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, findingDisplayName, findingTitle, hasSeverityCorrection, isHttpUrl, locationLabel, prettyModel, splitDescription, stripExportMarker, titledDescription }
 
-// ── Revalidation ─────────────────────────────────────────────────────
-// A second pass over a finding. A report stamps `revalidate` with what
-// that pass concluded — `confirmed` (the finding stands), `partial`
-// (part of it does), `refuted` (it doesn't), `unreachable` (nothing
-// can get to the code it's in), `unknown` (the pass couldn't tell) —
-// and carries its reasoning in `revalidateVerdict`, plus, for a
-// refutation, what to do about it in `revalidateRecommendation`.
+// ── Revalidation layer ───────────────────────────────────────────────
+// A second pass stamps `revalidate` with its verdict — `confirmed`,
+// `partial`, `refuted`, `unreachable`, `unknown` — or `revalidation` on the
+// row that IS the pass (sorted first in its group, named in the run-meta
+// line). Values are case-folded; an unrecognised one reads as no stamp.
 //
-// The remaining value, `revalidation`, marks the row that IS the
-// revalidation pass rather than one it judged. It carries no verdict of
-// its own; what it gets instead is first place in its group (group.js
-// sortTabs), because a reader opening a finding that was re-examined
-// wants the re-examination, not whichever original row happened to
-// outrank the others — and its own name in the run-meta line
-// (formatRunMeta below), which is where a card says which run a row
-// came from.
+// The toolbar's "App" switch takes the whole layer off: `revalidateKind`
+// then answers '' for every row, so no stamp, no pass-row promotion, no
+// voided confidence, no outcome filter. Callers that must see the raw field
+// whatever the switch says (hiding the pass's rows, offering the switch,
+// the export header) use `revalidateKindOf` / the exports below it.
 //
-// Values are case-folded and trimmed: these arrive from JSON a report
-// generator wrote, and an unrecognised one answers "no stamp" rather
-// than leaking into a display.
-
-// ── The revalidation LAYER ───────────────────────────────────────────
-// All of the above is a lens, and the toolbar's "App" switch takes it
-// off. With the pass applied, the findings are about the running APP:
-// what it can actually reach, re-rated by a second look. Without it
-// they are about the CODE as written — every issue the analyzer found,
-// including the ones the app happens not to expose today. Those are
-// still real, and a reader auditing the source wants them back, so the
-// whole layer comes off with one switch rather than a filter per
-// consequence of it.
-//
-// Off, `revalidateKind` answers '' for every row, which is what takes
-// the layer off everywhere at once: no stamp on the card, no promotion
-// of the pass's row in a group, no verdict voiding a confidence, no
-// outcome for the toolbar dropdown to offer (so the block falls back
-// to the plain Confidence range), and nothing for the run-meta line to
-// name. The callers that must see the field WHATEVER the switch says
-// — the pass that hides the pass's own rows, the scan that decides
-// whether to offer the switch at all, and the export header that
-// names the layer — read the raw field through the exports below it
-// (@preventive/report/src/finding.js's `revalidateKindOf`).
-//
-// The flag is module state, set once per render by render.js from
-// `state.showRevalidation` and `state.upstreamOnly` (see configureDepsDir below for the same
-// pattern and the reason: this module stays free of any `#client/...`
-// import so it can ride the lazy graph bundle). It defaults to ON, so
-// a consumer reaching a helper before the first render — the headless
-// API, a deep link — sees the app view, which is the default anyway.
+// Module state set once per render by render.js; defaults to ON so a
+// helper reached before the first render (headless API, deep link) sees
+// the default app view.
 let revalidationOn = true
 
 // Upstream findings describe the dependency itself, so app-specific verdicts
@@ -79,50 +39,26 @@ export function configureRevalidation(on, upstreamOnly = false) {
   revalidationOn = on !== false && !upstreamOnly
 }
 
-// Whether the layer is applied right now. For the display sites that
-// read a `revalidate*` field directly rather than going through
-// `revalidateKind` — the verdict and the pass's recommendation.
+// For display sites reading a `revalidate*` field directly.
 export function revalidationShown() { return revalidationOn }
 
-// The row's revalidation outcome, case-folded, or '' when it carries
-// none — which includes an unrecognised value, so a typo in a report
-// can't reach a display or the filter dropdown, and every row once the
-// layer is off.
 export function revalidateKind(f) {
   return revalidationOn ? revalidateKindOf(f) : ''
 }
 
-// Does this row carry a revalidation stamp AT ALL — the raw field,
-// read past the switch. Says whether the layer is worth NAMING: the
-// markdown export describes it in the header only for a set that
-// carries one (markdown-export.js), and a set that carries one must
-// keep being described after the layer is off. Whether the layer can
-// come OFF is the narrower question `canDropRevalidation` asks below.
+// Whether the row carries a stamp at all, past the switch: the markdown
+// export keeps naming the layer after it is switched off.
 export function hasRevalidateField(f) { return revalidateKindOf(f) !== '' }
 
-// May the layer come off for the loaded set — i.e. is the "App"
-// switch offered at all (render.js)?
-//
-// Only where the pass JUDGED something. Taking the layer off is a
-// trade: the pass's own rows go, and in exchange every finding it
-// ruled out comes back, which is the code view the switch exists for.
-// A set whose every `revalidate` is `revalidation` — the pass's rows
-// and nothing they stamped — has nothing to hand back, so the trade
-// is one-sided: the same findings, minus the pass's rows, with the
-// run-meta no longer saying where they came from. That is not the
-// code as written, it is the app view with information removed, so
-// the control isn't offered and the layer stays on.
-//
-// Scanned over the reports' OWN groups rather than the merged ones,
-// and through the raw reader, so the answer doesn't change with the
-// switch — see the note over the layer above.
+// Whether the "App" switch is offered: only where the pass JUDGED
+// something. A set whose every stamp is `revalidation` has nothing to hand
+// back when the layer comes off, only the pass's rows to lose. Read raw,
+// over the reports' own groups, so the answer doesn't follow the switch.
 export function canDropRevalidation(reports) {
   return reports.some((r) => (r.groups ?? []).some((g) => g.some(hasRevalidateStamp)))
 }
 
-// The verdict this row was stamped with, or null when it carries none
-// — which includes the revalidation row itself, since `revalidation`
-// names the pass and isn't a judgement on anything.
+// The verdict, or null — `revalidation` names the pass, not a verdict.
 export function revalidateStamp(f) {
   const kind = revalidateKind(f)
   return kind && kind !== 'revalidation' ? kind : null
@@ -132,60 +68,34 @@ export function isRevalidation(f) {
   return revalidateKind(f) === 'revalidation'
 }
 
-// The two verdicts that RULE A FINDING OUT: `refuted` says it doesn't
-// hold, `unreachable` that nothing can get to the code it's in. Both
-// say the finding isn't a finding, and the app asks that from two
-// angles.
+// `refuted` and `unreachable` rule a finding out; a confidence attached to
+// one is a claim the pass withdrew, so the range reads it as 0 (filters.js).
 const RULED_OUT = new Set(['refuted', 'unreachable'])
 
-// Did the pass rule this one out? Asked where the question is what the
-// verdict MEANS — chiefly by the outcome the toolbar opens on, which
-// doesn't count a ruled-out finding as something Confirmed costs the
-// reader by leaving off screen (filters.js).
 export function isRuledOut(f) {
   return RULED_OUT.has(revalidateKind(f))
 }
 
-// The same two, asked as what they do to a NUMBER — the one place a
-// verdict changes more than a display (see filters.js). A confidence
-// attached to either is a claim the pass withdrew, so the range reads
-// it as 0 rather than letting it speak for the group.
-export function voidsConfidence(f) {
-  return RULED_OUT.has(revalidateKind(f))
-}
-
-// The options worth offering for a given set of present kinds: the
-// toolbar hands this list to the dropdown, and drops the control
-// entirely when it comes back empty — a report whose pass only ever
-// answered `unknown` has nothing here to choose between.
+// The outcome options worth offering for the kinds present; the toolbar
+// drops the control when this is empty.
 export function reachableRevalidateFilters(kinds) {
   const present = new Set(kinds)
   return REVALIDATE_FILTERS.filter((o) => o.kinds.some((k) => present.has(k)))
 }
 
-// "Module" = third-party dependency. Recognised vendor-directory
-// layouts, in detection precedence: `node_modules/` (npm/pnpm/yarn),
-// `vendor/` (PHP Composer, Go modules), and the generic
-// `dependencies/`. Several can occur side-by-side in the same project
-// — and `dependencies/` (or `vendor/`) may itself be a regular source
-// dir — so ONE active deps dir is chosen contextually: prefer
-// `node_modules` when ANY loaded path has it, else `vendor`, else fall
-// back to `dependencies`. Committing to the most specific present
-// marker avoids misclassifying an ordinary source folder as
-// third-party.
-//
-// `configureDepsDir(reports)` is called from render.js at the start
-// of every render; the helpers below (isModule / stripPackagePrefix
-// / packageOf via depsDirName) consult `depsDir` so reclassifying
-// happens once per render, not per call. The matchers are cached on
-// `depsDir` (rebuilt only when it changes) so the hot `isModule` path
-// stays a single stateless `RegExp.test`.
+// ── Dependency directory ─────────────────────────────────────────────
+// "Module" = third-party dependency. ONE deps dir is active, chosen from
+// the whole loaded set (`dependencyDirectory`: `node_modules` if any path
+// has it, else `vendor`, else `dependencies`), since `vendor/` or
+// `dependencies/` may be ordinary source dirs elsewhere. render.js calls
+// configureDepsDir each render; the matchers are rebuilt only when the dir
+// changes so the hot `isModule` stays a single `RegExp.test`.
 
-// Segment matcher `(^|/)<dir>/` — `dir` must be a whole path segment,
-// so `vendor/` matches `app/vendor/x` but not `my-vendor-lib/x`.
+// `dir` as a whole path segment: `vendor/` matches `app/vendor/x`, not
+// `my-vendor-lib/x`.
 function depsSegRe(dir) { return new RegExp(`(^|/)${dir}/`, 'u') }
-// Package-prefix matcher `<dir>/<pkg>/<rest>` where `<pkg>` is a bare
-// name or an `@scope/name` pair; captures `<rest>` for stripping.
+// `<dir>/<pkg or @scope/pkg>/<rest>`, capturing `<rest>`; greedy, so the
+// innermost package of a nested layout.
 function depsStripRe(dir) { return new RegExp(`^(?:.*/)?${dir}/(?:@[^/]+/[^/]+|[^/]+)/(.*)$`, 'u') }
 
 const NODE_MODULES_RE = depsSegRe('node_modules')
@@ -195,21 +105,20 @@ let depsDir = 'node_modules'
 let moduleRe = depsSegRe(depsDir)
 let stripRe = depsStripRe(depsDir)
 
-function setDepsDir(dir) {
+// Whether `now` holds what `kept` did, item by item. The per-render
+// configure calls below key on report identity: an ingested report's paths
+// and stamps never change, so only a different set can answer differently.
+const sameItems = (kept, now) => kept?.length === now.length && kept.every((x, i) => x === now[i])
+
+let depsDirReports = null
+export function configureDepsDir(reports) {
+  if (sameItems(depsDirReports, reports)) return
+  depsDirReports = [...reports]
+  const dir = dependencyDirectory(reports)
   if (dir === depsDir) return
   depsDir = dir
   moduleRe = depsSegRe(dir)
   stripRe = depsStripRe(dir)
-}
-
-// The choice is kept for the reports it was read from, by identity: a
-// render asks on every draw, and the paths it reads never change once a
-// report is ingested, so only a different set can choose differently.
-let depsDirReports = null
-export function configureDepsDir(reports) {
-  if (depsDirReports?.length === reports.length && depsDirReports.every((r, i) => r === reports[i])) return
-  depsDirReports = [...reports]
-  setDepsDir(dependencyDirectory(reports))
 }
 
 export function depsDirName() { return depsDir }
@@ -218,35 +127,17 @@ export function isModule(file) {
   return moduleRe.test(file)
 }
 
-// The findings whose `isUpstream` was derived here, as opposed to one
-// that arrived carrying its own answer. Only the derived ones may be
-// revised — see the deps-dir note below for why any of them must be.
+// Findings whose `isUpstream` was derived here (and so may be revised),
+// as opposed to ones that arrived carrying it.
 const derivedUpstream = new WeakSet()
 
-// Stamp the other half of the layer split onto each finding: one that
-// describes the source underneath (`isApp === false`, settled at
-// ingest) and sits in the dependency tree is UPSTREAM code — someone
-// else's source, shipped here. An app-layer finding is never upstream
-// however its file reads, so only the source-layer ones are asked.
-//
-// Only `true` is ever written: the findings this doesn't apply to are
-// left without the field rather than stamped `false` — absent means
-// "not upstream", which is what every other reading of a missing flag
-// already means here. A finding that arrived carrying the field keeps
-// its own answer untouched.
-//
-// Here rather than at ingest because `isModule` reads the deps dir,
-// and that is chosen from the WHOLE loaded set. Called right after
-// `configureDepsDir` (render.js), this sees the dir that set settled
-// on rather than the one in force before the report arrived.
-//
-// And the answer is REVISED, not just filled in, because the set grows
-// under it: a workspace ingests its reports one at a time and renders
-// between them (ingest.js switchToWorkspace), so a `dependencies/…`
-// finding from the first report is stamped under the fallback marker,
-// and a later report carrying `node_modules/` moves the dir out from
-// under it. Re-deriving each render is what keeps every flag agreeing
-// with the dir the loaded set has actually settled on.
+// Stamp `isUpstream: true` on each source-layer finding (`isApp === false`)
+// in the deps dir; others are left without the field, which reads as "not
+// upstream". Not done at ingest because the dir is chosen from the WHOLE
+// set, which grows as a workspace ingests report by report (rendering in
+// between): a later report can move the dir, so derived flags are
+// re-derived every render (after configureDepsDir). Returns whether any
+// flag changed.
 export function stampUpstreamFindings(reports) {
   let changed = false
   for (const r of reports ?? []) {
@@ -270,46 +161,27 @@ export function stampUpstreamFindings(reports) {
   return changed
 }
 
-// "Is this path inside SOMEBODY ELSE'S source?" — the same question
-// `isModule` asks, but of every marker rather than only the one this
-// report happens to use. `isModule` exists to classify a project's own
-// tree and so commits to a single deps dir; a caller deciding whether
-// a path can be resolved against a repo at all wants the opposite bias,
-// because the cost of missing a marker is a link into a repository that
-// does not contain the file.
-//
-// `node_modules` (npm/pnpm/yarn, and Solidity under Hardhat) and
-// `vendor` (Composer, Go modules, `cargo vendor`, bundler) always
-// count. `dependencies` counts only when it IS the configured deps dir
-// — it is too ordinary a folder name to treat as a marker on a project
-// that doesn't use it that way.
+// Whether a path is inside somebody else's source by ANY marker, for
+// deciding whether it can resolve against a repo at all (missing one links
+// into a repo that lacks the file). `dependencies` counts only when it is
+// the active deps dir — too ordinary a folder name otherwise.
 function hasDependencyMarker(file) {
   const s = typeof file === 'string' ? file : ''
   return NODE_MODULES_RE.test(s) || VENDOR_RE.test(s) || moduleRe.test(s)
 }
 
-// The installed package a path belongs to: everything up to and
-// including the `node_modules/(@owner/)?name` that contains it. Null
-// when the path names no package.
-//
-// Greedy, so it takes the LAST `node_modules` — under a nested or pnpm
-// layout (`node_modules/.pnpm/lodash@4/node_modules/lodash/…`) the
-// innermost one is the package the file is actually in.
-//
-// The whole prefix is the identity, not just the package name: two
-// paths naming `lodash` under different installs are two copies, and
-// pretending otherwise is how a link ends up pointing at a version of
-// the file that isn't the one cited.
+// The installed package a path belongs to: everything up to and including
+// the LAST `node_modules/(@owner/)?name` (the innermost, under nested or
+// pnpm layouts), or null. The whole prefix is the identity: two installs of
+// `lodash` are two copies.
 const NODE_PKG_ROOT_RE = /^(.*(?:^|\/)node_modules\/(?:@[^/]+\/[^/]+|[^/]+))(?:\/|$)/u
 
 function nodePackageRoot(file) {
   return NODE_PKG_ROOT_RE.exec(typeof file === 'string' ? file : '')?.[1] ?? null
 }
 
-// The package a `package` stamp names (`{ npm: { name, version } }`, the
-// analyzer's, on a finding or an evidence row), as one key:
-// `npm:name@version`, the version empty where the stamp gives none.
-// Null for no stamp, or one naming nothing.
+// A `package` stamp (`{ npm: { name, version } }`) as one key,
+// `npm:name@version` (version empty where none), or null.
 function packageStampKey(stamp) {
   if (stamp === null || typeof stamp !== 'object') return null
   for (const [ecosystem, pkg] of Object.entries(stamp)) {
@@ -318,36 +190,24 @@ function packageStampKey(stamp) {
   return null
 }
 
-// The dependencies whose upstream the loaded set knows at the commit it
-// was read at, by install (`nodePackageRoot`) and by the package a
-// finding's `package` stamp names at a version: each mapped to the `repo`
-// of a loaded finding there — the package's upstream, as on any
-// dependency finding (evidenceUrl rule 3) — when that `repo` names a
-// commit. Without one a link would be to HEAD, a version of the file the
-// install need not hold, so such a `repo` says nothing here. Findings
-// that disagree (another repo, directory, commit or package) leave the
-// install or package unknown (null), as the Packages view leaves a
-// package with two upstreams; a `repo` the app ignores
-// (common/finding-repo.js) counts for nothing.
-//
-// An install path is a path in one report's tree: another report's
-// `node_modules/axios` may hold another version. So an install answers
-// only for its own report's findings (reportKeyOf), and keeps the package
-// its finding named, which a row naming its own must match. A package at
-// a version is the same package in any report.
-//
-// Called from render.js once per render, beside configureDepsDir, so
-// evidence rows in OTHER dependencies than their finding's can link
-// (evidenceUrl rule 4). Kept for the reports and their groups by
-// identity: the findings' paths and stamps never change once ingested.
-let dependencyRepoSet = null
+// The dependencies whose upstream the loaded set knows AT A COMMIT, by
+// install (`nodePackageRoot`) and by stamped package@version: each mapped
+// to the `repo` of a loaded finding there (a dependency finding's `repo`
+// is its package's upstream). A `repo` without a commit would link HEAD, a
+// version the install need not hold, so it doesn't count; nor does one the
+// app ignores (common/finding-repo.js). Disagreeing findings leave the key
+// unknown (null). An install path is one report's (another report's
+// `node_modules/axios` may be another version), so installs are keyed per
+// report and keep the package their finding named; a package@version is
+// the same in any report. Called from render.js each render, beside
+// configureDepsDir, for evidenceUrl rule 4.
+let dependencyRepoKeys = null
 let dependencyRepos = { byRoot: new Map(), byPackage: new Map() }
-// The report a finding came from, as ingest stamps it.
 const reportKeyOf = (f) => `${f?._managedReportId ?? ''}\0${f?._reportName ?? ''}`
 const installKey = (f, root) => `${reportKeyOf(f)}\0${root}`
 const repoSlugOf = (target) => reportRepoGithub({ repo: { github: target.id } }) ?? target.id
-// Two `repo`s, or null where they name different places. A short hash and
-// the full one it abbreviates are one commit; the longer is kept.
+// Two `repo`s as one, or null where they name different places. A short
+// hash and the full one it abbreviates are one commit; the longer is kept.
 function agreeingRepo(known, repo) {
   if (known === null) return null
   const now = repoTarget(repo), was = repoTarget(known)
@@ -357,8 +217,9 @@ function agreeingRepo(known, repo) {
 }
 export function configureDependencyRepos(reports) {
   const list = Array.isArray(reports) ? reports : []
-  if (dependencyRepoSet?.length === list.length && dependencyRepoSet.every(([r, groups], i) => r === list[i] && groups === r?.groups)) return
-  dependencyRepoSet = list.map((r) => [r, r?.groups])
+  const keys = list.flatMap((r) => [r, r?.groups])
+  if (sameItems(dependencyRepoKeys, keys)) return
+  dependencyRepoKeys = keys
   const byPackage = new Map(), byRoot = new Map()
   const note = (map, key, repo) => map.set(key, map.has(key) ? agreeingRepo(map.get(key), repo) : repo)
   for (const r of list) {
@@ -382,87 +243,46 @@ export function configureDependencyRepos(reports) {
   dependencyRepos = { byRoot, byPackage }
 }
 
-// File size formatter for the file table/list, the graph's selection
-// card / tooltip, Compare, the Treemap and the file dialog. Sizes read as
-// they do everywhere else (`ui/scan/metrics.js`): bytes below 1 KiB, then
-// KiB / MiB / GiB to one decimal. Returns null for missing values so
-// callers can suppress the chip rather than render a placeholder.
+// Sizes as everywhere else (`ui/scan/metrics.js`); null for a missing
+// value so callers can drop the chip.
 export function formatBytes(n) {
-  if (typeof n !== 'number' || !Number.isFinite(n)) return null
-  return formatByteSize(n)
+  return Number.isFinite(n) ? formatByteSize(n) : null
 }
 
-// Strip the longest common DIRECTORY prefix shared by every path
-// in `paths`. Mirrors the analyzer-side path normalisation so the
-// UI matches what it produces:
-//
-//   * Segment-level (only whole directory segments are stripped).
-//   * Caps the prefix so it never ends in a `@scope` segment or
-//     a `node_modules` segment — those identify the package each
-//     listed file belongs to and should stay visible in the
-//     stripped output. So
-//     `node_modules/foo/{a,b}.js` strips to `node_modules/foo/{a,b}.js`
-//     (prefix '') rather than to `{a,b}.js`.
-//
-// Returns `{ prefix, stripped }`. `prefix` ends with `/` (or is
-// empty); `stripped` is a parallel array. With ≤1 path the result
-// is a no-op pass-through.
+// Strip the longest common DIRECTORY prefix of `paths`, as the analyzer
+// normalises them: whole segments only, and never ending in a `@scope` or
+// `node_modules` segment, which name the package each file belongs to
+// (`node_modules/foo/{a,b}.js` keeps its prefix). Returns `{ prefix,
+// stripped }`, `prefix` ending in `/` or empty.
 export function stripCommonPathPrefix(paths) {
   if (paths.length <= 1) return { prefix: '', stripped: [...paths] }
   const split = paths.map((p) => p.split('/'))
   const minLen = Math.min(...split.map((s) => s.length))
   let prefixLen = 0
-  for (let i = 0; i < minLen - 1; i++) {
-    if (split.every((s) => s[i] === split[0][i])) prefixLen = i + 1
-    else break
-  }
-  // Back off the prefix when its last segment is part of the
-  // package's identity (scope `@org` or the `node_modules` marker).
+  while (prefixLen < minLen - 1 && split.every((s) => s[prefixLen] === split[0][prefixLen])) prefixLen++
   if (prefixLen > 0 && split[0][prefixLen - 1].startsWith('@')) prefixLen--
   if (prefixLen > 0 && split[0][prefixLen - 1] === 'node_modules') prefixLen--
   if (prefixLen === 0) return { prefix: '', stripped: [...paths] }
-  const prefix = `${split[0].slice(0, prefixLen).join('/')}/`
-  const stripped = split.map((s) => s.slice(prefixLen).join('/'))
-  return { prefix, stripped }
+  return { prefix: `${split[0].slice(0, prefixLen).join('/')}/`, stripped: split.map((s) => s.slice(prefixLen).join('/')) }
 }
 
-// Strip the `<deps-dir>/<pkg>/` prefix so the path is rooted at the
-// package's repo root — `node_modules/lodash/lib/foo.js` → `lib/foo.js`,
-// `dependencies/@org/pkg/sub/x.js` → `sub/x.js`. Greedy `.*\/` runs to
-// the LAST `/<deps-dir>/` so nested layouts strip the innermost
-// package, matching the package-name extraction at export time.
-// Uses the active `depsDir` (via the cached `stripRe`) so a
-// `dependencies/` path is only stripped when that's what the
-// project's vendor dir actually is.
+// `<deps-dir>/<pkg>/lib/foo.js` → `lib/foo.js`, rooted at the package's
+// repo, under the active deps dir only.
 function stripPackagePrefix(file) {
   return file.match(stripRe)?.[1] ?? file
 }
 
-// Searchable text for `state.filterInclude`. Joins the user-visible
-// fields (file path, title, description, impact, reproduction,
-// recommendation, confidence reasoning, revalidation verdict + its
-// stamp, discovery context) plus the per-finding `repo.github`
-// slug — the latter so the search field can match findings by their
-// upstream repo (`lodash/lodash`), useful when a merged report mixes
-// findings from many node_modules dependencies.
-//
-// The per-finding triage annotations (`comment` and `fix`) are NOT in
-// this base set — they live in `state.triage`, keyed off the finding,
-// and folding them in would force `findingText` to import `state`. But
-// this module stays free of any `#client/...` import so it can ride
-// the lazy graph bundle (see the `fileUrl` note below), so filters.js
-// matches the comment and fix fields itself; see matchesFilters there.
-//
-// Kept per finding, once for each state of the layer: a search asks it
-// of every finding on every keystroke, and none of the fields it reads
-// changes once the finding is ingested.
+// Searchable text for `state.filterInclude`: the user-visible fields plus
+// the per-finding `repo.github` slug (so a search can match an upstream
+// repo). Triage comments and fixes live in `state.triage`, which this
+// module can't import, so filters.js matches those itself. Kept per
+// finding and layer state: asked of every finding on every keystroke.
 const findingTexts = { on: new WeakMap(), off: new WeakMap() }
 export function findingText(f) {
   const kept = revalidationOn ? findingTexts.on : findingTexts.off
   let text = kept.get(f)
   if (text === undefined) {
-    // The pass's own words come out of the haystack with the layer: a
-    // search shouldn't match text the card isn't showing.
+    // The pass's words leave the haystack with the layer.
     const reval = revalidationOn ? [revalidateStamp(f), f.revalidateVerdict, f.revalidateRecommendation] : []
     text = [f.file, f.title, f.description, f.impact, f.reproduction, evidenceMarkdown(f), f.recommendation, f.confidenceReason, ...reval, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
     kept.set(f, text)
@@ -470,30 +290,21 @@ export function findingText(f) {
   return text
 }
 
-// A finding filled in since its text was kept: a team's, drawn from its
-// detail-less copy first (managed-details.js).
+// A finding filled in since its text was kept (managed-details.js).
 export function forgetFindingText(f) {
   findingTexts.on.delete(f)
   findingTexts.off.delete(f)
 }
 
-// The per-finding run-meta line (@preventive/report/src/finding.js runMetaLine) under
-// the revalidation layer's state: the pass's row names itself only
-// while the layer is on. Led by the finding's category where a report
-// filed it under one (Claude Security's `**Category:**`,
-// @preventive/report/src/parse-md.js) — the meta line is where a row says what kind
-// of thing it is, and for a product that is one analyzer with no run
-// meta, the category is all there is to say.
+// The run-meta line under the layer's state (the pass's row names itself
+// only while it is on), led by the finding's category where it has one.
 export function formatRunMeta(f) {
   const category = typeof f?.category === 'string' ? f.category.trim() : ''
   return [category, runMetaLine(f, revalidationOn)].filter(Boolean).join(' · ')
 }
 
-// Walk a list of strings and shrink the candidate prefix until every
-// string starts with it. Returns '' when no shared prefix exists. Used
-// for the print button's title heuristic when multiple reports are
-// loaded — gives the saved PDF a name that still reads as "this batch"
-// (`security-` / `2026-04-` / etc.) without having to manually pick.
+// The longest prefix every string shares, or '' (the print title of a
+// multi-report batch).
 export function commonPrefix(strings) {
   if (strings.length === 0) return ''
   let prefix = strings[0]
@@ -504,29 +315,18 @@ export function commonPrefix(strings) {
   return prefix
 }
 
-// Strip protocol + host to the bare `user/repo` slug — the canonical
-// form per-finding `repo.github` carries (e.g. `lodash/lodash`), so a
-// finding-sourced value and a user-typed URL render identically, and
-// a typed fallback URL and an analyzer slug surface as the same key
-// in the Repositories view. Falls back to the raw input when the URL
-// isn't a github.com one. Shared by `<repo-chip>` (chip face + copy
-// text), `<repo-filter>` (option labels) and `render-repositories.js`
-// (row label / search / sort key).
+// A github.com URL as its bare `user/repo` slug (the form `repo.github`
+// carries), so typed URLs and analyzer slugs label and key the same; any
+// other input as given.
 export function prettyRepoLabel(s) {
   if (!s) return ''
   const m = s.match(/github\.com\/([^/?#]+\/[^/?#]+?)(?:\.git)?(?:[/?#]|$)/iu)
   return m ? m[1] : s
 }
 
-// Normalize a user-typed repo identifier into a base URL with no
-// trailing slash. Accepts three input shapes so the user doesn't
-// have to remember which one we want:
-//   * full URL — `https://github.com/user/repo`
-//   * host-prefixed slug without scheme — `github.com/user/repo`
-//   * bare slug — `user/repo`
-// Anything else falls through to the slug branch (treated as a path
-// under github.com); a malformed input there just produces a broken
-// link, which is the user's signal to fix what they typed.
+// A typed repo — full URL, `github.com/user/repo`, or a bare `user/repo`
+// slug (anything else is treated as one) — as a base URL with no trailing
+// slash.
 function repoBaseUrl(s) {
   if (!s) return null
   const trimmed = s.trim().replace(/\/$/u, '')
@@ -536,59 +336,34 @@ function repoBaseUrl(s) {
   return `https://github.com/${trimmed}`
 }
 
-// A bare package reference — `name@1.2.3` or `@scope/name@1.2.3` —
-// names a DEPENDENCY, not a path inside any repository (piolium `Key
-// code` lines cite vulnerable packages this way). The shape is strict:
-// the only allowed slash is the scope separator, so a real path with an
-// `@` in a segment (`src/@types/x.d.ts`) never matches.
+// A bare package reference — `name@1.2.3`, `@scope/name@1.2.3` — names a
+// dependency, not a path. The only slash allowed is the scope's, so
+// `src/@types/x.d.ts` never matches.
 const PKG_REF_RE = /^(?:@[\w.-]+\/)?[\w.-]+@[^/\s@]+$/u
 export function isPkgRef(file) {
   return PKG_REF_RE.test(file || '')
 }
 
-// A repository as the link builders take it: the bare identifier — a
-// `owner/name` slug, or the URL the reader typed into the chip — or
-// the `{ github, directory }` object a report stamps, at its header
-// (reaching here as the resolved fallback) and on a finding of its
-// own. `directory` says where inside the repository the tree the
-// report describes sits (`{ github: 'babel/babel', directory:
-// 'packages/babel-core' }`, @preventive/report/src/meta.js repoDirectory), so it
-// comes back as the PREFIX the file path hangs off — and it comes
-// back only with the repo it was declared beside, never applied to
-// the other one.
+// A repository as the link builders take it: a slug or typed URL, or a
+// report's `{ github, directory, commit }` stamp, whose `directory` (where
+// in the repo the report's tree sits) becomes the path prefix — only ever
+// for the repo it was declared beside.
 function repoTarget(repo) {
   if (repo == null || typeof repo === 'string') return { id: repo ?? '', prefix: '', commit: '' }
   const dir = repoDirectory(repo)
   return { id: typeof repo.github === 'string' ? repo.github : '', prefix: dir ? `${dir}/` : '', commit: repoCommit(repo) }
 }
 
-// `repo` (the per-finding `repo` stamp, e.g. `{ github:
-// 'lodash/lodash' }`, or that slug on its own) wins over the
-// user-typed repo URL when available — it points at the actual
-// upstream of a node_modules dependency rather than at the project
-// repo, which doesn't carry node_modules sources. `repoFallback` is the
-// resolved per-finding repo (stamped at ingest as `_repoFallback`,
-// paired with the report's directory by group.js findingRepoTarget);
-// the caller is responsible for OR-ing in `state.repoUrl` when it
-// wants the post-ingest single-file-mode URL changes to flow through.
-// Keeping the state read at the call site is what lets this module
-// stay free of any `#client/...` import — `view/format.js` is in the
-// dependency chain of the lazy `ui/graph.js` bundle (via `SEVERITIES`
-// / `formatBytes`), and pulling in `state` would drag the whole
-// client aggregator with it.
-// A package-reference "file" links to nothing — blob-linking
-// `.../blob/HEAD/name@1.2.3` under either repo would 404.
-//
-// The finding's `repo` may be written as a GitHub URL (`….git`,
-// `…/tree/main`) and is read down to its slug, as the issue button
-// reads it. Links are at the revision the report read, so a line number
-// still lands on the code it describes after the branch moves on:
+// Blob URL for a file. The finding's own `repo` (a dependency's upstream,
+// read down to its slug) wins over `repoFallback`, the report's resolved
+// repo (group.js findingRepoTarget; callers OR in `state.repoUrl`). A
+// package reference links nowhere. The revision is the one the report
+// read, so line anchors survive branch moves:
 //   1. the finding's own `repo.commit`, for its own repo;
-//   2. the report's (`repoFallback.commit`), for the report's repo,
-//      which a finding's own repo is when it names the same slug;
-//   3. `auditedCommit`, the "Commit audited" older piolium and markdown
-//      reports carry, for the report's repo or own source, never a
-//      dependency's upstream;
+//   2. the report's commit, for the report's repo (also when the
+//      finding's repo names the same slug);
+//   3. `auditedCommit` (older piolium / markdown reports), for the
+//      report's repo or own source, never a dependency's upstream;
 //   4. HEAD.
 // Never `commitHash`: that is where the bug was introduced.
 export function fileUrl(file, repo, repoFallback, auditedCommit = '') {
@@ -610,11 +385,9 @@ export function fileUrl(file, repo, repoFallback, auditedCommit = '') {
   return `${base}/blob/${fallback.commit || audited || 'HEAD'}/${fallback.prefix}${file}`
 }
 
-// File-level link for a finding's path — the file headers the list /
-// grouped views stack their cards under. Same target as the finding's
-// own `findingUrl` minus the line anchor, so a header and the line
-// links under it resolve to one revision of one file rather than two.
-// Plain text (no `<a>`) when there's nothing to link against.
+// The file header link over a finding's cards: the finding's own link
+// minus its line anchor, so header and lines name one revision. Plain text
+// with nothing to link.
 export function fileLink(f, repoFallback) {
   const file = f?.file ?? ''
   const url = findingUrl(f, repoFallback)
@@ -622,32 +395,19 @@ export function fileLink(f, repoFallback) {
   return html`<a href=${stripLineAnchor(url)} target="_blank" rel="noopener">${file}</a>`
 }
 
-// Drop a trailing `#L42` / `#L10-L20` anchor: a file-level link wants
-// the file, not the line one finding in it sits on. Any other fragment
-// is left alone — it isn't ours to interpret.
+// Only our own `#L42` / `#L10-L20` anchors; any other fragment isn't ours.
 function stripLineAnchor(url) {
-  return url.replace(/#L\d+(?:-L?\d+)?$/u, '')
+  return url.replace(GH_LINE_ANCHOR_RE, '')
 }
 
-// A `lineRange` as GitHub anchors it: `#L42`, or `#L20-L30`, which it
-// highlights whole.
 function lineAnchor({ start, end }) {
   return end > start ? `#L${start}-L${end}` : `#L${start}`
 }
 
-// Source URL for ONE finding's location — every finding-level file /
-// line link routes through here so they all resolve the same target.
-//
-// A markdown import carries the report's OWN link in `f.location` (the
-// `[file:lines](url)` ref of `## Evidence` / `## Location`): an exact
-// ref, usually pinned to the commit the report was produced from, with
-// the line anchor already on it. That beats the `fileUrl()`
-// reconstruction, which can only pin `HEAD` — a different revision, and
-// a 404 once the path moves — and which yields nothing at all for the
-// claude-security reports that name no repository. Non-http `location`
-// values (parse-piolium's `piolium:<id>` placeholder) fall through to
-// the reconstruction, as do JSON findings, which carry no `location`.
-// Returns null when neither source yields a URL.
+// Source URL for one finding's location; every finding-level link goes
+// through here. A markdown import's own `f.location` link (pinned, anchored)
+// beats the reconstruction, which needs a repo; non-http locations
+// (piolium's `piolium:<id>`) fall through to it. Null with neither.
 export function findingUrl(f, repoFallback) {
   if (!f) return null
   if (isHttpUrl(f.location)) return f.location
@@ -659,54 +419,43 @@ export function findingUrl(f, repoFallback) {
   return Number.isFinite(lineNum) ? `${url}#L${lineNum}` : url
 }
 
-// A GitHub blob URL as the reference it stands for —
-// `owner/repo/path/to/file.ts:20-30`. What the link is FOR, with the
-// chrome that makes it addressable taken off: the origin, the
-// `blob/<ref>/` segment, and the `#L20-L30` anchor spelled as the
-// `:20-30` every other location on the card wears.
-//
-// The ref goes with the rest of the chrome, `HEAD` or a pinned commit
-// alike — a forty-character sha in the middle of a path tells the
-// reader nothing they are looking for, and the link itself still
-// carries it. `tree` and `blame` URLs read the same way.
-//
-// Empty for anything that isn't a GitHub blob-shaped URL: a report's
-// own link to some other host, a `piolium:` placeholder. Callers show
-// the mark only when this has something to say.
+// A GitHub blob / tree / blame URL as `owner/repo/path/to/file.ts:20-30`:
+// origin, ref and anchor taken off (the link still carries the ref). Empty
+// for anything else.
 const GH_BLOB_RE = /^https?:\/\/(?:www\.)?github\.com\/([^/\s]+\/[^/\s]+)\/(?:blob|tree|blame)\/[^/\s]+\/(\S+)$/u
 const GH_LINE_ANCHOR_RE = /#L(\d+)(?:-L?(\d+))?$/u
 
 export function githubRefLabel(url) {
   const m = typeof url === 'string' ? GH_BLOB_RE.exec(url) : null
   if (!m) return ''
-  let path = m[2]
-  const anchor = GH_LINE_ANCHOR_RE.exec(path)
-  if (!anchor) return `${m[1]}/${path}`
-  path = path.slice(0, anchor.index)
-  const lines = anchor[2] ? `${anchor[1]}-${anchor[2]}` : anchor[1]
-  return `${m[1]}/${path}:${lines}`
+  const anchor = GH_LINE_ANCHOR_RE.exec(m[2])
+  if (!anchor) return `${m[1]}/${m[2]}`
+  return `${m[1]}/${m[2].slice(0, anchor.index)}:${anchor[2] ? `${anchor[1]}-${anchor[2]}` : anchor[1]}`
 }
 
-// Reports hard-wrap their markdown, so a paragraph arrives carrying the
-// line breaks the author's editor happened to put in. Markdown reads
-// those as SOFT breaks — they reflow — and honouring them literally
-// renders a column of ragged short lines inside a card that is wider
-// than the source was. `flowText` joins each paragraph back into one
-// run, leaving the blank lines between paragraphs alone.
-//
-// A paragraph is left EXACTLY as written when any of its lines opens
-// something block-level — an indented (code) line, a list marker, a
-// fence, a quote, a heading, a table row, a rule. Those are the constructs
-// whose line breaks carry meaning (a piolium PoC snippet, a list of
-// affected files), and `.desc` / `.section-body` keep `pre-wrap` so
-// they still render as the report wrote them. (The fence alternatives
-// are belt-and-braces: `flowText` carves every FENCED block out before
-// a line reaches here, so a fence line no longer arrives on this path.)
+// `text` cut at its fenced `ranges`: [prose, fence, prose, …, prose], the
+// prose runs '' where a fence sits at either end.
+function fenceSplit(text, ranges) {
+  const parts = []
+  let last = 0
+  for (const [start, end] of ranges) {
+    parts.push(text.slice(last, start), text.slice(start, end))
+    last = end
+  }
+  parts.push(text.slice(last))
+  return parts
+}
+
+// ── Reflow ───────────────────────────────────────────────────────────
+// Reports hard-wrap their markdown; those soft breaks reflow in markdown,
+// and kept literally they render as ragged short lines in a wider card. So
+// each paragraph is joined into one run — unless any of its lines opens a
+// block (indented code, list, fence, quote, heading, table row, rule),
+// whose breaks carry meaning and which `.desc` renders `pre-wrap`.
 const BLOCK_LINE_RE = /^(?:\s+\S|[-*+] |\d+[.)] |>|#{1,6}(?:[ \t]|$)|\||`{3}|~{3})/u
 
 function flowParagraphs(text) {
-  // The capturing split keeps the blank-line runs, so paragraph
-  // spacing survives the rejoin untouched.
+  // The capturing split keeps the blank-line runs as they are.
   return text.split(/(\n{2,})/u).map((chunk) => {
     if (/^\n+$/u.test(chunk)) return chunk
     const lines = chunk.split('\n')
@@ -715,11 +464,8 @@ function flowParagraphs(text) {
   }).join('')
 }
 
-// One run of prose beside a fenced block. The newlines on a side a
-// fence abuts are peeled off and re-attached around the reflow: that
-// break is what puts the fence on its own line, and `flowParagraphs`
-// — which drops the empty line its split leaves at either edge —
-// would otherwise weld the prose onto the fence.
+// Prose beside a fence: the newlines on a side a fence abuts are kept
+// around the reflow, or the prose would weld onto the fence.
 function flowRun(run, keepLead, keepTail) {
   const lead = keepLead ? /^\n*/u.exec(run)[0] : ''
   const body = run.slice(lead.length)
@@ -727,71 +473,33 @@ function flowRun(run, keepLead, keepTail) {
   return lead + flowParagraphs(body.slice(0, body.length - tail.length)) + tail
 }
 
-// Fenced code is exempt from all of the above: its line breaks are the
-// snippet. Paragraph reflow can't be trusted to leave one alone on its
-// own — a block carrying a BLANK line (a PoC with a gap between setup
-// and trigger) splits into paragraphs, and the halves that hold no
-// fence line read as ordinary hard-wrapped prose and get folded into
-// one line. So the fenced ranges come out first (the same reading the
-// parsers use — @preventive/report/src/md-structure.js) and only the prose between
-// them is reflowed, which also means prose sharing a paragraph with a
-// snippet now flows instead of being pinned by it.
-//
-// GitHub's web editor saves a body with CRLF line endings, and every
-// line test here reads `\n` alone, so those come in as `\n` first.
+// Fenced code is never reflowed: a snippet with a blank line in it would
+// split into paragraphs that read as prose. So the fences (as the parsers
+// read them, fenceRanges) come out first and only the prose between is
+// flowed. CRLF (GitHub's web editor) is read as `\n`.
 export function flowText(raw) {
   if (!raw) return raw
   const text = raw.replaceAll('\r\n', '\n')
   const ranges = fenceRanges(text)
   if (ranges.length === 0) return flowParagraphs(text)
-  const out = []
-  let last = 0
-  for (const [start, end] of ranges) {
-    if (start > last) out.push(flowRun(text.slice(last, start), last > 0, true))
-    out.push(text.slice(start, end))
-    last = end
-  }
-  if (last < text.length) out.push(flowRun(text.slice(last), true, false))
-  return out.join('')
+  const parts = fenceSplit(text, ranges)
+  return parts.map((part, i) => (i % 2 || !part ? part : flowRun(part, i > 0, i < parts.length - 1))).join('')
 }
 
 // ── Fenced code blocks ───────────────────────────────────────────────
-// Reports embed snippets — a piolium PoC, the vulnerable lines a
-// claude-security finding quotes — as fenced blocks, and the parsers
-// carry them into the description verbatim. Split a body into the
-// prose runs and the fenced blocks between them, so the card can draw
-// each block as a real `<pre>` instead of leaving the fence markers to
-// print as literal text with the inline pass chipping up whatever
-// quotes and backticks the snippet happened to contain.
-//
-// Prose runs come back as plain strings and blocks as `{ lang, code }`
-// — the same string-or-token shape parseCommentRefs returns. `code` is
-// the content between the fences, verbatim. `lang` is the info
-// string's first word, case-folded (```TS and ```ts are one language)
-// and '' when the fence named none or named something that isn't a
-// language tag: a bare word is a language, while the filename or
-// `{highlight: 1-3}` attribute block other renderers accept there is
-// not, and stamping one onto the block's label would print noise.
-//
-// The newlines BETWEEN a block and the prose around it are dropped
-// with the fences. They exist to put the fence on its own line, and
-// the block is a `<pre>` that carries its own margins — while the
-// prose around it renders into a `white-space: pre-wrap` box, which
-// would print each of those newlines as a blank line above and below
-// every block.
-//
-// Text with no fence in it comes back as a single-element array
-// holding it unchanged, so the caller can take a plain-text fast path.
-// Pairing is `fenceRanges`' (@preventive/report/src/md-structure.js), the same reading
-// the parsers use — so what a parser treated as code is what the card
-// draws as code, an unclosed fence running to end of input included.
+// `codeBlockSegments` splits a body into prose strings and `{ lang, code }`
+// blocks, so the card draws each fence as a `<pre>`. Pairing is
+// fenceRanges' (an unclosed fence runs to the end), so what a parser read
+// as code is drawn as code. `code` is verbatim; `lang` is the info string's
+// first word, case-folded, '' unless it is a plain language tag (not a
+// filename or `{highlight: …}`). The newlines between a block and its
+// prose go with the fences: the prose renders `pre-wrap`, and they would
+// print as blank lines around every block. Text with no fence comes back
+// as `[text]`.
 const FENCE_LINE_RE = /^( *)(`{3,}|~{3,})(.*)$/u
 const LANG_TAG_RE = /^[a-z0-9+#._-]{1,20}$/u
 
-// Up to `n` leading spaces off a line — the shed markdown gives a
-// fenced block's content, which is "up to" rather than "exactly"
-// because a line may start left of its own fence (a blank-ish line
-// padded with fewer spaces) and there is nothing there to remove.
+// Up to `n` leading spaces off a line (a line may start left of its fence).
 function shedIndent(line, n) {
   let i = 0
   while (i < n && line[i] === ' ') i++
@@ -800,25 +508,15 @@ function shedIndent(line, n) {
 
 function fencedBlock(raw) {
   const lines = raw.split('\n')
-  // `fenceRanges` only ever opens a range on a fence line, so the
-  // match is there; the `?.` keeps this readable rather than resting
-  // the whole function on that.
   const open = FENCE_LINE_RE.exec(lines[0])
   const marker = (open?.[2] ?? '```').slice(0, 3)
   const tag = (open?.[3] ?? '').trim().split(/\s+/u)[0].toLowerCase()
-  // The last line is the CLOSING fence unless the block dangles at end
-  // of input — and a dangling one can still end on a fence line of the
-  // other marker (a ``` inside a ~~~ block is content), so the marker
-  // has to match for the line to be chrome rather than code.
+  // The last line is chrome only when it closes with the opening marker:
+  // a block dangling at the end can end on a fence of the other kind.
   const close = lines.length > 1 ? FENCE_LINE_RE.exec(lines.at(-1)) : null
   const closed = Boolean(close?.[2].startsWith(marker))
-  // A block written under a list item is indented to that item's text,
-  // and that indentation belongs to the LIST, not to the snippet:
-  // markdown sheds the opening fence's indent from every line of the
-  // content, and so must we. Kept as written otherwise the `<pre>`
-  // prints the whole snippet shifted right, its own relative
-  // indentation buried under the step number's, and copying a line out
-  // of it pastes the list's whitespace along with the code.
+  // A fence under a list item is indented to the item; markdown sheds the
+  // opening fence's indent from every content line, and so do we.
   const indent = open?.[1].length ?? 0
   const body = lines.slice(1, closed ? -1 : undefined)
   return {
@@ -830,70 +528,41 @@ function fencedBlock(raw) {
 export function codeBlockSegments(text) {
   const ranges = fenceRanges(text || '')
   if (ranges.length === 0) return [text]
-  const segments = []
-  let last = 0
-  const pushProse = (raw, afterBlock) => {
-    const prose = (afterBlock ? raw.replace(/^\n+/u, '') : raw).replace(/\n+$/u, '')
-    if (prose) segments.push(prose)
-  }
-  for (const [start, end] of ranges) {
-    if (start > last) pushProse(text.slice(last, start), last > 0)
-    segments.push(fencedBlock(text.slice(start, end)))
-    last = end
-  }
-  if (last < text.length) pushProse(text.slice(last), true)
-  return segments
+  return fenceSplit(text, ranges).flatMap((part, i) => {
+    if (i % 2) return [fencedBlock(part)]
+    const prose = (i > 0 ? part.replace(/^\n+/u, '') : part).replace(/\n+$/u, '')
+    return prose ? [prose] : []
+  })
 }
 
-// ── Lists ────────────────────────────────────────────────────────────────
-// Reproduction steps, affected-file rundowns, a recommendation's
-// alternatives — the narrative fields arrive as markdown lists as
-// often as prose. They used to render as their own source text: the
-// `.` after the number sitting in the run of prose, every item hanging
-// at the left margin, a wrapped item indistinguishable from the next
-// one. So the lists come out here and the card draws them as lists.
-//
-// `listSegments` splits a body into list blocks and the runs between
-// them, and each item's content comes back with the marker and the
-// item's indentation shed — which makes it a small markdown body of
-// its own, rendered by the same pass that rendered the whole. That
-// recursion is what gets a nested list, a wrapped step, or a fenced
-// snippet under a step (the shape that started all this) drawn INSIDE
-// its item rather than after the list.
-//
-// Text with no list in it comes back as a single-element array holding
-// it unchanged, the same fast path codeBlockSegments offers.
+// ── Lists ────────────────────────────────────────────────────────────
+// `listSegments` splits a body into prose runs and `{ ordered, start,
+// items }` lists. Each item's content has its marker and indent shed, a
+// markdown body of its own that the renderer recurses into — which draws
+// a nested list, a wrapped step or a fenced snippet INSIDE its item. Text
+// with no list comes back as `[text]`.
 const LIST_ITEM_RE = /^( *)(?:[-*+]|(\d{1,9})[.)]) +(?=\S)/u
-// `* * *` and `- - -` are horizontal rules, not one-item lists.
+// `* * *` and `- - -` are rules, not one-item lists.
 const HRULE_RE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/u
 
 function leadingSpaces(line) { return /^ */u.exec(line)[0].length }
 
-// Trailing blank lines belong to the gap after an item, not to it.
-function trimTrailingBlank(lines) {
-  let end = lines.length
-  while (end > 0 && !lines[end - 1].trim()) end--
-  return lines.slice(0, end).join('\n')
-}
-
-// Each line's offset in the text it was split from, to check the line
-// against fenceRanges.
-function lineOffsets(lines) {
+// `src`'s lines, and whether line `i` sits in a fenced block (fenceRanges).
+function fencedLines(src) {
+  const ranges = fenceRanges(src)
+  const lines = src.split('\n')
   const offsets = []
   let at = 0
   for (const line of lines) { offsets.push(at); at += line.length + 1 }
-  return offsets
+  return { lines, inCode: (i) => inFence(ranges, offsets[i]) }
 }
 
 export function listSegments(text) {
   const src = typeof text === 'string' ? text : ''
   if (!src) return [text]
-  const ranges = fenceRanges(src)
-  const lines = src.split('\n')
-  // A candidate marker is checked against the fenced ranges: a `- ` or
-  // `1. ` inside a snippet is code.
-  const offsets = lineOffsets(lines)
-  const startsItem = (i) => !inFence(ranges, offsets[i])
+  const { lines, inCode } = fencedLines(src)
+  // A marker inside a fenced snippet is code.
+  const startsItem = (i) => !inCode(i)
     && !HRULE_RE.test(lines[i])
     && LIST_ITEM_RE.test(lines[i])
 
@@ -911,45 +580,39 @@ export function listSegments(text) {
     const first = LIST_ITEM_RE.exec(lines[i])
     const ordered = Boolean(first[2])
     const items = []
-    // The open item: the column its continuation lines sit at, and the
-    // content collected so far with that column shed.
+    // The open item: the column its continuation lines sit at, and its
+    // content so far with that column shed.
     let item = null
     let afterBlank = false
     while (i < lines.length) {
       const line = lines[i]
-      // Inside a fence nothing is structural — not a blank line, not a
-      // marker, not a dedent. The snippet is the item's content.
-      if (!inFence(ranges, offsets[i])) {
+      // Inside a fence nothing is structural: the snippet is item content.
+      if (!inCode(i)) {
         if (!line.trim()) { item.lines.push(''); afterBlank = true; i++; continue }
         const indent = leadingSpaces(line)
         const marker = HRULE_RE.test(line) ? null : LIST_ITEM_RE.exec(line)
-        // A marker indented AT LEAST to the open item's text is a
-        // nested list inside it; one to the left of that is the next
-        // item of this list — unless it switches between bullets and
-        // numbers, which starts a list of its own.
+        // A marker at or past the item's text column nests inside it; one
+        // left of it is this list's next item — unless it switches between
+        // bullets and numbers, which starts another list.
         if (marker && (!item || indent < item.column)) {
           if (Boolean(marker[2]) !== ordered) break
-          if (item) items.push(trimTrailingBlank(item.lines))
+          if (item) items.push(trimBlankLines(item.lines))
           item = { column: marker[0].length, lines: [line.slice(marker[0].length)] }
           afterBlank = false
           i++
           continue
         }
-        // Back at the margin after a blank line: the list is over. Without
-        // the blank it's a wrapped item, which markdown reads as part of
-        // the item however far left the report wrapped it to — unless the
-        // line is a heading, a rule or a quote, which no item wraps onto.
+        // Back at the margin after a blank line, the list is over; without
+        // one it's a lazily wrapped item — unless the line is a heading, a
+        // rule or a quote, which no item wraps onto.
         if (indent < item.column && (afterBlank || HEADING_RE.test(line) || HRULE_RE.test(line) || QUOTE_LINE_RE.test(line))) break
       }
       item.lines.push(shedIndent(line, item.column))
       afterBlank = false
       i++
     }
-    if (item) items.push(trimTrailingBlank(item.lines))
-    // The first number is the one that counts — markdown numbers the
-    // rest in sequence from it, so a rundown that opens at `10.` keeps
-    // its place in the sequence and one that opens at `1.` needs no
-    // start at all.
+    if (item) items.push(trimBlankLines(item.lines))
+    // Markdown numbers on from the first number, so only it is kept.
     out.push({ ordered, start: ordered ? Number(first[2]) : null, items })
     proseFrom = i
   }
@@ -959,20 +622,10 @@ export function listSegments(text) {
 }
 
 // ── Headings and rules ───────────────────────────────────────────────
-// A pull request's description is sectioned with `## Summary` /
-// `### Testing` headings and signed off under a `---` rule, which used
-// to print as their own source text. Each is one whole line, so a
-// paragraph holding one splits around it: the prose before and after
-// come back as strings, a heading as `{ level, text }` (its closing
-// hashes dropped) and a rule as `{ rule: true }`. Only those two —
-// setext headings and the rest of markdown stay text (block quotes come
-// out before a paragraph gets here: quoteSegments, below): a
-// `---` right under a line of prose underlines it, so it is no rule
-// (a `***`, `___` or `- - -` there can't be an underline, and is one;
-// nor can a line of spaces be underlined).
-//
-// A paragraph with neither comes back as a single-element array holding
-// it unchanged, the same fast path listSegments offers.
+// A paragraph splits around its ATX headings (`{ level, text }`, closing
+// hashes dropped) and rules (`{ rule: true }`); setext headings stay text,
+// so a `---` right under prose is its underline, not a rule (a `***`,
+// `___` or `- - -` can't be one). Without either, `[text]`.
 const HEADING_RE = /^ {0,3}(#{1,6})[ \t]+(\S.*?)(?:[ \t]+#+)?[ \t]*$/u
 const SETEXT_UNDERLINE_RE = /^ {0,3}-+[ \t]*$/u
 
@@ -980,7 +633,7 @@ export function lineBlockSegments(text) {
   const lines = text.split('\n')
   const out = []
   let from = 0
-  // A line of spaces beside a heading or a rule is no part of the prose.
+  // Lines of spaces beside a heading or rule are no part of the prose.
   const pushProse = (until) => {
     const run = lines.slice(from, until).join('\n').replaceAll(/^(?:[ \t]*\n)+|(?:\n[ \t]*)+$/gu, '')
     if (run.trim()) out.push(run)
@@ -999,67 +652,37 @@ export function lineBlockSegments(text) {
 }
 
 // ── Block quotes and alerts ──────────────────────────────────────────
-// A quoted passage, `>` down its left, used to print as its own source
-// text: every line led by its marker, the quote run on into the prose.
-// And GitHub's alerts are quotes — `> [!CAUTION]` over the quoted text —
-// so an issue body that leads its Impact with one showed the markup.
-//
-// `quoteSegments` splits a run of prose into the runs between quotes
-// and the quotes, each `{ quote: true, alert, body }`. `body` is the
-// quote's content with its markers shed, a markdown body of its own for
-// the same pass to render, as a list item's is — which puts the quote's
-// paragraphs (a bare `>` between them), lists, fenced snippets and
-// quotes of its own INSIDE it.
-//
-// A line is the quote's when it opens on `>`, up to three spaces in;
-// and, as markdown reads it, when it goes on with the paragraph the
-// quote left open without one (laziness): a line of text straight under
-// quoted text, that doesn't start a block of its own — a heading, a
-// rule, a fence or a list item end the quote instead, as a blank line
-// does. A fence the quote opened takes no lazy line either: its code
-// carries the `>` to the end.
-//
-// `alert` is the alert the quote is, lowercased: its first line is
-// `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]` on
-// its own, in any case, as GitHub reads it, and that line is dropped
-// from `body`. Null for any other quote — and for a marker with nothing
-// under it, which GitHub draws as a plain quote. `alerts: false` reads
-// every quote as plain: GitHub draws an alert only at the top level of
-// a body, never inside a list item or another quote.
-//
-// A `>` line inside a fenced block is code (fenceRanges, the parsers'
-// reading). And the fences inside a quote are the quote's: their lines
-// carry the `>` and open nothing out here, so a snippet comes out whole
-// in `body` and is cut out when the quote's body is rendered.
-//
-// The prose runs come back as written, blank lines and all: joined back
-// with `\n` in place of each quote, they're the text again. Text with
-// no quote in it comes back as a single-element array holding it
-// unchanged, the same fast path the splitters above offer.
+// `quoteSegments` splits prose into runs and `{ quote: true, alert, body }`
+// quotes; `body` has its markers shed, a markdown body the renderer
+// recurses into. A line is the quote's when it opens on `>` (up to three
+// spaces in), or lazily continues the paragraph the quote left open — not
+// a heading, rule, fence or list item, not after a blank line, and not
+// inside a fence the quote opened. `alert` is GitHub's `[!NOTE]` / `TIP` /
+// `IMPORTANT` / `WARNING` / `CAUTION` on the first line alone (any case,
+// dropped from `body`), lowercased; null for plain quotes and for a marker
+// with nothing under it. `alerts: false` reads every quote as plain
+// (GitHub draws alerts only at the top level). A `>` line inside an outer
+// fence is code; fences inside the quote are the quote's. Prose runs come
+// back as written, so joined with `\n` in place of each quote they are the
+// text again. Without a quote, `[text]`.
 const QUOTE_LINE_RE = /^ {0,3}>/u
 const QUOTE_MARKER_RE = /^ {0,3}> ?/u
 const ALERT_MARKER_RE = /^[ \t]*\[!(note|tip|important|warning|caution)\][ \t]*$/iu
 const FENCE_START_RE = /^ {0,3}(?:`{3}|~{3})/u
-// What leads a quoted line's text: the `>`s of quotes inside it and the
-// markers of its list items. One pass of a starred group, with nothing
-// after it to fail, so it never backtracks however long the run.
+// The `>`s and list markers leading a quoted line's text; one starred
+// group with nothing after it to fail, so it never backtracks.
 const NESTED_MARKERS_RE = /^(?: {0,3}> ?| *(?:[-*+]|\d{1,9}[.)])(?: +|$))*/u
 
-// How many blocks deep, quotes and list items one inside another, the
-// renderer draws (render-finding.js markdownBody), and how many quotes
-// unquotedText sheds. Past that the rest stays text. Each level parses
-// what it holds again, so a line of thousands of `>`s or `- `s costs a
-// few passes rather than one per marker, and no recursion that deep.
+// How many quotes / list items deep the renderer draws (render-finding.js
+// markdownBody) and unquotedText sheds; past it the rest stays text, so a
+// line of thousands of `>`s costs a few passes, not that deep a recursion.
 export const NESTING_DEPTH = 16
 
-// A heading, a rule or a fence: a line that is no paragraph's text.
 const isLeafBlock = (line) => HEADING_RE.test(line) || HRULE_RE.test(line) || FENCE_START_RE.test(line)
 
-// The fence a quote's own lines leave open after `line`: the run that
-// opened it, or '' with none open. Read a line at a time, as a fence
-// opens and closes (a ``` inside a ~~~ or a ```` block is content),
-// which is all the laziness above needs to know; the quote's body gets
-// the full reading when it's rendered.
+// The fence the quote leaves open after `line` ('' for none), read a line
+// at a time (a ``` inside a ~~~ or ```` block is content) — all the
+// laziness rule needs; the body gets the full reading when rendered.
 function fenceAfter(open, line) {
   const fence = FENCE_LINE_RE.exec(line)
   if (!fence) return open
@@ -1067,7 +690,6 @@ function fenceAfter(open, line) {
   return fence[2][0] === open[0] && fence[2].length >= open.length && !fence[3].trim() ? '' : open
 }
 
-// Blank lines at either end of a quote are no part of what it says.
 function trimBlankLines(lines) {
   let from = 0
   let to = lines.length
@@ -1079,10 +701,8 @@ function trimBlankLines(lines) {
 export function quoteSegments(text, { alerts = true } = {}) {
   const src = typeof text === 'string' ? text : ''
   if (!/^ {0,3}>/mu.test(src)) return [text]
-  const ranges = fenceRanges(src)
-  const lines = src.split('\n')
-  const offsets = lineOffsets(lines)
-  const quoted = (i) => QUOTE_LINE_RE.test(lines[i]) && !inFence(ranges, offsets[i])
+  const { lines, inCode } = fencedLines(src)
+  const quoted = (i) => QUOTE_LINE_RE.test(lines[i]) && !inCode(i)
 
   const out = []
   let proseFrom = 0
@@ -1092,17 +712,16 @@ export function quoteSegments(text, { alerts = true } = {}) {
     if (i > proseFrom) out.push(lines.slice(proseFrom, i).join('\n'))
     const body = []
     let fence = ''
-    // Whether the quote's last line left a paragraph open — its text,
-    // past the markers of what it nests, a lazy line can go on with.
+    // Whether the last quoted line left a paragraph a lazy line can go on.
     let paragraph = false
     for (; i < lines.length; i++) {
       const line = lines[i]
       if (quoted(i)) {
         const content = line.replace(QUOTE_MARKER_RE, '')
-        const inCode = fence !== ''
+        const wasCode = fence !== ''
         fence = fenceAfter(fence, content)
         const own = content.replace(NESTED_MARKERS_RE, '')
-        paragraph = !inCode && !fence && own.trim() !== '' && !isLeafBlock(own)
+        paragraph = !wasCode && !fence && own.trim() !== '' && !isLeafBlock(own)
         body.push(content)
       } else if (paragraph && line.trim() && !isLeafBlock(line) && !LIST_ITEM_RE.test(line)) {
         body.push(line)
@@ -1119,30 +738,17 @@ export function quoteSegments(text, { alerts = true } = {}) {
   return out
 }
 
-// The text with its quotes' markers shed and what they quote left in
-// place, for the compact surfaces: a line or two of summary, where a
-// quote's block would break the line they get. An alert's marker line
-// goes with the `>`s, the kind of callout being chrome as they are.
+// The text with quote markers (and alert marker lines) shed, for compact
+// one-line surfaces.
 export function unquotedText(text, depth = NESTING_DEPTH) {
   if (depth <= 0) return text
   return quoteSegments(text).map((seg) => (typeof seg === 'string' ? seg : unquotedText(seg.body, depth - 1))).join('\n')
 }
 
-// ── Line ranges──────────────────────────────────────────────────────
-// A finding's `line` is not always one line. Reports cite spans —
-// `src/a.js:20-30` for a whole function, a block, a chain of calls —
-// and md-structure.js's parseCodeRef keeps them whole rather than
-// picking a start (`60-90` stays `60-90`, so `locationLabel` prints
-// what the report wrote). Everything that has to POINT somewhere has
-// been `parseInt`-ing that down to the first number ever since, which
-// is right for a link anchor and wrong for anything that draws the
-// code: a span shown with only its opening line marked hides the very
-// thing the report was pointing at.
-//
-// So: one reader, `{ start, end }` with `end === start` for a single
-// line, null for a finding that names none. Reversed ends are sorted
-// rather than refused — `30-20` is a report being sloppy about a real
-// span, not a report meaning nothing.
+// ── Line ranges ──────────────────────────────────────────────────────
+// A finding's `line` may be a span (`20-30`, kept whole by the parsers).
+// `{ start, end }` (`end === start` for one line), or null for none;
+// reversed ends are sorted rather than refused.
 const LINE_RANGE_RE = /^(\d+)(?:\s*-\s*(\d+))?$/u
 
 export function lineRange(line) {
@@ -1157,39 +763,14 @@ export function lineRange(line) {
   return { start: Math.min(a, b), end: Math.max(a, b) }
 }
 
-// How a range prints beside a filename — `42`, or `20-30`. Normalised
-// from the parse rather than echoing the field, so a sloppy `30 - 20`
-// reads the same as the span it meant.
+// `42` or `20-30`, from the parse (a sloppy `30 - 20` reads as its span).
 export function lineRangeLabel(range) {
   if (!range) return ''
   return range.start === range.end ? String(range.start) : `${range.start}-${range.end}`
 }
 
 // ── Source snippet ───────────────────────────────────────────────────
-// The lines to show around a cited place, for the preview that opens
-// beside a finding's code links (render-finding.js codeSnippetTemplate;
-// focus-code.js fetches the file itself). `at` is a `lineRange` — or a
-// bare number, which is one.
-//
-// The WHOLE range is always in the window, with `radius` lines of
-// context either side of it: `radius` is how much you want to see
-// around the citation, not a budget the citation has to fit inside, so
-// a `20-120` span comes back whole (the preview caps its height and
-// scrolls — see finding-card.css — rather than the window deciding for
-// the reader which half of their span matters).
-//
-// Comes back with the number the window STARTS at, because a snippet
-// without its line numbers is one the reader can't place against the
-// `file:42` they clicked it from. Both ends clamp to the file, so a
-// finding on line 2 doesn't open on a gutter counting from -2, and one
-// on the last line still gets its leading context. A file shorter than
-// the window is returned whole.
-//
-// Nothing to centre on — an import with no line number, a report that
-// only named the file — opens at the top instead, which is the most
-// useful thing to show of a file nothing points into.
-// `at` as a range, whether it arrived as one, as a number, or as the
-// `20-30` string a report wrote.
+// `at` as a range: a range object, a number, or a report's `20-30`.
 function asRange(at) {
   if (at && typeof at === 'object') {
     const from = lineRange(at.start)
@@ -1200,15 +781,16 @@ function asRange(at) {
   return lineRange(at)
 }
 
+// The lines to preview around a cited place (render-finding.js
+// codeSnippetTemplate): the WHOLE range plus `radius` lines either side
+// (the preview scrolls rather than cropping a long span), clamped to the
+// file, with the line the window starts at. A range past the end clamps
+// onto the last line; nothing to centre on opens at the top.
 export function snippetWindow(content, at, radius = 4) {
-  // `''.split('\n')` is `['']`, not `[]` — an empty file would come
-  // back as one blank line and draw a preview with nothing in it.
+  // `''.split('\n')` is `['']`: an empty file would preview one blank line.
   const lines = typeof content === 'string' && content !== '' ? content.split('\n') : []
   if (lines.length === 0) return { text: '', startLine: 1, lines: [] }
   const range = asRange(at)
-  // A range past the end of the file is a report pointing at a file
-  // that has moved on; clamp onto the last line rather than window
-  // over nothing.
   const cited = range && {
     start: Math.min(range.start, lines.length),
     end: Math.min(range.end, lines.length),
@@ -1221,123 +803,65 @@ export function snippetWindow(content, at, radius = 4) {
   return { text: window.join('\n'), startLine: start, lines: window }
 }
 
-// Source URL for one `## Evidence` row.
-//
-// Reconstructing one is a guess, and it used to be a bad one: every row
-// was resolved against the FINDING's repo, so a row citing some other
-// package's file got a link into a repository that has never contained
-// it — a confident 404, or worse, a real file at that path in an
-// unrelated project. Evidence rows wander: a finding in the app cites a
-// sink in a dependency, a finding in a dependency cites its caller in
-// the app.
-//
-// So the default is NO link, and a repo has to earn the row:
-//
-//   0. the row's own URL, if the report wrote one — not a guess at all
-//   1. the first row, restating the finding's own location
-//   2. the row's own `repo` stamp, which the analyzer writes on a row in
-//      a dependency (with its `package`) where they are not the finding's
-//   3. a row in the same package as the finding
-//   4. a row in another package, when a loaded finding in that install,
-//      or of that package and version, names its upstream at a commit
-//      (configureDependencyRepos)
-//   5. a row in another package, when the finding's bundle records that
-//      package's repository and commit (`shipped`, focus-code.js
-//      bundleDependencyRepo)
-//   6. a row in own source — the finding's repo when the finding is own
-//      source too, the report's repo when it isn't
-//
-// and anything else — a path in somebody else's source that nothing
-// above answers for — resolves to nothing, because knowing a file
-// belongs to SOME dependency doesn't say which one's repo to ask.
-//
-// `shipped(row)` is `{ file, repo }`, the row's path in its package and
-// the `repo` its bundle records for that package, or null; only asked
-// for a dependency's row that nothing before it answers for.
+// Source URL for one `## Evidence` row. Rows wander between the app and
+// its dependencies, and a row resolved against the wrong repo is a
+// confident 404 or an unrelated file, so a repo has to earn the row:
+//   0. the row's own URL, if the report wrote one;
+//   1. the first row restating the finding's location: the finding's own
+//      link (its `location` included) at its own lines, else its repo or
+//      the report's, whatever markers its path carries;
+//   2. the row's own `repo` stamp (written on a dependency row, with its
+//      `package`, where they aren't the finding's), at its commit or HEAD;
+//   3. a row in the finding's own package (its `package` stamp, else its
+//      install), against the finding's repo — that package's upstream;
+//   4. a row in a package whose upstream a loaded finding names at a commit
+//      (configureDependencyRepos): of that package@version, or in that
+//      install of the finding's own report where the row names no other;
+//   5. a dependency row whose package the finding's bundle records
+//      (`shipped(row)` → `{ file, repo }`, focus-code.js
+//      bundleDependencyRepo);
+//   6. own source: the finding's repo when the finding is own source too,
+//      else the report's.
+// Anything else in somebody else's source links nowhere: knowing a file
+// is SOME dependency's doesn't say which repo to ask.
 export function evidenceUrl(row, f, repoFallback, index, shipped = null) {
-  // The report's own link for the row, when it wrote one. An exact ref,
-  // usually pinned to the revision the report was produced from — it
-  // beats anything reconstructed here and isn't ours to second-guess.
   if (isHttpUrl(row?.url)) return row.url
   const file = row?.file
   if (typeof file !== 'string' || file === '') return null
   const main = f?.file ?? ''
   const repo = f?.repo?.github
-  // Rows resolve with the finding's audited commit and the report's
-  // target, so `fileUrl` pins each as it pins the finding.
   const auditedCommit = f?.auditedCommit
-  const inFindingRepo = () => (repo ? findingUrl({ file, line: row?.line, repo: f.repo, auditedCommit }, repoFallback) : null)
+  const at = (fields) => findingUrl({ file, line: row?.line, ...fields }, repoFallback)
 
-  // 1. The row that restates the finding's own location. Wherever the
-  //    finding is, this row is in the same place, so it links where the
-  //    finding's own location does (findingUrl) — the finding's repo, or
-  //    the report's when the finding names none — including when that
-  //    location carries a marker the rules below would otherwise refuse.
-  //    At the finding's own lines it is the finding's own link outright,
-  //    the report's `location` link included: the one the issue body's
-  //    `File:` line and the card's location link carry.
   if (index === 0 && file === main) {
     const sameLines = String(row?.line ?? '').trim() === String(f?.line ?? '').trim()
-    return sameLines ? findingUrl(f, repoFallback)
-      : findingUrl({ file, line: row?.line, repo: f.repo, auditedCommit }, repoFallback)
+    return sameLines ? findingUrl(f, repoFallback) : at({ repo: f.repo, auditedCommit })
   }
+  if (repoTarget(row?.repo).id) return at({ repo: row.repo })
 
-  // 2. The row's own `repo`: its package's upstream, which answers for
-  //    it as a finding's own `repo` answers for the finding — at the
-  //    commit it names, HEAD where it names none.
-  if (repoTarget(row?.repo).id) return findingUrl({ file, line: row?.line, repo: row.repo }, repoFallback)
-
-  // 3. The finding's own package. The finding's repo is that package's
-  //    upstream (that is what `repo.github` means on a dependency
-  //    finding), so it answers for every file in it. A row's `package`
-  //    stamp says which package it is in, as it is written only where it
-  //    is not the finding's; without one, the install it sits in does.
   const pkg = nodePackageRoot(file)
   const rowPackage = packageStampKey(row?.package)
   const ownPackage = rowPackage === null ? pkg !== null && pkg === nodePackageRoot(main) : rowPackage === packageStampKey(f?.package)
-  if (repo && ownPackage) return inFindingRepo()
+  if (repo && ownPackage) return at({ repo: f.repo, auditedCommit })
 
-  // 4. A package — another, or the finding's own when the finding names
-  //    no repo — whose upstream a loaded finding names at the commit it
-  //    read, of that package at that version, or in that same install of
-  //    the finding's own report, where the row names no other package:
-  //    linked there, pinned, as that finding's own location is.
   const install = pkg === null ? null : dependencyRepos.byRoot.get(installKey(f, pkg))
   const known = (rowPackage === null ? null : dependencyRepos.byPackage.get(rowPackage))
     ?? (install && (rowPackage === null || install.pkg === rowPackage) ? install.repo : null)
-  if (known) return findingUrl({ file, line: row?.line, repo: known }, repoFallback)
+  if (known) return at({ repo: known })
 
   if (hasDependencyMarker(file)) {
-    // 5. The package's repository and commit as the finding's bundle
-    //    records them.
     const inBundle = shipped?.(row)
-    if (inBundle) return findingUrl({ file: inBundle.file, line: row?.line, repo: inBundle.repo }, repoFallback)
-    // Anything else in somebody else's source is unresolvable: we know
-    // the file is a dependency's and we do not know WHICH dependency's
-    // repo to ask.
-    return null
+    return inBundle ? at({ file: inBundle.file, repo: inBundle.repo }) : null
   }
-
-  // 6. Own source, then. The finding's repo answers for it when the
-  // finding is own-source too; when the finding sits in a dependency,
-  // its repo is that dependency's upstream and would be the wrong
-  // answer for a file in the project — so the report's repo takes it.
-  if (repo && !hasDependencyMarker(main)) return inFindingRepo()
-  return findingUrl({ file, line: row?.line, auditedCommit }, repoFallback)
+  return repo && !hasDependencyMarker(main) ? at({ repo: f.repo, auditedCommit }) : at({ auditedCommit })
 }
 
-// The evidence rows as a numbered markdown list, no heading — each
-// text surface gives them the heading its own document wants. Note
-// lines are indented under their row marker, the way the report wrote
-// them, so markdown reads them as part of the item. `spaced` puts a
-// blank line between rows, which markdown reads as a loose list: the
-// handoff wants that (its rows carry prose and it is a document in its
-// own right), the compact `**Evidence:**` block below does not.
-// `link(row, i)` names each row's target; by default only the URL the
-// report wrote for it. `lineLinks` links the line references in a row's
-// note to that target too (linkLineRefs), and puts a row that links
-// nowhere in a code span (codeSpan), as GitHub would otherwise read the
-// `@scope` in a dependency's path as a mention.
+// The evidence rows as a numbered markdown list, no heading; note lines
+// indented under their row. `spaced` makes it a loose list (the handoff
+// document). `link(row, i)` names each row's target (by default the URL
+// the report wrote); `lineLinks` also links the line references in a note
+// (linkLineRefs) and code-spans a row that links nowhere, or GitHub would
+// read the `@scope` of a dependency path as a mention.
 function evidenceRows(f, { spaced = false, link = row => row.url, lineLinks = false } = {}) {
   const rows = Array.isArray(f?.evidence) ? f.evidence : []
   if (rows.length === 0) return ''
@@ -1351,19 +875,11 @@ function evidenceRows(f, { spaced = false, link = row => row.url, lineLinks = fa
   }).join(spaced ? '\n\n' : '\n')
 }
 
-// The evidence list as one labelled block — the shape it arrived in.
-// The structured rows (not the description) carry it after parse, so
-// the text surfaces that want it inline reassemble it from here: the
-// markdown export, the pre-filled GitHub issue body, and the search
-// haystack. Empty string for a finding without rows, so callers can
-// `if (block)` rather than special-case the format.
-//
-// With `repoFallback`, every row links where the card's does
-// (`evidenceUrl` against it), as `File:` links through `findingUrl`,
-// and so do the line references in its note: the issue body is read on
-// GitHub, where a bare path leads nowhere. Without it, only the rows the
-// report itself linked, so the search haystack never holds URLs the
-// report didn't write. `shipped` is evidenceUrl's, the card's too.
+// The evidence as one `**Evidence:**` block, '' without rows: for the
+// markdown export, the GitHub issue body and the search haystack. With
+// `repoFallback` every row (and line reference) links as the card's do,
+// for the issue body read on GitHub; without, only links the report wrote,
+// so the haystack holds no URLs it didn't. `shipped` is evidenceUrl's.
 export function evidenceMarkdown(f, { repoFallback, shipped = null } = {}) {
   const linked = repoFallback !== undefined
   const link = linked ? (row, i) => evidenceUrl(row, f, repoFallback, i, shipped) : undefined
@@ -1371,12 +887,9 @@ export function evidenceMarkdown(f, { repoFallback, shipped = null } = {}) {
   return rows ? `**Evidence:**\n${rows}` : ''
 }
 
-// A line reference in an evidence row's note, `(line 40)`, `(lines
-// 40-50)`, `(L40)` or `(L40-L50)`, as a link to those lines in the file
-// the row links to, its own anchor swapped for theirs. Only on a GitHub
-// blob link, whose anchors these are. What markdown already gives a
-// meaning stays as written: fenced blocks (fenceRanges, so a ``` inside a
-// ```` block is the block's) and the inline constructs keptRanges finds.
+// A note's `(line 40)`, `(lines 40-50)`, `(L40)`, `(L40-L50)` as a link to
+// those lines of the row's GitHub blob link. Fenced blocks and the inline
+// constructs keptRanges finds are left as written.
 const LINE_REF_RE = /\(\s*(?:lines?|L)\s*(\d+)(?:\s*(?:-|–|—|to)\s*L?(\d+))?\s*\)/giu
 function linkLineRefs(note, url) {
   if (!note || !url || !GH_BLOB_RE.test(url) || !/\(\s*(?:lines?|L)\s*\d/iu.test(note)) return note
@@ -1388,22 +901,14 @@ function linkLineRefs(note, url) {
       return range ? `([${match.slice(1, -1).trim()}](${file}${lineAnchor(range)}))` : match
     })
   }
-  let out = ''
-  let at = 0
-  for (const [start, end] of fenceRanges(note)) {
-    out += link(note.slice(at, start)) + note.slice(start, end)
-    at = end
-  }
-  return out + link(note.slice(at))
+  return fenceSplit(note, fenceRanges(note)).map((part, i) => (i % 2 ? part : link(part))).join('')
 }
 
-// The inline markdown in `text` a line reference is no part of, as
-// sorted, disjoint [start, end) ranges: code spans (a backtick run closed
-// by the next run of its own length; one never closed is literal), link
-// text with what follows it (`[…](… "title")`, `[…][ref]`), autolinks
-// and bare URLs. The note is untrusted, so the pass is linear however it
-// is written: every "next `]`" and the like is read off an index built
-// once, never by rescanning the rest of the line.
+// The inline markdown a line reference is no part of, as sorted disjoint
+// [start, end) ranges: code spans (a backtick run closed by the next run of
+// its length), link text with its target (`[…](…)`, `[…][ref]`), autolinks
+// and bare URLs. The note is untrusted, so the pass is linear: every "next
+// `]`" is read off an index built once, never by rescanning.
 function keptRanges(text) {
   const kept = []
   const runs = [...text.matchAll(/`+/gu)].map((m) => [m.index, m.index + m[0].length])
@@ -1456,27 +961,18 @@ function keptRanges(text) {
   return merged
 }
 
-// One inline markdown link — `[label](url)` — as it appears INSIDE a
-// finding description: parse-md.js carries the `## Evidence` list into
-// the body verbatim, links included, so the renderer needs the pair
-// back to build an `<a>` (see renderHighlighted in render-finding.js).
-// Returns null unless the target is a well-formed http(s) URL, so a
-// `javascript:` / `data:` href — or a stray `[…](…)` in prose — stays
-// plain text rather than becoming a clickable footgun.
+// An inline `[label](url)` from a description (render-finding.js
+// renderHighlighted) as `{ label, url }`, or null unless the target is a
+// well-formed http(s) URL — a `javascript:` href stays text. The label is
+// unescaped; the href is left as written.
 export function markdownLinkToken(raw) {
   const m = /^\[([^\]]+)\]\(([^)\s]+)\)$/u.exec(raw)
   if (!m || !isHttpUrl(m[2])) return null
-  // The label is a name the report escaped for markdown (`a/b/\_x\_y`);
-  // the href is left as written.
   return { label: unescapeMd(m[1].trim()) || m[2], url: m[2] }
 }
 
-// Returns a "line N" template (linkified when a source URL is
-// available) or `nothing` when the finding's line isn't a finite
-// integer — codex / claude-security imports don't carry line numbers
-// and stub them as '?', and rendering a bare "line ?" adds noise
-// without information. Callers suppress the wrapping `<span
-// class="line-num">` when this returns `nothing`.
+// "line N", linked when there is a URL; `nothing` for a non-numeric line
+// (codex / claude-security stub it as '?').
 export function lineLink(f, repoFallback) {
   const lineNum = parseInt(f?.line, 10)
   if (!Number.isFinite(lineNum)) return nothing
@@ -1486,26 +982,16 @@ export function lineLink(f, repoFallback) {
   return html`<a href=${url} target="_blank" rel="noopener">${text}</a>`
 }
 
-// Commit URL builder + link renderer. Used by codex imports which
-// carry a commit_hash column; the link points at the upstream
-// commit on GitHub. Returns plain text (no <a>) when we don't know
-// a repo to link against, so callers don't have to special-case the
-// missing-repo path.
+// A codex import's commit on GitHub; `githubRepo` is a URL or a slug.
 export function commitUrl(githubRepo, hash) {
   if (!githubRepo || !hash) return null
-  // repo.github could already be a full URL (some imports do that)
-  // or a `user/repo` slug. Detect by leading scheme; otherwise
-  // treat as a slug under github.com.
   const base = /^https?:/iu.test(githubRepo)
     ? githubRepo.replace(/\/$/u, '')
     : `https://github.com/${githubRepo}`
   return `${base}/commit/${hash}`
 }
 
-// The narrative fields the document carries below the description, as
-// `[heading, field]`, IN CARD ORDER — the sequence the card's tab body
-// reads them in, so the document tells the same story in the same
-// order. A field the finding doesn't carry is skipped, not headed.
+// The narrative fields below the description, in card order.
 const HANDOFF_SECTIONS = [
   ['Impact', 'impact'],
   ['Reproduction', 'reproduction'],
@@ -1515,29 +1001,14 @@ const HANDOFF_SECTIONS = [
   ['Revalidation recommendation', 'revalidateRecommendation'],
 ]
 
-// The finding as a markdown DOCUMENT — what the copy button puts on
-// the clipboard and what the Claude handoff sends. It used to be a
-// stack of `Label: value` lines, which read as a form even though most
-// of its values are markdown prose: a description's own paragraphs and
-// fenced blocks ran on from a `Description:` prefix, and the evidence
-// list arrived mid-form under a bold label. Everything below is pasted
-// somewhere that renders markdown, so it is markdown.
-//
-// The shape: a few `Key: value` lines of metadata (the facts that
-// aren't prose), then the finding's name as an H1, its description,
-// its evidence, and one H1 section per HANDOFF_SECTIONS field. Blocks
-// join with a blank line, and every one of them is omitted when the
-// finding doesn't carry it.
-//
-// `repo` is resolved by the caller (group.findingRepo) so this stays a
-// pure formatter with no `#client/...` dependency (see fileUrl's note
-// on keeping this module out of the client aggregator's import chain).
+// The finding as a markdown document (the copy button, the Claude
+// handoff): `Key: value` metadata lines, the name as an H1, the
+// description, the evidence, then an H1 per HANDOFF_SECTIONS field, each
+// block omitted when absent. `repo` is resolved by the caller
+// (group.findingRepo).
 export function handoffBlock(f, repo) {
   const meta = []
   if (repo) meta.push(`Repo: ${repo}`)
-  // One `Location:` line rather than the old File / Line pair — it is
-  // one fact, and `file:line` is the form every other surface prints
-  // it in and every editor takes back.
   const location = locationLabel(f)
   if (location) meta.push(`Location: ${location}`)
   if (f?.confidence != null) meta.push(`Confidence: ${f.confidence}/10`)
@@ -1552,8 +1023,7 @@ export function handoffBlock(f, repo) {
   const evidence = evidenceRows(f, { spaced: true })
   if (evidence) blocks.push(`# Evidence\n\n${evidence}`)
   for (const [heading, field] of HANDOFF_SECTIONS) {
-    // The pass's sections travel with the layer, like everything else
-    // it draws: a card showing the code view copies the code view.
+    // The pass's sections travel with the layer.
     if (!revalidationOn && field.startsWith('revalidate')) continue
     const value = stripExportMarker(f?.[field], f)?.trim()
     if (value) blocks.push(`# ${heading}\n\n${value}`)
@@ -1562,17 +1032,11 @@ export function handoffBlock(f, repo) {
 }
 
 // GitHub "new issue" URL with a pre-filled title + body, or null when
-// `repo` doesn't resolve to a github.com base. Issues only exist on
-// github.com, so a gitlab / bitbucket / self-hosted base (a full URL
-// the user typed) can't take this link — returning null there lets the
-// caller hide the button rather than render a dead link. `repo` is the
-// same slug-or-URL the handoff block's `Repo:` line carries.
+// `repo` (slug or URL) isn't on github.com, so the caller hides the button.
 export function githubIssueUrl(repo, { title, body, labels = [] } = {}) {
   const base = repoBaseUrl(repo)
   if (!base) return null
-  let host
-  try { host = new URL(base).host.toLowerCase() } catch { return null }
-  if (host !== 'github.com') return null
+  try { if (new URL(base).host.toLowerCase() !== 'github.com') return null } catch { return null }
   const params = new URLSearchParams()
   if (title) params.set('title', title)
   if (body) params.set('body', body)
@@ -1581,160 +1045,80 @@ export function githubIssueUrl(repo, { title, body, labels = [] } = {}) {
   return qs ? `${base}/issues/new?${qs}` : `${base}/issues/new`
 }
 
-// ── Reference linkification for comments ─────────────────────────────
+// ── Comment references ───────────────────────────────────────────────
+// `parseCommentRefs` splits a triage comment into plain strings and link
+// tokens: `{ url, label }` for a strictly validated GitHub issue / PR /
+// commit / security advisory URL, `{ url, label, self: true }` for a deep
+// link to a finding in this instance. Anything that fails validation (bad
+// owner, look-alike host, extra path segment, …) stays text, so no link
+// 404s or leaves github.com. Bare `#123` needs a repo context and is left
+// alone.
 //
-// Free-text triage comments routinely paste a URL — a GitHub issue / PR /
-// commit ("fixed in https://github.com/owner/repo/pull/42"), or one of
-// this app's own per-finding deep links ("duplicate of
-// https://triage.space/#finding=…"). `parseCommentRefs` splits a comment
-// into a flat list of segments — plain `string` runs interleaved with
-// `{ url, label }` link tokens — so the renderer can wrap only the
-// validated refs in an `<a>` and leave the rest as text. Returning data
-// (not markup) keeps the strict-validation logic pure and unit-testable,
-// and sits this beside the other github URL builders.
-//
-// "Strict" = every URL component is checked against GitHub's own naming
-// rules before a link is emitted. A bad owner, an over-long repo, a
-// non-hex commit, a look-alike host, or an extra path segment all fall
-// through to plain text, so we never render a link that 404s or points
-// somewhere off github.com. Recognised canonical shapes are
-// `https://github.com/<owner>/<repo>/(issues|pull|commit)/<id>` plus the
-// two GitHub Security Advisory forms — the global
-// `https://github.com/advisories/GHSA-xxxx-xxxx-xxxx` and the in-repo
-// `https://github.com/<owner>/<repo>/security/advisories/GHSA-…`. Bare
-// `#123` / `owner/repo#123` shorthand needs a repo context the comment
-// doesn't carry, so it's intentionally left alone.
+// The validators spell out ASCII cases instead of `/iu`: Unicode
+// case-folding would pull homoglyphs (U+017F ſ, U+212A K) into `[a-z]`.
 
-// These validators spell out both ASCII cases (`a-zA-Z`) instead of using
-// the `i` flag on purpose: under `/iu`, Unicode case-folding pulls a few
-// non-ASCII homoglyphs into `[a-z]` (U+017F ſ → s, U+212A K → k), which
-// could render a label that impersonates a different owner/repo. Staying
-// ASCII-explicit keeps the validators robust on their own, not merely
-// because the round-trip guard happens to reject those bytes upstream.
-
-// GitHub login (user / org): alphanumeric or single hyphens, no leading
-// or trailing hyphen, no consecutive hyphens. Length (≤39) is checked
-// separately so the pattern stays readable.
+// Login: alphanumerics and single inner hyphens (≤39, checked apart).
 const GH_OWNER_RE = /^[a-zA-Z\d](?:-?[a-zA-Z\d])*$/u
-// Repo name: chars from [A-Za-z0-9._-]; `.` / `..` are reserved. Length
-// (≤100) and the reserved names are checked alongside the pattern.
+// Repo: [A-Za-z0-9._-], not `.` / `..` (≤100, checked apart).
 const GH_REPO_RE = /^[a-zA-Z\d._-]+$/u
-// Issue / PR number: positive, no leading zero, capped at 10 digits so a
-// long digit run in prose can't masquerade as an issue reference.
+// Issue / PR number: no leading zero, ≤10 digits.
 const GH_NUM_RE = /^[1-9]\d{0,9}$/u
-// Commit SHA: abbreviated (7) through full (40) hex, either case.
 const GH_SHA_RE = /^[a-fA-F\d]{7,40}$/u
-// On-page fragment anchor (the URL "hash"), including its leading `#`:
-// word characters + hyphens, matching GitHub's own anchor ids
-// (`#issuecomment-123`, `#discussion_r…`, `#diff-<hex>R10`, `#L42`).
+// A kept fragment: GitHub's own anchor ids (`#issuecomment-123`, `#L42`).
 const GH_ANCHOR_RE = /^#[\w-]+$/u
-// GHSA (GitHub Security Advisory) id — the literal `GHSA-` prefix plus
-// three hyphen-separated groups of four base32 characters
-// (`GHSA-xxxx-xxxx-xxxx`). GitHub always renders the suffix lower-case, so
-// pinning that canonical casing keeps the round-trip guard satisfied and
-// the emitted label faithful to what GitHub itself shows.
+// GHSA id, lower-case as GitHub renders it (and as the round-trip needs).
 const GH_GHSA_RE = /^GHSA(?:-[0-9a-z]{4}){3}$/u
 
 function isValidOwner(s) { return s.length <= 39 && GH_OWNER_RE.test(s) }
 function isValidRepo(s) { return s.length <= 100 && s !== '.' && s !== '..' && GH_REPO_RE.test(s) }
 
-// Validate one candidate URL string and, on success, return its
-// `{ url, label }` link token — a canonical href plus a GitHub-style
-// short label (`owner/repo#123` for issues / PRs, `owner/repo@sha` for
-// commits). Returns null for anything that isn't a strict issue / PR /
-// commit URL on github.com.
 function githubRefToken(candidate) {
   let u
   try { u = new URL(candidate) } catch { return null }
-  // Anti-mutation safeguard: only accept a candidate that is ALREADY in
-  // its canonical parsed form. `new URL` silently rewrites its input —
-  // resolving `..`/`.` path segments, lower-casing scheme + host,
-  // dropping a default `:443`, punycoding IDN homographs (`gіthub.com`),
-  // turning `\` into `/`, stripping tabs/newlines — any of which can let
-  // a non-canonical or look-alike string "round up" into a passing ref.
-  // If the re-serialised URL differs from what we scanned, it wasn't
-  // canonical, so reject it rather than linkify a target the reader
-  // never actually typed. Every legitimate ref round-trips unchanged.
+  // Only a candidate already in canonical form: `new URL` rewrites its
+  // input (resolves `..`, lower-cases the host, punycodes IDN homographs,
+  // `\` → `/`, strips tabs), which could round a look-alike up into a
+  // passing ref.
   if (u.href !== candidate) return null
-  // https only, exact host, no embedded credentials or explicit port —
-  // anything else is either insecure or a look-alike (`github.com@evil`,
-  // `github.com:8080`) that shouldn't be presented as a github link.
+  // https, exact host, no credentials or port (`github.com@evil`).
   if (u.protocol !== 'https:') return null
   if (u.hostname.toLowerCase() !== 'github.com') return null
   if (u.port || u.username || u.password) return null
-  // Break the path into its non-empty segments (a single trailing slash is
-  // tolerated). `..`/`.` traversal can't reach here — the round-trip guard
-  // above rejects any path the parser had to normalise.
   const parts = u.pathname.split('/')
   if (parts.at(-1) === '') parts.pop()
 
-  // GitHub Security Advisories take two shapes that don't fit the
-  // /<owner>/<repo>/<kind>/<id> mould handled further down:
-  //   * global  — /advisories/GHSA-xxxx-xxxx-xxxx (no repo context)
-  //   * in-repo — /<owner>/<repo>/security/advisories/GHSA-xxxx-xxxx-xxxx
-  // A GHSA id is a globally-unique identifier, so both forms label as the
-  // bare id; the owning repo (when present) stays in the href. The in-repo
-  // owner/repo are still validated so a slug that could never be a real
-  // GitHub path falls through to plain text rather than linkifying.
+  // Advisories label as the bare (globally unique) GHSA id: the global
+  // `/advisories/<id>` and the in-repo `/<owner>/<repo>/security/advisories/<id>`.
   if (parts.length === 3 && parts[1] === 'advisories') {
     const id = parts[2]
-    if (!GH_GHSA_RE.test(id)) return null
-    return { url: `https://github.com/advisories/${id}`, label: id }
+    return GH_GHSA_RE.test(id) ? { url: `https://github.com/advisories/${id}`, label: id } : null
   }
   if (parts.length === 6 && parts[3] === 'security' && parts[4] === 'advisories') {
     const [, owner, repo, , , id] = parts
-    if (!isValidOwner(owner) || !isValidRepo(repo)) return null
-    if (!GH_GHSA_RE.test(id)) return null
+    if (!isValidOwner(owner) || !isValidRepo(repo) || !GH_GHSA_RE.test(id)) return null
     return { url: `https://github.com/${owner}/${repo}/security/advisories/${id}`, label: id }
   }
 
-  // Otherwise the path must be exactly /<owner>/<repo>/<kind>/<id>. Any
-  // deeper path (`/pull/42/files`) is rejected so we only linkify the
-  // precise thing we can name.
+  // Exactly /<owner>/<repo>/<kind>/<id>: `/pull/42/files` is not linked.
   if (parts.length !== 5) return null
   const [, owner, repo, kind, id] = parts
   if (!isValidOwner(owner) || !isValidRepo(repo)) return null
-  let label
-  if (kind === 'issues' || kind === 'pull') {
-    if (!GH_NUM_RE.test(id)) return null
-    label = `${owner}/${repo}#${id}`
-  } else if (kind === 'commit') {
-    if (!GH_SHA_RE.test(id)) return null
-    label = `${owner}/${repo}@${id.slice(0, 7)}`
-  } else {
-    return null
-  }
-  // Canonical href: rebuilt from the validated components (query string
-  // always dropped). A fragment is preserved only when it's a plausible
-  // GitHub on-page anchor — `#issuecomment-123`, `#discussion_r…`,
-  // `#diff-<hex>`, `#L42`, etc.: word characters and hyphens. Anything
-  // else (encoded payloads, slashes, dots) is dropped rather than carried
-  // through, so the fragment can't smuggle junk into the href.
+  const ref = kind === 'commit' ? GH_SHA_RE.test(id) && `@${id.slice(0, 7)}`
+    : (kind === 'issues' || kind === 'pull') && GH_NUM_RE.test(id) && `#${id}`
+  if (!ref) return null
+  // Rebuilt from the validated parts, query dropped; a fragment kept only
+  // when it is a plausible GitHub anchor.
   const hash = GH_ANCHOR_RE.test(u.hash) ? u.hash : ''
-  const href = `https://github.com/${owner}/${repo}/${kind}/${id}${hash}`
-  return { url: href, label }
+  return { url: `https://github.com/${owner}/${repo}/${kind}/${id}${hash}`, label: `${owner}/${repo}${ref}` }
 }
 
-// Short id shown in a self-link's label. Findings carry a uuid in the
-// overwhelming majority of cases (the analyzer's, or the one
-// `@preventive/report/src/finding-id.js` derives), and abbreviating it to its first
-// group mirrors how the commit label abbreviates a sha. The codex
-// importer's finding-URL ids show the first eight characters after
-// their URL prefix.
-//
-// Lower-case-only and ASCII-explicit for the same reason the github
-// validators are: under `/iu` Unicode case-folding pulls non-ASCII
-// homoglyphs into the class, and every id this app mints is lower-case
-// hex anyway.
+// Finding ids are uuids in nearly every case (the analyzer's, or
+// finding-id.js's); lower-case ASCII only, as above.
 const FINDING_UUID_RE = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/u
 
-// The abbreviation above, on its own: a finding id's first UUID group
-// or the first eight characters of a Codex finding ID, otherwise null.
-// Exported because the Links view and the finding card's
-// "Duplicates:" row name findings by id too, and all three have to
-// abbreviate the same one the same way — a reader following a
-// duplicate link should recognise the id they clicked in the id the
-// card they land on carries.
+// The short id the Links view, the "Duplicates:" row and self-link labels
+// all show: a uuid's first group, or the first eight characters of a Codex
+// id, else null.
 export function shortFindingId(id) {
   if (typeof id !== 'string') return null
   const display = displayFindingId(id)
@@ -1749,13 +1133,9 @@ export function displayFindingId(id) {
   return value.startsWith(prefix) ? value.slice(prefix.length) : value
 }
 
-// Validate one candidate URL string as a per-finding deep link into THIS
-// instance and, on success, return its `{ url, label, self }` token.
-// `parseFindingUrl` (client/finding-link.js) owns the strictness — same
-// host + scheme, no credentials, canonical round-trip, and a valid finding reference.
-//
-// Local E2E navigation uses only a fragment. Managed navigation retains
-// the destination path, including `/` for links without a team/report.
+// A deep link to a finding in this instance (strictness is
+// client/finding-link.js parseFindingUrl's). Local navigation is by
+// fragment; managed keeps the destination path.
 function selfRefToken(candidate, managed) {
   const found = parseFindingUrl(candidate, { managed })
   if (!found) return null
@@ -1763,27 +1143,13 @@ function selfRefToken(candidate, managed) {
   return { url: managed ? found.path : `#${found.fragment}`, label: short ? `finding ${short}` : 'finding', self: true }
 }
 
-// Candidate-URL scanner: an `http(s)://` run of URL-legal characters.
-// Stricter than a blanket `\S+` — it stops at whitespace AND at the
-// wrapper / "unwise" characters (`<> " ' \` ( ) { } [ ] | \ ^`) that bound
-// a URL inside prose or markdown, so a ref wrapped in `<…>`, `"…"`,
-// \`…\`, `(…)` or `{…}` is captured cleanly without dragging the wrapper
-// in. (A trailing backtick in particular used to be percent-encoded into
-// the path by `new URL` and break validation.) `:` and `@` stay inside
-// the class so credential / port look-alikes still reach githubRefToken,
-// which remains the authoritative gate for scheme / host / port / creds.
+// An `http(s)://` run, stopped at whitespace and the characters that wrap
+// a URL in prose or markdown (`<> " ' \` ( ) { } [ ] | \ ^`). `:` and `@`
+// stay in, so credential / port look-alikes reach the validator.
 const URL_SCAN_RE = /https?:\/\/[^\s<>"'`(){}[\]|\\^]+/giu
-// Trailing prose punctuation trimmed off a candidate before validation,
-// so a URL closing a sentence (`…/pull/42).`) or wrapped in markdown
-// emphasis (`*…/pull/42*`) still resolves. None of these characters can
-// appear in a valid owner / repo / number / sha, so trimming never
-// corrupts an otherwise-valid reference.
-//
-// Implemented as a Set + end-scan rather than a `/[…]+$/` regex on
-// purpose: several of these characters are also URL-scan-legal, so a
-// candidate can end in a long run of them, and the anchored greedy
-// regex backtracks quadratically over such a run (a ReDoS vector on
-// attacker-controlled comment text). The end-scan is linear.
+// Sentence punctuation trimmed off a candidate's end; none can be in a
+// valid ref. An end-scan, not a `/[…]+$/` regex, which backtracks
+// quadratically over a long run (ReDoS on untrusted comment text).
 const TRAILING_PUNCT = new Set([')', '.', ',', '!', '?', ';', ':', "'", '"', '*', ']', '}', '>'])
 
 function trimTrailingPunct(s) {
@@ -1792,12 +1158,7 @@ function trimTrailingPunct(s) {
   return end === s.length ? s : s.slice(0, end)
 }
 
-// Split `text` into the segment list described above: alternating plain
-// `string` runs and validated link tokens — `{ url, label }` for an
-// external github ref, `{ url, label, self: true }` for a finding
-// link into this instance. A comment with no recognised URL (the common
-// case) comes back as a single `[text]` entry; empty / non-string input
-// yields `[]`.
+// A comment without refs comes back as `[text]`; empty or non-string, `[]`.
 export function parseCommentRefs(text, { managed = false } = {}) {
   if (typeof text !== 'string' || text.length === 0) return []
   const segments = []
@@ -1806,18 +1167,12 @@ export function parseCommentRefs(text, { managed = false } = {}) {
   let m
   while ((m = URL_SCAN_RE.exec(text)) !== null) {
     const trimmed = trimTrailingPunct(m[0])
-    // GitHub first, then our own deep links. The two can't both match —
-    // one requires host `github.com`, the other the host this app is
-    // being served from.
     const token = trimmed ? (githubRefToken(trimmed) ?? selfRefToken(trimmed, managed)) : null
-    if (token) {
-      if (m.index > lastIndex) segments.push(text.slice(lastIndex, m.index))
-      segments.push(token)
-      lastIndex = m.index + trimmed.length
-      URL_SCAN_RE.lastIndex = lastIndex
-    }
-    // A non-match leaves the run as text; the loop resumes after it
-    // (URL_SCAN_RE.lastIndex already points past the full run).
+    if (!token) continue
+    if (m.index > lastIndex) segments.push(text.slice(lastIndex, m.index))
+    segments.push(token)
+    lastIndex = m.index + trimmed.length
+    URL_SCAN_RE.lastIndex = lastIndex
   }
   if (lastIndex < text.length) segments.push(text.slice(lastIndex))
   return segments

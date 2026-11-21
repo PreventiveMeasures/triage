@@ -6,24 +6,19 @@ import { openReportCompareDialog, openTriageExportDialog } from './lazy-dialogs.
 import { getMergedGroups, triageReadOnly } from './group.js'
 import { getTheme, setTheme } from './theme.js'
 
-// `window.DeepView` — a small read-mostly façade over the in-memory
-// state for browser-console / external-script use. Findings + groups
-// are live getters snapshotting current state per access; triage
-// entries come out as fresh `Map` / `Set` copies so a caller can
-// iterate without mutating the live store. `triage.set(id, …)` is
-// the one write-through path: updates the observed `state.*`
-// containers, persists via `saveTriage()`, and re-renders so a
-// console-driven edit lights up the UI immediately. Like the UI's
-// controls, it refuses where triage is read-only (see triageReadOnly).
+// `window.DeepView` — a small read-mostly façade over the in-memory state
+// for the browser console and external scripts. Findings and groups are
+// live getters; triage comes out as fresh Map copies. `triage.set` is the
+// one write: it updates `state.triage`, persists and re-renders, and like
+// the UI's controls refuses where triage is read-only (triageReadOnly).
 //
-// IDs follow the renderer's convention (`tabKey(f)` =
-// `f.id ?? String(f._id)`): non-numeric values are uuid-shaped
-// (analyzer-export, codex finding-url, deterministic markdown id)
-// and persist; numeric strings are session-only and don't
-// round-trip.
+// IDs are the renderer's (`tabKey(f)` = `f.id ?? String(f._id)`): uuid-shaped
+// ones persist, numeric session-local ones don't round-trip.
 
-// Project the single triage map back into the per-field Maps the
-// façade exposes.
+const TRIAGE_BUCKETS = new Set(['inprogress', 'fixed', 'invalid', 'deleted', 'ignored'])
+
+// One field of the triage map, by id; falsy values (the `false` flag
+// tombstone among them) are left out.
 function projectField(field) {
   const m = new Map()
   for (const [id, e] of state.triage) {
@@ -37,13 +32,10 @@ const triage = {
   get triageState() { return projectField('triage') },
   get comments() { return projectField('comment') },
   get fixes() { return projectField('fix') },
-  // Set of flagged finding ids (id → true). `projectField` skips the
-  // falsy `false` tombstones, so this is the "currently flagged" view.
   get flags() { return projectField('flagged') },
 
-  // Bundle every triage field for one finding into a single object,
-  // omitting absent properties — matches the persisted shape so a
-  // round-trip via JSON is straightforward.
+  // Every triage field of one finding, absent ones omitted — the persisted
+  // shape. The flag's explicit `false` is kept; only unset is omitted.
   get(id) {
     const e = state.triage.get(id)
     const out = {}
@@ -51,75 +43,44 @@ const triage = {
     if (e?.triage) out.triage = e.triage
     if (e?.comment) out.comment = e.comment
     if (e?.fix) out.fix = e.fix
-    // Tri-state: surface both `true` and the explicit `false`; only an
-    // unset (undefined) flag is omitted.
     if (e?.flagged !== undefined) out.flagged = e.flagged
     return out
   },
 
-  // Apply a partial update. Pass `null` (or `''`) to clear a field;
-  // an `undefined` field is left alone. Returns the boolean "did
-  // anything change" so callers can short-circuit. Async because the
-  // saveTriage write is async; the UI render fires after persistence.
+  // A partial update: `null` / `''` clears a field, `undefined` leaves it.
+  // Resolves to whether anything changed, after persisting.
   async set(id, { color, triage: triageVal, comment, fix, flagged } = {}) {
     if (triageReadOnly()) throw new Error('DeepView.triage.set: triage is read-only on this page')
     let changed = false
+    const put = (field, value) => {
+      if (state.triage.get(id)?.[field] === value) return
+      patchEntry(state.triage, id, { [field]: value })
+      changed = true
+    }
+    const clear = (field) => { if (patchEntry(state.triage, id, { [field]: undefined })) changed = true }
     if (color !== undefined) {
-      if (color === null || color === '') {
-        if (patchEntry(state.triage, id, { color: undefined })) changed = true
-      } else if (state.triage.get(id)?.color !== color) {
-        patchEntry(state.triage, id, { color })
-        changed = true
-      }
+      if (color === null || color === '') clear('color')
+      else put('color', color)
     }
     if (triageVal !== undefined) {
-      if (triageVal === null || triageVal === '' || triageVal === false) {
-        if (patchEntry(state.triage, id, { triage: undefined })) changed = true
-      } else if (triageVal === 'inprogress' || triageVal === 'fixed' || triageVal === 'invalid' || triageVal === 'deleted' || triageVal === 'ignored') {
-        if (state.triage.get(id)?.triage !== triageVal) {
-          patchEntry(state.triage, id, { triage: triageVal })
-          changed = true
-        }
-      } else {
+      if (triageVal === null || triageVal === '' || triageVal === false) clear('triage')
+      else if (TRIAGE_BUCKETS.has(triageVal)) put('triage', triageVal)
+      else {
         throw new TypeError(
           `DeepView.triage.set: unknown triage value ${JSON.stringify(triageVal)} ` +
           "(expected 'inprogress' | 'fixed' | 'invalid' | 'deleted' | 'ignored' | null)",
         )
       }
     }
-    if (comment !== undefined) {
-      const text = comment ? String(comment) : ''
-      if (text) {
-        if (state.triage.get(id)?.comment !== text) {
-          patchEntry(state.triage, id, { comment: text })
-          changed = true
-        }
-      } else if (patchEntry(state.triage, id, { comment: undefined })) {
-        changed = true
-      }
+    for (const [field, value] of [['comment', comment], ['fix', fix]]) {
+      if (value === undefined) continue
+      const text = value ? String(value) : ''
+      if (text) put(field, text)
+      else clear(field)
     }
-    if (fix !== undefined) {
-      const text = fix ? String(fix) : ''
-      if (text) {
-        if (state.triage.get(id)?.fix !== text) {
-          patchEntry(state.triage, id, { fix: text })
-          changed = true
-        }
-      } else if (patchEntry(state.triage, id, { fix: undefined })) {
-        changed = true
-      }
-    }
-    if (flagged !== undefined) {
-      // Tri-state: `true` → flagged, `false` → explicit "unflagged"
-      // tombstone (kept so the removal still syncs); `null` or `''` →
-      // clear to unset (undefined), matching the "pass null/'' to clear"
-      // contract the string/bucket fields follow. Other values coerce.
-      const next = (flagged === null || flagged === '') ? undefined : Boolean(flagged)
-      if (state.triage.get(id)?.flagged !== next) {
-        patchEntry(state.triage, id, { flagged: next })
-        changed = true
-      }
-    }
+    // `true` flags, `false` keeps an explicit "unflagged" tombstone (so the
+    // removal syncs), `null` / `''` unsets; other values coerce.
+    if (flagged !== undefined) put('flagged', flagged === null || flagged === '' ? undefined : Boolean(flagged))
     if (changed) {
       await saveTriage()
       render()
@@ -129,16 +90,12 @@ const triage = {
 }
 
 window.DeepView = {
-  // Live snapshots of the active load — each access re-flattens so a
-  // caller iterating after a triage edit / file switch sees the
-  // current shape. Shallow copies: mutating the returned arrays
-  // doesn't touch `state`.
+  // Live snapshots of the active load; the returned arrays are copies.
   get reports() { return state.reports.slice() },
   get groups() { return getMergedGroups() },
   get findings() { return getMergedGroups().flat() },
 
-  // Identifies the active load: one of these is set when something
-  // is open, both null on the empty drop-zone screen.
+  // The active load; both null on the empty drop-zone screen.
   get currentFile() { return state.currentFile },
   get currentWorkspace() { return state.currentWorkspace },
 
@@ -153,23 +110,15 @@ window.DeepView = {
   setTheme,
   get theme() { return getTheme() },
 
-  // WebSocket sync for triage data — disabled until a server URL is
-  // set. Sends/receives `{ type: 'triage-update', changes: [{ id,
-  // before, after }, …] }`. See client/triage-sync.js for details.
-  // Console: `DeepView.triageSync.setServerUrl('wss://your-host')`.
+  // WebSocket sync for triage data, off until a server URL is set
+  // (`DeepView.triageSync.setServerUrl('wss://your-host')`; see
+  // client/triage-sync.js).
   triageSync,
 
-  // Force a re-render — useful after external code mutates other
-  // state (filters, sort, etc.) without going through the
-  // triage.set helper above.
+  // Re-render after external code mutates other state (filters, sort, …).
   refresh() { render() },
 
-  // Opens the full-triage backup dialog (export + import in one
-  // place). Bundles every persisted-id triage entry + all saved
-  // repo URLs into a single gzipped JSON; the same dialog imports a
-  // previously-exported backup with a choice of merge modes.
-  // Returns a Promise resolving on dialog close — caller usually
-  // doesn't await it (console command), but doing so is harmless.
+  // The full-triage backup dialog (export + import); resolves on close.
   export() { return openTriageExportDialog() },
 
   // Hidden comparison tool for two local/E2E reports. Resolves on close.

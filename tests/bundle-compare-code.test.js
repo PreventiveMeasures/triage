@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
+import { keyed } from 'lit/directives/keyed.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { computeFileHash } from '@preventive/report'
 import { renamedDiffs } from '@preventive/compare/names.js'
@@ -136,9 +137,9 @@ const listingCheck = { refusal: null, asked: 0 }
 const prettySourcemap = await import('../common/pretty-sourcemap.js')
 mock.module('../common/pretty-sourcemap.js', { namedExports: { ...prettySourcemap,
   sourcemapDiffRebuilds: (...args) => { listingCheck.asked++; return listingCheck.refusal ?? prettySourcemap.sourcemapDiffRebuilds(...args) } } })
-const { bundleFileMeta, computeBundleDiff, computeResolutionDiff } = await import('../ui/view/bundle-compare-diff.js')
-const { bundleCompareResolutions } = await import('../ui/view/bundle-compare-inputs.js')
-const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
+const { bundleFileMeta, computeBundleDiff, computeResolutionDiff } = await import('../common/bundle-compare-diff.js')
+const { bundleCompareResolutions } = await import('../common/bundle-compare-inputs.js')
+const { bundleFilesAsMap } = await import('../common/bundle-sources.js')
 const { resolutionRows } = await import('../ui/view/bundle-compare-files.js')
 const { npmDependencyFlagTags } = await import('../ui/view/npm-dependency-checks.js')
 await import('../ui/view/bundle-compare-code.js')
@@ -152,10 +153,13 @@ CompareCode.prototype.willUpdate = function (changed) {
   return willUpdate.call(this, changed)
 }
 
-// Template text with class maps spelled out, so rows can be matched by class.
+// Template text with class maps spelled out, so rows can be matched by class,
+// and what a `keyed` draws, its key aside.
+const KEYED = keyed(null, null)._$litDirective$
 function renderText(value) {
   if (Array.isArray(value)) return value.map(renderText).join('')
   if (value?.strings) return value.strings.map((text, i) => text + renderText(value.values[i])).join('')
+  if (value?._$litDirective$ === KEYED) return renderText(value.values[1])
   if (value?._$litDirective$) {
     const [first] = value.values
     if (first && typeof first === 'object' && !Array.isArray(first) && !first.strings) {

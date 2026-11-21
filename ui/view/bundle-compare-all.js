@@ -1,44 +1,30 @@
 // `<bundle-compare-all>` — Compare's Code for a comparison short enough to
-// read whole: every file that differs, its review diff under its name, one
-// after another in a single list, as `git diff` prints them, in the order
-// the tree of bundle-compare-code.js lists them, beside that tree: picking a
-// file scrolls to it, and the file at the list's top is the tree's as it
-// scrolls. Each diff draws as a file's alone does there: unified or split,
-// unchanged runs folded and expandable, syntax colored, changed words
-// marked; an import that resolves elsewhere, or on one side alone, is listed
-// over its importer's diff, a file with no other change listing those alone.
-// Compare shows it for a comparison it can list in fewer than
-// COMBINED_DIFF_MAX rows (combinedDiffRows), and a file at a time beside the
-// tree otherwise. Its files are drawn FILE_BATCH at a time, more as the list
-// nears its end, or as one past them is opened.
+// read whole (fewer than COMBINED_DIFF_MAX rows, combinedDiffRows): every
+// file's diff one after another, as `git diff` prints them, beside the tree
+// of bundle-compare-code.js, which follows the list as it scrolls; picking a
+// file scrolls to it. Files are drawn FILE_BATCH at a time, more as the list
+// nears its end or one past them is opened.
 import { html, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { diffRows, lineDiff } from './bundle-compare-code-model.js'
-import { BundleCompareCode, diffCounts, fileContents, fileEntries, isLargeDiff, modelKey, prettyToggle } from './bundle-compare-code.js'
+import { fileContents, fileEntries } from './bundle-compare-files.js'
+import { BundleCompareCode, diffCounts, importerText, isLargeDiff, modelKey, prettyToggle } from './bundle-compare-code.js'
 
 export const COMBINED_DIFF_MAX = 25_000
 // Files drawn at a time, as Review's whole diff draws them.
 const FILE_BATCH = 40
 
-// The files the Diff view lists, by path: each one added, removed, changed
-// or renamed (fileEntries). A file whose only change is an import resolving
-// elsewhere has no text that changed, so none of it shows here.
-const combinedEntries = entries => [...entries].toSorted(([a], [b]) => a.localeCompare(b))
-
-// The rows the list shows for a comparison, a head for each file and its
-// diff's rows as they first show, two for each import resolution that
-// differs (`resolutions`) and a head for an importer with no other change,
-// counted up to `max`; and the line models found on the way, for the view to
-// draw. Infinity where a file is too large to diff without being asked to.
-// Each file lists two rows at least, so one with too many files for `max` is
-// told without a diff.
+// The rows the list shows, a head and its first-shown diff rows for each file,
+// two for each import resolution that differs and a head for an importer with
+// no other change, counted up to `max`; and the line models found on the way.
+// Infinity where a file is too large to diff unasked.
 export function combinedDiffRows(base, other, files, { resolutions = [], max = COMBINED_DIFF_MAX } = {}) {
   const models = new Map()
   const entries = fileEntries(files)
   if (entries.size * 2 >= max) return { rows: Infinity, models }
   const importers = new Set(resolutions.map(row => row.parent).filter(path => !entries.has(path)))
   let rows = resolutions.length * 2 + importers.size
-  for (const [path, entry] of combinedEntries(entries)) {
+  for (const [path, entry] of [...entries].toSorted(([a], [b]) => a.localeCompare(b))) {
     rows++
     const { before, after } = fileContents(base, other, path, entry)
     // Its bytes the same (renamed, or recorded otherwise): a line saying so, however large.
@@ -60,9 +46,8 @@ export function combinedDiffRows(base, other, files, { resolutions = [], max = C
 export class BundleCompareAll extends BundleCompareCode {
   static properties = { ...BundleCompareCode.properties, models: { attribute: false } }
 
-  // Every file's model is drawn on every render, so all are kept for the
-  // comparison, starting from those Compare found counting its rows, each
-  // with the texts it was found from (_model).
+  // Every file's model is drawn on every render, so all are kept, starting
+  // from those Compare found counting its rows.
   constructor() {
     super()
     this.models = null
@@ -70,8 +55,7 @@ export class BundleCompareAll extends BundleCompareCode {
     this._fileLimit = FILE_BATCH
   }
 
-  // Every file drawn takes its diff with renamed names hidden from its
-  // comparison's, asked for at once (rename-diff.js), none alone.
+  // Every file's renamed-names diff comes from its comparison's, asked at once (rename-diff.js).
   _renamesAlone = false
 
   willUpdate(changed) {
@@ -81,18 +65,16 @@ export class BundleCompareAll extends BundleCompareCode {
         const entry = this._entries.get(path)
         if (!entry) continue
         const { before, after } = fileContents(this.base, this.other, path, entry)
-        this._models.set(modelKey(path, false, { ignoreWhitespace: false, ignoreRenames: false }), { model, before, after, given: null })
+        this._models.set(modelKey(path, false, { ignoreWhitespace: false, ignoreRenames: false }), { inputs: [before, after, null], value: model })
       }
     }
-    // A new comparison starts from its first files, not from the file the
-    // last one was scrolled to.
+    // A new comparison starts from its first files.
     if (changed.has('files')) {
       this._fileLimit = FILE_BATCH
       this._current = this._picked = null
     }
-    // A file opened from elsewhere (the Overview, a link), or picked before
-    // the comparison changed (another scope), is scrolled to, as Code opens it;
-    // else a new comparison shows from its top, as it was scrolled however far.
+    // A file opened from elsewhere, or picked before the comparison changed,
+    // is scrolled to; else a new comparison shows from its top.
     if ((changed.has('path') || changed.has('files')) && this.path && this.path !== this._current) this._goTo = this.path
     if (changed.has('files')) this._toTop = true
   }
@@ -117,10 +99,9 @@ export class BundleCompareAll extends BundleCompareCode {
     this._scrollSought()
   }
 
-  // A file picked in the rail: the list scrolls to it, its head at the top
-  // (unless `scroll` is false, a search hit scrolling to its line), and it
-  // stays the rail's while it is in view, though the list ends too soon to
-  // bring it to the top.
+  // A file picked in the rail: the list scrolls its head to the top (unless
+  // `scroll` is false, as a search hit scrolls to its line), the rail's while
+  // it is in view though the list ends too soon to bring it to the top.
   _select(path, scroll = true) {
     if (!path || this.extensions?.canSelect?.() === false) return
     this._current = this._picked = path
@@ -134,15 +115,13 @@ export class BundleCompareAll extends BundleCompareCode {
     this.requestUpdate()
   }
 
-  // The list draws a diff alone, never a file's source: a file whose only
-  // change is a repointed import lists its imports there, and one whose bytes
-  // are the same says so, so neither is searched.
+  // The list draws diffs alone, never a file's source, so a repointed or
+  // byte-identical file isn't searched.
   _searchable(entry) {
     return entry.modified !== false && entry.kind !== 'repointed'
   }
 
-  // A file's state as the tree counts it: as the list draws it, where this
-  // render found it.
+  // A file's state as the tree counts it: as the list drew it this render.
   _countingState(path, entry) {
     return this._states?.get(path) ?? super._countingState(path, entry)
   }
@@ -151,9 +130,8 @@ export class BundleCompareAll extends BundleCompareCode {
     return [...this.querySelectorAll('.bundle-compare-all-file')].find(section => section.dataset.path === path) ?? null
   }
 
-  // As the list scrolls, the file whose diff is at its top is the rail's,
-  // a frame at a time; and within a screen of its end, the next files are
-  // drawn.
+  // As the list scrolls, the file at its top is the rail's, a frame at a
+  // time; within a screen of its end, the next files are drawn.
   _spy() {
     if (this._spying || this.extensions?.canSelect?.() === false) return
     this._spying = requestAnimationFrame(() => {
@@ -179,13 +157,10 @@ export class BundleCompareAll extends BundleCompareCode {
     })
   }
 
-  // A file's import resolutions that differ, over its diff where its text
-  // changed too: one whose only change they are lists them alone, without its
-  // source, and one whose record changed too says how; over the package's
-  // package.json, its dependency changes.
+  // A file's import resolutions that differ over its diff, alone where they
+  // are its only change; over package.json, its dependency changes.
   _fileBody(path, entry, file) {
-    const repointed = entry.repointed
-      ? this._renderRepointed(path, entry.repointed, [file.after, file.before].find(text => typeof text === 'string' && text !== '') ?? null, false) : nothing
+    const repointed = entry.repointed ? this._renderRepointed(path, entry.repointed, importerText(file), false) : nothing
     const sourceOnly = entry.kind === 'repointed' || (entry.kind === 'renamed' && !entry.modified && !!entry.repointed && !entry.meta && !(file.model?.blocks.length > 0))
     return html`${this._dependencyChanges(path)}${repointed}${sourceOnly ? nothing : this._fileMessage(path, entry, file) ?? this._renderDiff(path, entry, file)}`
   }
@@ -197,12 +172,6 @@ export class BundleCompareAll extends BundleCompareCode {
       ${this._fileFigures(entry, file.model)}
     </header>
     ${this._fileBody(path, entry, file)}`
-  }
-
-  _layout(rail, content) {
-    return html`<div class="bundle-code-view bundle-compare-code">
-      ${this._renderRail(rail, this._current)}<div class="bundle-code-main">${content}</div>
-    </div>`
   }
 
   render() {
@@ -220,11 +189,9 @@ export class BundleCompareAll extends BundleCompareCode {
     const shown = entries.map(([path, entry]) => ({ path, entry, file: this._fileState(path, entry) }))
     const additions = shown.reduce((sum, { file }) => sum + (file.model?.additions ?? 0), 0)
     const deletions = shown.reduce((sum, { file }) => sum + (file.model?.deletions ?? 0), 0)
-    // The toggle, where printing changes any file's diff (prettyToggle), its
-    // state for every such file as for one file's two sides (_printing): a
-    // failure first, with how many of them failed, then one still coming.
-    // Its tooltip lists the files it applies to (`affects`). The tree counts
-    // each file as the list draws it (_countingState).
+    // The pretty-print toggle, where printing changes any file's diff: a
+    // failure first, with how many failed, then one still coming; its tooltip
+    // lists the files it applies to. The tree counts each file as drawn here.
     this._states = new Map(shown.map(({ path, file }) => [path, file]))
     const printed = shown.filter(({ file }) => prettyToggle(file))
     const pretties = printed.map(({ file }) => prettyToggle(file))
@@ -234,7 +201,7 @@ export class BundleCompareAll extends BundleCompareCode {
     const pretty = toggle && { ...toggle, json: pretties.some(copy => copy.json), affects: printed.map(({ path }) => path) }
     // The diff's controls, while any file shows a change or hides one they can show.
     const diffable = shown.some(({ file }) => file.model?.blocks.length > 0 || file.whitespace || file.hiding || file.types)
-    return this._layout(rail, html`<header class="bundle-code-main-bar bundle-compare-code-bar">
+    return this._layout(rail, this._current, html`<header class="bundle-code-main-bar bundle-compare-code-bar">
           <span class="bundle-compare-all-title">${entries.length.toLocaleString()} ${entries.length === 1 ? 'file' : 'files'} changed</span>
           ${additions + deletions > 0 ? diffCounts(additions, deletions) : nothing}
           <span class="bundle-code-main-spacer"></span>

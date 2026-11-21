@@ -1,34 +1,18 @@
-// Graph v2 tab — mutable state. A single shared object the
-// renderer + canvas + event handlers all read and mutate, plus a
-// cleanup hook the canvas owns so re-attach can drop stale
-// listeners and rAF callbacks.
-//
-// Most fields back UI controls in the topbar / right-panel: the
-// "All files" toggle, severity / triage-color highlight sets,
-// path-substring filter, package solo + focus drill-in, the
-// per-render canvas handle (live `requestDraw` + `_cleanup`), and
-// the layout cache. Defaults are tuned to read well on the small
-// typical DeepView graph (10–80 files) so the empty state is
-// informative even before any user input.
+// The graph view's mutable state, shared by the renderer, the canvas and the
+// event handlers, plus the canvas attachment's cleanup hook.
 export const graph2 = {
-  // Include clean files (no own / subtree findings) in the
-  // canvas. Off by default so the layout focuses on
-  // issue-bearing code. Toggled via the topbar's "All files"
-  // button.
+  // "All files": include files without own or subtree findings.
   showAll: false,
-  // Package-level view — one node per package instead of one per file, edges
-  // aggregated from the cross-package imports. Bundle Graph tab
-  // only, via the topbar's "Packages" pill; the pill (and the
-  // mode) only engage when the bundle has 3+ packages — see
-  // `canPackagesView` in buildBundleGraphData. Off by default.
+  // "Packages": one node per package, edges aggregated from cross-package
+  // imports. Bundle Graph layout only, engaged when the bundle has 3+
+  // packages (`canPackagesView`, see buildBundleGraphData).
   packagesView: false,
-  // Fourth view: small bundles start at file level; larger ones always
-  // aggregate packages. Independent of the first Graph view's switch.
+  // The same switch for Dependencies (small bundles start at file level,
+  // larger ones always aggregate) and for Size flow.
   dependencyPackagesView: false,
   flowPackagesView: false,
-  // Bundle graph "Issues" switch, offered when the bundle has matched
-  // findings. Off by default: the bundle graph opens as a plain map of
-  // the code, and issue markers, counts and filters appear when on.
+  // The bundle graph's "Issues" switch, offered when findings matched the
+  // bundle: off, it opens as a plain map of the code.
   bundleIssues: false,
   bundleLayout: 'graph', // 'graph' | 'layers' | 'matrix' | 'dependencies' | 'flow' | 'package-flow'; bundle-only
   // The layout lockfiles open on (lockfile-graph.js), apart from the bundle
@@ -38,54 +22,30 @@ export const graph2 = {
   bundleReason: null, // null = all files, else a scope's id (bundleScopes); shared by graph and layers
   bundleReasonFor: null, // bundle integrity; reset selection on bundle changes
   selected: null,        // file path or null
-  // Package focus mode — when set, the canvas drops the spiral
-  // and renders ONLY this package's intra-imports in graph v1
-  // style (single hue, arrowheads, file labels). null = full
-  // graph; reset on report swap and on the back-button click.
+  // The package drawn alone, file by file (null for the whole graph); reset
+  // on a report swap and by the back button.
   focusedPkg: null,
-  // Right-panel "Top packages" sort axis. Issues-first by default
-  // so the user lands on the actionable list; files for "what's
-  // the codebase shape" exploration.
-  topPkgsTab: 'issues',  // 'issues' | 'files'
-  // Visual constants the canvas reads as fixed values (no longer
-  // user-facing sliders). Tune the defaults here.
-  edgeOpacity: 0.22,
-  nodeSize: 1.0,
-  showLabels: false,
-  // Severity highlight filter — empty = no filter, every node at
-  // full opacity (default). With 1+ selected, matching nodes stay
-  // full opacity and the rest dim to 0.1. Selecting all severities
-  // reproduces the old "Show only issues" behavior automatically.
+  topPkgsTab: 'issues',  // the Packages list's axis: 'issues' | 'files' | 'size'
+  // Severity and mark-color highlights: empty for none, else nodes with a
+  // finding of a selected value stay at full opacity (both filters
+  // AND-combined, as in the findings tab) and the rest dim.
   selectedSeverities: new Set(),
-  // Mark-color highlight filter — same shape as the severity set.
-  // Empty = no filter. When non-empty, a node stays full-opacity
-  // only if at least one finding on that file carries one of the
-  // selected colors (with severity filter AND-combined when both
-  // are active). Mirrors the findings-tab triage filter so the
-  // canvas highlight matches what the table would show.
   selectedColors: new Set(),
-  // Path-substring filter. Empty = no filter. Non-empty =
-  // case-insensitive substring match; non-matching nodes
-  // dim to 0.1 (same soft-dim path as solo / severity).
+  // Path / package substring filter, case-insensitive; non-matching nodes dim.
   pathFilter: '',
-  // Package solo — narrows the canvas highlight to a single
-  // package via the Top-packages list click. `hidden` is a
-  // legacy hide-set that nothing currently writes to, kept as
-  // an empty Set so nodeVisible can still read it without an
-  // undefined check.
+  // A package hide-set nothing adds to (ingest.js clears it).
   hidden: new Set(),
+  // The package picked in the Packages list: a filter in the file views, the
+  // selection at package altitude.
   solo: null,
-  // Per-render canvas state — owned by canvas.js, re-built on
-  // every attach. Cleanup tears down listeners + rAF +
-  // ResizeObserver.
+  // The canvas attachment's live handle ({ requestDraw, _cleanup }), rebuilt
+  // on every attach.
   graphState: null,
-  // Layout result cache, keyed off (mode, files, w, h).
-  // Recomputed when the user switches layouts or the underlying
-  // file set changes (the "All files" toggle in events.js nulls
-  // it and tears the canvas down via cleanupGraph2).
+  // Positions keyed by (file set, size, focus, packages view); the "All
+  // files" toggle clears it along with the canvas.
   layoutCache: null,
-  // Pan / zoom handed from one canvas attachment to the next for the
-  // same view (cleanupGraph2's keepViewport). Consumed by the next attach.
+  // Pan and zoom handed from one canvas attachment to the next for the same
+  // view (cleanupGraph2's keepViewport), consumed by that attach.
   keptViewport: null,
 }
 

@@ -1,9 +1,5 @@
-/* `<triage-conflict-dialog>` layer — per-property triage conflict
-   resolver (workspace import + report-attach hydration). Composed
-   into the shadow `static styles` on top of dialog-base.css and
-   dialog-severity.css (`.conflict-sev`). */
-
-/* Wide frame — the conflict cards carry three columns. */
+/* `<triage-conflict-dialog>`: the per-property triage conflict resolver,
+   over dialog-base.css and dialog-severity.css. Wide for three columns. */
 dialog { max-width: 720px; width: min(94vw, 720px); }
 
 header h3 { margin: 0 0 .25rem; }  /* tighter than base */
@@ -28,14 +24,13 @@ header p {
 }
 
 .list {
-  list-style: none; margin: 0; padding: 0;
+  list-style: none;
   max-height: 60vh; overflow-y: auto; overscroll-behavior: none;
   -webkit-app-region: no-drag; app-region: no-drag;
   display: flex; flex-direction: column; gap: .5rem;
 }
 
-/* One card per finding id: head row (severity badge, file:line, id
-   chip), description preview, then per-property decision rows. */
+/* A card per finding: head row, description, a decision row per property. */
 .card {
   border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   padding: .55rem .7rem .6rem;
@@ -67,9 +62,7 @@ header p {
 
 .rows { display: flex; flex-direction: column; gap: .35rem; }
 
-/* One row per property (color, comment): label, "current" choice,
-   "imported" choice. Each choice label wraps its radio so the whole
-   side is a hit target. */
+/* Label, "current" and "imported" choices, each a label around its radio. */
 .row {
   display: grid;
   grid-template-columns: 5rem 1fr 1fr;
@@ -81,8 +74,7 @@ header p {
   align-self: center;
 }
 .choice {
-  /* Anchor the hidden radio below so the native validation bubble
-     points at this cell, not the dialog origin. */
+  /* So the native validation bubble points at this cell. */
   position: relative;
   display: flex; flex-direction: column; gap: .15rem;
   padding: .35rem .5rem;
@@ -94,7 +86,7 @@ header p {
     background: rgb(from var(--accent) r g b / .07);
   }
 
-  /* Keyboard focus ring — the radio itself is opacity:0, so surface it. */
+  /* The radio is invisible, so its focus ring goes here. */
   &:has(input:focus-visible) {
     outline: 2px solid var(--accent); outline-offset: 1px;
   }
@@ -123,8 +115,6 @@ header p {
   width: 12px; height: 12px; border-radius: 50%;
   box-shadow: 0 0 0 1px rgb(from var(--text) r g b / .2);
   flex-shrink: 0;
-  /* Hue from theme.css's --marker-* properties — same source as the
-     <color-marker> picker, so palette changes land in one place. */
   &.marker-red   { background: var(--marker-red); }
   &.marker-blue  { background: var(--marker-blue); }
   &.marker-green { background: var(--marker-green); }

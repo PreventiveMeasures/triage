@@ -1,12 +1,6 @@
-/* Links view — one dropped links file, listed as written (see
-   ui/view/render-links.js). A page of pointers, not of content: the
-   rows are ids and report names, and everything here is sized and
-   coloured to read as reference material rather than as findings.
-
-   Shares the page chrome (`header.page-head`, `.page-title`,
-   `.meta-row`) with the Packages / Repositories pages, and the same
-   1200px cap, so switching between the cross-report views doesn't
-   shift the column. */
+/* Links view (view/render-links.js): one dropped links file as written,
+   styled as reference material. Shares the page chrome and 1200px cap with
+   the Packages / Repositories pages so the column doesn't shift. */
 .links-view {
   max-width: 1200px;
   width: 100%;
@@ -15,9 +9,7 @@
   min-height: 0;
 }
 
-/* The file's own name, first thing in the meta row, wearing the row
-   icon its sidebar entry wears — the page says WHICH links file it is
-   before it says anything about the links. */
+/* The file's own name and sidebar icon, first in the meta row. */
 .links-file-name {
   display: inline-flex; align-items: center; gap: .35rem;
   max-width: 22rem;
@@ -26,10 +18,8 @@
   & .file-icon { flex-shrink: 0; }
 }
 
-/* Caveats about this particular file — findings it names that aren't
-   here, entries that couldn't be linked at all. Warning-shaped (left
-   rule, tinted) because each one means the page is showing less than
-   the file says. */
+/* Caveats about this file (findings it names that aren't here, entries that
+   couldn't be linked): warning-shaped, as the page shows less than the file. */
 .links-note {
   max-width: 60ch;
   margin: 0 0 .5rem;
@@ -46,19 +36,13 @@
   font-size: .82rem;
 }
 
-/* The links themselves. Scrolls inside the page — same treatment as
-   `.packages-list` — so the header stays put on a file with hundreds
-   of links. `list-style: none` on the <ol>: the "Link N" heading in
-   each card already numbers it, and a marker beside that would number
-   it twice. */
+/* The links scroll inside the page, as `.packages-list`. No list markers:
+   each card's "Link N" heading numbers it. */
 .links-list {
   list-style: none;
   margin: 0; padding: 0;
   display: flex; flex-direction: column; gap: .5rem;
-  /* Takes the height left over under the header and the notes, and
-     scrolls inside it: `min-height: 0` is what lets a flex item
-     shrink below its content and hand the overflow to this box
-     rather than to the page. */
+  /* `min-height: 0` lets this flex item shrink and scroll instead of the page. */
   flex: 1 1 auto; min-height: 0;
   overflow-y: auto; overscroll-behavior: none; scrollbar-gutter: stable;
   -webkit-app-region: no-drag; app-region: no-drag;

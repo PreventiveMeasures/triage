@@ -1,5 +1,5 @@
-import { bundlePackageDirs } from './bundle-sources.js'
-import { bundlePkgOf } from './bundle-pkg-of.js'
+import { bundlePackageDirs } from '../../common/bundle-sources.js'
+import { bundlePkgOf } from '../../common/bundle-pkg-of.js'
 import { bundleImportsAsMap, bundleLayerRoots } from './bundle-graph-inputs.js'
 import { bundleScopes } from '../../common/bundle-reasons.js'
 import { stronglyConnected } from './graph/matrix-model.js'

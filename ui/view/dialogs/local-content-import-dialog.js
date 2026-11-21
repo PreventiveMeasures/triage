@@ -3,9 +3,11 @@ import { openAppDialog } from './app-dialog.js'
 import { ConfirmationDialog } from './confirmation-dialog.js'
 import contentImportCSS from './dialog-content-import.css'
 
+const selectable = (item) => !item.present && !item.error
+
 class LocalContentImportDialog extends ConfirmationDialog {
   static styles = [...ConfirmationDialog.styles, unsafeCSS(contentImportCSS)]
-  static properties = { plan: { attribute: false }, selected: { state: true } }
+  static properties = { selected: { state: true } }
 
   constructor() {
     super()
@@ -13,12 +15,13 @@ class LocalContentImportDialog extends ConfirmationDialog {
     this.selected = new Set()
   }
 
+  // Cloud-synced files start selected.
   beforeOpen() {
-    this.selected = new Set(this.plan.items.filter(item => item.synced && !item.present && !item.error).map(item => item.value))
+    this.selected = new Set(this.plan.items.filter((item) => item.synced && selectable(item)).map((item) => item.value))
   }
 
   toggle(item, checked) {
-    if (item.present || item.error) return
+    if (!selectable(item)) return
     const selected = new Set(this.selected)
     if (checked) selected.add(item.value)
     else selected.delete(item.value)
@@ -26,23 +29,23 @@ class LocalContentImportDialog extends ConfirmationDialog {
   }
 
   confirmationResult(confirmed) {
-    const selected = this.plan.items.filter(item => this.selected.has(item.value) && !item.present && !item.error).map(item => item.value)
+    const selected = this.plan.items.filter((item) => this.selected.has(item.value) && selectable(item)).map((item) => item.value)
     const accepted = confirmed && selected.length > 0 && !this.signal?.aborted
     return { confirmed: accepted, selected: accepted ? selected : [] }
   }
 
   render() {
     const kind = this.plan.kind === 'bundle' ? 'bundles' : 'reports'
-    return html`<dialog aria-labelledby="content-import-title" @close=${this._onClose}>
-      <header><h3 id="content-import-title">Import ${kind}</h3></header>
-      <p class="lwd-body">Choose files to upload. Cloud-synced files are selected by default.</p>
-      <p class="lwd-note">Workspaces are shown for organization only. Teams and triage are not imported.
+    return this.prompt({
+      title: `Import ${kind}`, titleId: 'content-import-title',
+      body: 'Choose files to upload. Cloud-synced files are selected by default.',
+      notes: html`<p class="lwd-note">Workspaces are shown for organization only. Teams and triage are not imported.
         Repository locations follow each file’s embedded metadata; files without it stay unattached.</p>
       <div class="content-import-groups">
-        ${this.plan.groups.map(group => html`<fieldset><legend>${group.name}</legend>
-          ${group.items.map(({ item, synced, cached }) => html`<label class=${`content-import-item${item.present || item.error ? ' unavailable' : ''}`}>
+        ${this.plan.groups.map((group) => html`<fieldset><legend>${group.name}</legend>
+          ${group.items.map(({ item, synced, cached }) => html`<label class=${`content-import-item${selectable(item) ? '' : ' unavailable'}`}>
             <input type="checkbox" .checked=${this.selected.has(item.value)} ?disabled=${item.present || !!item.error}
-              @change=${event => this.toggle(item, event.target.checked)}>
+              @change=${(event) => this.toggle(item, event.target.checked)}>
             <span class="content-import-label"><strong>${item.name}</strong>
               <span class="content-import-status">${synced ? 'Cloud synced' : 'Not synced'}${cached ? ' · last known status' : ''}
                 ${item.present ? html`<span class="content-import-present">Already present</span>` : nothing}</span>
@@ -51,13 +54,10 @@ class LocalContentImportDialog extends ConfirmationDialog {
           </label>`)}
         </fieldset>`)}
         ${this.plan.items.length === 0 ? html`<p class="lwd-empty">No local ${kind} available.</p>` : nothing}
-      </div>
-      <footer class="nwd-actions">
-        <span class="lwd-empty" role="status">${this.selected.size} selected</span><span class="nwd-spacer"></span>
-        <button type="button" data-role="cancel" @click=${this._onCancel}>Cancel</button>
-        <button type="button" class="primary" ?disabled=${this.selected.size === 0} @click=${this._onConfirm}>Import ${kind}</button>
-      </footer>
-    </dialog>`
+      </div>`,
+      status: html`<span class="lwd-empty" role="status">${this.selected.size} selected</span>`,
+      action: `Import ${kind}`, kind: 'primary', disabled: this.selected.size === 0,
+    })
   }
 }
 

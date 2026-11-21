@@ -1,57 +1,31 @@
-// `<bundle-compare>` — the Compare slide in the bundles view. Picks a
-// second bundle and diffs it against the currently-open one: which
-// files — source and resources alike, the files the Overview lists —
-// were added / removed / changed, the per-package size shifts, and the
-// net byte/file delta. The headline use case is two
-// builds of the same artifact ("what did this dependency bump pull
-// in?"), but it works on any two bundles the user has on disk.
+// `<bundle-compare>` — the Compare slide: picks a bundle to compare the open
+// one with and shows what changed, git-style, from the one picked (before)
+// to the open one (after): files added, removed and changed, package size
+// shifts and the net deltas. Overview lists them; Code
+// (bundle-compare-code.js) reviews the files as a diff, a file row opening
+// there. The other bundle is parsed on demand, state-free; the selection
+// lives here, so a re-render from elsewhere keeps it, and a new base
+// (`integrity`) resets it. `request` (`state.bundleCompare`) picks the
+// target and mode to start from; the user's picks are reported as
+// `bundle-compare-change`.
 //
-// Two modes share the summary row's tabs: Overview (the default) lists what
-// changed, and Code (bundle-compare-code.js) reviews the files that differ
-// as a diff. A file row in the Overview opens that file in Code.
+// `source`, when set, offers what to compare with in place of the bundles on
+// hand, as an npm version offers its package's others (npm-package.js
+// npmCompareSource): `{ noun, base, options, choices, pending, error,
+// name(id), load(id), open(base, target, mode), select?(side, label),
+// files?, dependencies?(base, other), dependencyTags?,
+// openDependency?, badges?(base, other, files), widest }`. Its ids stand
+// where integrities do; `options` are what the open one compares with,
+// `choices` what may take its place, each `{ id, name, format, detail,
+// date?, dateWarning? }`. What `load` reads may name itself otherwise
+// (`compareId`, as a branch reads as its head's commit), which then stands
+// for it. `dependencies` replaces Packages: `{ removed, added, changed }`
+// rows, `{ key, name, kind, range }`, a changed one's `from` and `to`, with
+// their `flags` (npm-dependency-checks.js).
 //
-// The comparison is framed git-style: the open bundle is the "base"
-// (before), the picked bundle is "other" (after), and added / removed
-// / changed read relative to base. The header spells out the
-// direction so the coloring isn't ambiguous.
-//
-// `details` is the parsed open bundle (from `state.bundleDetails`);
-// the other bundle is parsed on demand via `buildBundleDetails`
-// (state-free — it doesn't touch `state.bundleDetails`). Selection +
-// the parsed other-bundle live in component-internal state, mirroring
-// how the treemap owns its drill-in: a re-render from elsewhere (the
-// finding-index subscription) keeps the element mounted and so keeps
-// the comparison; switching the base bundle resets it via willUpdate.
-// `request` (`state.bundleCompare`, from a managed link) picks the bundle
-// and mode to start from; a pick, clear, or mode switch the user makes
-// is reported as `bundle-compare-change`, which keeps a managed URL on it.
-// `source`, when set, offers what to compare with in place of the bundles
-// on hand, as an npm package version offers the package's other versions
-// (npm-package.js npmCompareSource): `{ noun, base, options, choices,
-// pending, error, name(id), load(id), open(base, target, mode),
-// dependencies(base, other), badges(base, other, files), widest }`, each option `{ id, name, format, detail, date?,
-// dateWarning? }`, its date flagged where it has a `dateWarning`, which its tooltip says
-// (bundle-selector.js bundleOptions); its ids stand where bundles' integrities do, `base` the open one's.
-// `options` are what the open one compares with, `choices` what may take
-// its place; or each side is picked as the source's `select(side, label)`
-// renders it (bundle-compare-picker.js), as a repository's directory picks
-// a revision (repository-compare.js). What `load` reads may name what it
-// read otherwise than it was picked by, as its `compareId`, as a branch
-// reads as its head's commit, which then stands for it.
-//
-// Both sides are pickers, the one picked to compare with first and the open
-// one second, the comparison reading from the first to the second: what the
-// open one adds is Added. Picking the first side compares with it; picking
-// the second opens what was picked, compared with the same first side, and
-// picking the first side's bundle there swaps the two. `dependencies` lists what replaces Packages: removed,
-// added and changed rows, `{ key, name, kind, range }` or, changed, with
-// `from` and `to` in place of `range`, an added or changed one with its
-// `flags`, `{ check, label, tooltip }`, what calls for a look at it
-// (npm-dependency-checks.js), and `dependencyTags(row, kind)` what to tag
-// one with, where it has anything. `badges` is what calls for a look at the
-// two, at the picker row's end, `files` the comparison's file lists
-// (computeBundleDiff), and `widest` the `{ name, detail }` its selects are
-// sized to hold.
+// Picking the first side compares with it; picking the second opens what
+// was picked, compared with the same first side, and picking the first
+// side's bundle there swaps the two.
 import { LitElement, html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
@@ -62,12 +36,12 @@ import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { dirClass, formatDelta } from './bundle-compare-stats.js'
 import { compareSourceOptions, renderComparisonHeader, renderComparisonPicker, renderComparisonSummary } from './bundle-compare-picker.js'
 import { pkgColor } from './graph/utils.js'
-import { pkgLabel } from './bundle-pkg-of.js'
+import { pkgLabel } from '../../common/bundle-pkg-of.js'
 import { buildBundleDetails, takeHandedOffBundle } from './bundle-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { bundleComparison } from './bundle-comparison.js'
-import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
-import { bundleCompareScopes } from './bundle-compare-inputs.js'
+import { renameTemplate, rootTemplate, withoutPrefix } from './bundle-compare-rename.js'
+import { bundleCompareScopes } from '../../common/bundle-compare-inputs.js'
 import './bundle-selector.js'
 import './bundle-scope-selector.js'
 import './bundle-compare-code.js'
@@ -76,66 +50,54 @@ import { byFlags } from './file-flags.js'
 import { renderComparisonViewer } from './bundle-compare-view.js'
 import { compareModeOf } from '../../common/managed/routes.js'
 
-// Cap each import-resolutions table's rendered rows so a pathological
-// compare can't stamp out tens of thousands of DOM nodes. The counts are
-// always exact; only the listing is trimmed, with an "and N more" footer.
-// (File and package groups list every row in a scrolling list instead.)
+// Each import-resolutions table's rendered rows, so a pathological compare
+// stamps out no tens of thousands of nodes; the counts stay exact.
 const MAX_ROWS = 400
 // Widest version column in Removed / Added; a longer list ellipsizes.
 const MAX_VERSION_CHARS = 24
 // The Overview's column order, Packages and Files alike.
 const LANES = ['removed', 'added', 'changed']
 
-// Reopen handoff. Swap, or a pick on this side, opens another bundle (the
-// app navigates to it) to compare with a target. That base change would
-// normally clear the comparison in willUpdate; this module-level slot
-// carries the intended target across the prop teardown — a
-// component-internal field wouldn't survive the navigation. Shape:
-// `{ base, target, scope, mode, codePath }`, `base` the opened one's
-// integrity, or a source's id, consumed once by willUpdate when the base
-// becomes it, or dropped when another bundle opens. It holds no parsed
-// bundle: those ride the swap event to the navigation, which hands them
-// over (bundle-load.js handOffBundles) for as long as it runs.
+// Reopen handoff. A swap, or a pick on this side, navigates to another base
+// to compare with a target; this module-level slot carries the target
+// across the prop teardown that navigation triggers, a field wouldn't.
+// `{ base, target, scope, mode, codePath }`, taken once when the base
+// becomes `base`, dropped when another opens. Parsed bundles ride the swap
+// event instead (bundle-load.js handOffBundles).
 let _pendingSwap = null
 
-// A dependency's version list, comma-joined — usually one entry, more
-// when pnpm kept duplicate majors side by side.
-function versionList(versions) {
-  return versions.join(', ')
-}
+// A move from one version to another, `label` its words for screen readers,
+// the new one tinted by its `direction`, a `glyph` after it (and a space
+// before it) where given.
+const versionMove = (label, from, to, direction, glyph = null) => html`<span class="bundle-compare-ver" aria-label=${label}>
+      <span class="bundle-compare-ver-from">${from}</span>
+      <span class="bundle-compare-ver-arrow" aria-hidden="true">→</span>
+      <span class=${`bundle-compare-ver-to ${direction}`}>${to}</span>${glyph ? [' ', html`<span class=${`bundle-compare-ver-dir ${direction}`} aria-hidden="true">${glyph}</span>`] : nothing}
+    </span>`
 
 class BundleCompare extends LitElement {
   static properties = {
     details: { attribute: false },
     integrity: { attribute: false },
-    // `{ bundle, target, mode }`: compare `bundle` (when it's the one open)
-    // with `target`, in `mode`.
+    // `{ bundle, target, mode }`: compare `bundle` (when it's the one open) with `target`, in `mode`.
     request: { attribute: false },
     source: { attribute: false },
-    review: { attribute: false },
-    // Integrity of the bundle picked to compare against (null = none
-    // chosen yet), the parsed bytes of that bundle once loaded, and a
-    // coarse load status the body switches on.
+    // The one picked to compare with (null: none yet), its parsed details, and their load status.
     _targetIntegrity: { state: true },
     _otherDetails: { state: true },
     _status: { state: true },
     _scope: { state: true },
     _fileSort: { state: true },
     _pkgSort: { state: true },
-    // Sections that open on demand (Files, Import resolutions): a large
-    // comparison lists thousands of rows.
+    // Sections that open on demand (Files, Import resolutions): a large comparison lists thousands of rows.
     _openSections: { state: true },
-    // 'overview' | 'code' (compareModeOf), and the file Code shows or
-    // scrolls to (null: its first changed file).
+    // 'overview' | 'code', the file Code shows (null: its first), and a line it is to open at once (_openLine).
     _mode: { state: true },
     _codePath: { state: true },
-    // A line Code is to open at, `{ path, line, query }` (line from 0, the
-    // open version's; see _openLine), once.
     _codeSeek: { state: true },
   }
 
-  // Light DOM so report.css applies + file-row clicks bubble to the
-  // document-level [data-bundle-view-source] delegate in events.js.
+  // Light DOM so report.css applies and file-row clicks reach events.js's delegates.
   createRenderRoot() { return this }
 
   constructor() {
@@ -154,8 +116,7 @@ class BundleCompare extends LitElement {
     this._mode = 'overview'
     this._codePath = null
     this._codeSeek = null
-    // The comparison of the pair, as bundle-comparison.js has it, kept there
-    // by the pair's integrities: painted again once it comes.
+    // Painted again once the pair's comparison comes (bundle-comparison.js).
     this._repaint = () => this.requestUpdate()
     // The body Packages' lists fit, watched for a new width or height.
     this._fitBody = null
@@ -178,15 +139,11 @@ class BundleCompare extends LitElement {
     if (changed.has('source') && this.source && !changed.get('source')) this._openSections = new Set([...this._openSections, 'files'])
     if ((changed.has('_otherDetails') || changed.has('details')) && this._status === 'ready'
       && !bundleCompareScopes(this._otherDetails, this.details).some(scope => scope.id === this._scope)) this._scope = ''
-    // Reset only when the BASE bundle itself changes (integrity). A
-    // details object swapped in for the SAME integrity — the parse
-    // landing after a navigation, or fileHashes attaching in place — is
-    // the same content, so the comparison stays valid; resetting there
-    // would wipe the target the instant the base finished loading.
+    // Reset only when the base's integrity changes: new details for the same
+    // one (its parse landing, fileHashes attaching) are the same content.
     if (changed.has('integrity')) this._rebase()
-    // A link's bundle and mode, or the ones Compare reported, idle when
-    // already shown. One withdrawn — this bundle reopened on a bare
-    // Compare route — takes the comparison with it.
+    // A link's target and mode, idle when already shown; one withdrawn (a
+    // bare Compare route) takes the comparison with it.
     if ((changed.has('request') || changed.has('integrity')) && this.integrity && this.request?.bundle === this.integrity) {
       if (this.request.target !== this._targetIntegrity) this._choose(this.request.target)
       this._mode = compareModeOf(this.request.mode)
@@ -208,17 +165,12 @@ class BundleCompare extends LitElement {
     this._fitLists()
   }
 
-  // Packages' lists take the pane but for what sits around them (see
-  // .bundle-compare-rows--fill), which CSS can't add up, so it is measured
-  // here as `--compare-fill-around`: above a list, the section and card
-  // heads; below it, the card's foot, then each section after as it sits
-  // closed — Files and Import resolutions their headings, open or not — and
-  // the margins between, the last one's included as the pane scrolls it.
-  // Then, below them, the lists of the last block — Files, open with nothing
-  // under it — in their last row run on to the pane's foot, less their
-  // card's and the block's, as `--compare-rest` (see
-  // .bundle-compare-rows--scroll). None of it moves with the height of the
-  // list it is measured for, so setting it settles at once.
+  // Packages' lists take the pane but for what sits around them, which CSS
+  // can't add up: measured here as `--compare-fill-around` (the heads above,
+  // the card's foot and every section after as it sits closed, with margins).
+  // The last block's lists in their last row run on to the pane's foot
+  // (`--compare-rest`). Neither moves with the list's own height, so setting
+  // them settles at once.
   _fitLists() {
     const body = this._fitBody
     if (!body) return
@@ -256,46 +208,22 @@ class BundleCompare extends LitElement {
     }
   }
 
-  // The base bundle changed: compare it afresh, or after a swap, with the
-  // old base.
+  // The base changed: compare it afresh, or, opened by a swap or a pick here
+  // (_pendingSwap), with the target it was opened to compare with.
   _rebase() {
-    // A swap, or a pick on this side, navigates to the new base; in that
-    // case restore the target it was opened to compare with instead of
-    // clearing it (the module-level handoff survives the prop teardown the
-    // navigation triggers). One that landed elsewhere (another bundle
-    // opened first) is over.
     const base = this._baseKey
-    if (_pendingSwap && base && base !== _pendingSwap.base) _pendingSwap = null
-    if (_pendingSwap && base === _pendingSwap.base) {
-      const { target } = _pendingSwap
-      this._scope = _pendingSwap.scope
-      this._mode = _pendingSwap.mode
-      this._codePath = _pendingSwap.codePath
-      _pendingSwap = null
-      if (!target) {
-        this._targetIntegrity = null
-        this._otherDetails = null
-        this._status = 'idle'
-        return
-      }
-      this._targetIntegrity = target
-      // The old base is still parsed: compare against it as it stands.
-      const handed = this.source ? null : takeHandedOffBundle(target, details => Boolean(details.json || details.bundle))
-      if (handed) {
-        this._otherDetails = handed
-        this._status = 'ready'
-      } else {
-        this._otherDetails = null
-        this._status = 'loading'
-        this._loadOther(target)
-      }
-      return
-    }
-    this._targetIntegrity = null
-    this._otherDetails = null
-    this._status = 'idle'
-    this._scope = ''
-    this._codePath = null
+    const swap = base && _pendingSwap?.base === base ? _pendingSwap : null
+    if (base) _pendingSwap = null
+    if (swap) this._mode = swap.mode
+    this._scope = swap ? swap.scope : ''
+    this._codePath = swap ? swap.codePath : null
+    const target = swap?.target || null
+    this._targetIntegrity = target
+    // The old base is still parsed: compared with as it stands.
+    const handed = target && !this.source ? takeHandedOffBundle(target, details => Boolean(details.json || details.bundle)) : null
+    this._otherDetails = handed
+    this._status = handed ? 'ready' : target ? 'loading' : 'idle'
+    if (target && !handed) this._loadOther(target)
   }
 
   // The id this side is picked by: its integrity, or its source's id.
@@ -303,35 +231,29 @@ class BundleCompare extends LitElement {
     return this.source ? this.source.base : this.integrity
   }
 
-  // Swap A and B: open the current comparison target as the active bundle
-  // and compare it with the old base.
+  // Open the target as the base, compared with the old base.
   _swap() {
     const target = this._targetIntegrity
     if (target && target !== this._baseKey) this._reopen(target, this._baseKey)
   }
 
-  // A pick on this side: open it to compare with the same target, or with
-  // the old base when it is the target (a swap).
+  // A pick on this side: open it compared with the same target, or swap where it is the target.
   _pickBase(value) {
     if (!value || value === this._baseKey) return
     if (value === this._targetIntegrity) this._swap()
     else this._reopen(value, this._targetIntegrity)
   }
 
-  // Open `base` (the app navigates to it), compared with `target` (null:
-  // nothing picked yet). The pending slot carries the target, scope, mode
-  // and Code file across the base change. events.js handles the bundle
-  // switch off the dispatched event (the path a sidebar row click takes);
-  // what is already parsed of either side is handed to its new role rather
-  // than read from storage and parsed again. A source opens its own.
+  // Open `base`, compared with `target` (null: nothing picked yet): a source
+  // opens its own; else events.js switches bundles off `bundle-swap`, what is
+  // parsed of either side handed to its new role rather than parsed again.
   _reopen(base, target) {
+    if (!this.source && !bundleComparisonCandidates(state.bundles ?? [], this.integrity).some(b => b.integrity === base)) return
+    _pendingSwap = { base, target, scope: this._scope, mode: this._mode, codePath: this._codePath }
     if (this.source) {
-      _pendingSwap = { base, target, scope: this._scope, mode: this._mode, codePath: this._codePath }
       this.source.open(base, target, this._mode)
       return
     }
-    if (!bundleComparisonCandidates(state.bundles ?? [], this.integrity).some(b => b.integrity === base)) return
-    _pendingSwap = { base, target, scope: this._scope, mode: this._mode, codePath: this._codePath }
     const parsed = details => details && !details.error && (details.json || details.bundle) && [base, target].includes(details.integrity)
     const bundles = [this._otherDetails, this._baseReady ? this.details : null].filter(parsed)
     this.dispatchEvent(new CustomEvent('bundle-swap', {
@@ -341,9 +263,7 @@ class BundleCompare extends LitElement {
     }))
   }
 
-  // Friendly name for an integrity, resolved from the sidebar's cached
-  // bundle list (`state.bundles`). Falls back to a short integrity
-  // prefix when the entry isn't found (deleted out from under us).
+  // A bundle's name from the sidebar's list, else a short integrity prefix (deleted meanwhile).
   _nameFor(integrity) {
     if (this.source) return this.source.name(integrity)
     const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
@@ -356,8 +276,7 @@ class BundleCompare extends LitElement {
     this._notify()
   }
 
-  // The user's comparison — the bundle compared with and the mode — for the
-  // URL of a managed bundle (events.js).
+  // The user's comparison, for a managed bundle's URL (events.js).
   _notify() {
     this.dispatchEvent(new CustomEvent('bundle-compare-change', {
       bubbles: true,
@@ -366,10 +285,8 @@ class BundleCompare extends LitElement {
     }))
   }
 
-  // Empty value clears the comparison; otherwise kick the state-free
-  // parse of the chosen bundle and re-render through each status. The
-  // parsed other-bundle is dropped immediately so a stale diff doesn't
-  // linger under the spinner.
+  // Empty clears the comparison; else the chosen one is parsed, the last
+  // dropped at once so no stale diff lingers under the spinner.
   _choose(value) {
     const integrity = value || null
     this._targetIntegrity = integrity
@@ -381,44 +298,28 @@ class BundleCompare extends LitElement {
   }
 
   async _loadOther(integrity) {
-    if (this.source) {
-      let details
-      try { details = await this.source.load(integrity) }
-      catch (err) {
-        if (err.name === 'AbortError') return
-        details = { error: err.message }
-      }
-      if (this._targetIntegrity !== integrity) return
-      this._otherDetails = details
-      this._status = 'ready'
-      if (details?.compareId && details.compareId !== integrity) {
-        this._targetIntegrity = details.compareId
-        this._notify()
-      }
-      return
-    }
-    const entry = bundleComparisonCandidates(state.bundles ?? [], this.integrity).find(b => b.integrity === integrity)
-    if (!entry) { this._status = 'idle'; this._targetIntegrity = null; this._notify(); return }
+    const entry = this.source ? null : bundleComparisonCandidates(state.bundles ?? [], this.integrity).find(b => b.integrity === integrity)
+    if (!this.source && !entry) { this._status = 'idle'; this._targetIntegrity = null; this._notify(); return }
     let details
-    try { details = await buildBundleDetails(integrity, entry) }
-    catch (err) { if (err.name === 'AbortError') return; throw err }
-    // Drop a stale resolve: the user re-picked (or switched the base
-    // bundle, which willUpdate reset to null) while this parse was in
-    // flight, so the result is for a selection that no longer stands.
+    try { details = await (this.source ? this.source.load(integrity) : buildBundleDetails(integrity, entry)) }
+    catch (err) {
+      if (err.name === 'AbortError') return
+      if (!this.source) throw err
+      details = { error: err.message }
+    }
+    // A stale answer, for a pick (or a base) that no longer stands, is dropped.
     if (this._targetIntegrity !== integrity) return
     this._otherDetails = details
     this._status = 'ready'
+    if (this.source && details?.compareId && details.compareId !== integrity) {
+      this._targetIntegrity = details.compareId
+      this._notify()
+    }
   }
 
-  // True once the open bundle is parsed and matches the integrity we
-  // were handed — guards the brief window where `state.bundleDetails`
-  // is still null / pointing at the previous selection.
+  // Once the open bundle is parsed and is the one handed, not the one before.
   get _baseReady() {
-    return Boolean(
-      this.details
-        && this.details.integrity === this.integrity
-        && (this.details.json || this.details.bundle),
-    )
+    return Boolean(this.details && this.details.integrity === this.integrity && (this.details.json || this.details.bundle))
   }
 
   // Review a file's changes in the Code view.
@@ -429,31 +330,16 @@ class BundleCompare extends LitElement {
   }
 
   // Review them at a line of the open version's file (`line` from 1, as a
-  // source's badges name it, `query` what it holds there): Code opens the
-  // file there as at a search hit (bundle-compare-code.js `seek`), a new
-  // object each time, so the same line asked for again is sought again.
+  // source's badges name it): Code seeks it as a search hit, a new object
+  // each time, so the same line asked again is sought again.
   _openLine({ path, line, query }) {
     this._codeSeek = { path, line: line - 1, query }
     this._openFile(path)
   }
 
-  // A file's row; a source's `files` (see `source`) give it its type's icon,
-  // read from each side under that side's own path, and a file in the open
-  // one its tag, with `base` as _fileGroup has it.
-  _fileRow(path, label, sizeTpl, tooltip = path, tagged = false, meta = undefined, basePath = path, base = undefined) {
-    const files = this.source?.files
-    return html`<li><button type="button" class="bundle-compare-row bundle-compare-row-link" @click=${() => this._openFile(path)}>
-      ${files ? files.icon(path, [[this._otherDetails, basePath], [this.details, path]]) : nothing}<span class="bundle-compare-row-path mono" data-tooltip-truncated data-tooltip=${tooltip}>${label}</span>${tagged ? files?.tag?.(this.details, path, base) ?? nothing : nothing}${fileMetaTags(meta)}${sizeTpl}
-    </button></li>`
-  }
-
-  // Card shell shared by every file / package group: the kind-tinted
-  // section, dot + title + exact count header, and every row in a list
-  // that scrolls — as tall as the pane allows with `fill`. It sits in its
-  // kind's lane of `lanes` (see _cols); `style` sets more custom
-  // properties on the card. Returns `nothing` for an empty group so a
-  // section only shows what actually moved. `keyOf` / `rowOf` are the
-  // `repeat` key + row template.
+  // A card per file / package group: its kind-tinted head with its exact
+  // count, every row in a list that scrolls (as tall as the pane allows with
+  // `fill`), in its kind's lane of `lanes` (_cols); nothing for an empty group.
   _group(title, rows, kind, keyOf, rowOf, actions = nothing, { fill = false, lanes = LANES, style = {} } = {}) {
     if (rows.length === 0) return nothing
     return html`<section class=${`bundle-compare-group bundle-compare-${kind}`} style=${styleMap({ '--compare-lane': String(lanes.indexOf(kind) + 1), ...style })}>
@@ -469,12 +355,8 @@ class BundleCompare extends LitElement {
     </section>`
   }
 
-  // Size cells for a file / package row: one byte count for a row that
-  // exists on a single side, the signed delta for a changed row, with
-  // `base → other` in its tooltip. A side with no size to give shows a
-  // dash, as does the delta it leaves undefined.
-  // A file's size, or how it changed; its lines of code, where it has any,
-  // in the tooltip.
+  // A row's size, or for a changed one its signed delta, `base → other` (and
+  // lines of code) in its tooltip; a dash for a size it hasn't.
   _sizeCells(r) {
     const bytes = value => value == null ? '—' : formatBytes(value)
     const loc = count => `${count.toLocaleString()} LoC`
@@ -484,9 +366,7 @@ class BundleCompare extends LitElement {
           data-tooltip=${`${bytes(r.baseBytes)} → ${bytes(r.otherBytes)}${r.baseLines > 0 || r.otherLines > 0 ? ` · ${r.baseLines.toLocaleString()} → ${loc(r.otherLines)}` : ''}`}>${r.delta === null ? '—' : formatDelta(r.delta)}</span>`
   }
 
-  // Name | Size order for one group, and Flags where `flagged`, kept per
-  // kind in the state field `field` (`_fileSort` / `_pkgSort`); `sort` the
-  // one it is in.
+  // Name | Size (| Flags) order for one group, kept per kind in `field`; `sort` the one it is in.
   _sortActions(field, kind, label, flagged = false, sort = this[field][kind]) {
     return html`<span class="bundles-overview-sort" role="group" aria-label=${`${kind} ${label} order`}>
       ${[['name', 'Name'], ['size', 'Size'], ...flagged ? [['flags', 'Flags']] : []].map(([value, text]) => html`<button type="button" aria-pressed=${String(sort === value)}
@@ -494,16 +374,13 @@ class BundleCompare extends LitElement {
     </span>`
   }
 
-  // One file group, every row listed (the list scrolls); the kind selects
-  // its accent. Size order is the largest first, or for Changed the
-  // largest change in size, name order breaking ties. Where any row is
-  // flagged, as its tags show (a source's `files.flags`, and what a stasis
-  // bundle records of it), Flags order is offered too (file-flags.js byFlags),
-  // and else is Name's.
+  // One file group, every row listed. Size order is the largest first (for
+  // Changed the largest change), name order breaking ties; Flags order
+  // (file-flags.js byFlags) is offered where any row is flagged, as a
+  // source's `files.flags` or a stasis bundle's record flags it.
   _fileGroup(title, rows, kind, displayOf, lanes) {
     const files = this.source?.files, tagged = kind !== 'removed'
-    // A file as the version compared with has it, for what its tags say is
-    // new to it: none for one the open version adds.
+    // A file as the version compared with has it, for what its tags say is new to it.
     const base = r => kind === 'added' ? null : { details: this._otherDetails, path: r.basePath ?? r.path }
     const flagsOf = r => [...tagged && files?.flags ? files.flags(this.details, r.path, base(r)) : [], ...fileMetaFlags(r.meta)]
     const flagged = rows.some(r => flagsOf(r).length > 0)
@@ -511,66 +388,51 @@ class BundleCompare extends LitElement {
     const weight = r => kind === 'changed' ? Math.abs(r.delta) : r.bytes
     const sorted = sort === 'flags' ? byFlags(rows, flagsOf, r => r.path)
       : rows.toSorted((a, b) => (sort === 'size' ? weight(b) - weight(a) : 0) || a.path.localeCompare(b.path))
-    // A renamed file reads `src/{a.js → a.ts}`, the old part red, the new green.
-    const row = r => r.renamedFrom == null ? this._fileRow(r.path, displayOf(r.path), this._sizeCells(r), r.path, tagged, r.meta, r.basePath ?? r.path, base(r))
-      : this._fileRow(r.path, renameTemplate(displayOf(r.renamedFrom), displayOf(r.path)), this._sizeCells(r), `${r.renamedFrom} → ${r.path}`, tagged, r.meta, r.basePath ?? r.path, base(r))
-    return this._group(title, sorted, kind, (r) => r.path, row, this._sortActions('_fileSort', kind, 'file', flagged, sort), { lanes })
+    // A file's type icon from each side under its own path, and its tags where the open one has it.
+    const row = r => html`<li><button type="button" class="bundle-compare-row bundle-compare-row-link" @click=${() => this._openFile(r.path)}>
+      ${files ? files.icon(r.path, [[this._otherDetails, r.basePath ?? r.path], [this.details, r.path]]) : nothing}<span class="bundle-compare-row-path mono" data-tooltip-truncated
+        data-tooltip=${r.renamedFrom == null ? r.path : `${r.renamedFrom} → ${r.path}`}>${r.renamedFrom == null ? displayOf(r.path)
+        : renameTemplate(displayOf(r.renamedFrom), displayOf(r.path))}</span>${tagged ? files?.tag?.(this.details, r.path, base(r)) ?? nothing : nothing}${fileMetaTags(r.meta)}${this._sizeCells(r)}
+    </button></li>`
+    return this._group(title, sorted, kind, r => r.path, row, this._sortActions('_fileSort', kind, 'file', flagged, sort), { lanes })
   }
 
-  // One package group: a package each, with its versions and its size —
-  // both sides of each for a changed one — every one listed, scrolling in
-  // its card as tall as the pane allows. Rows carry the package color dot
-  // for continuity with the size distribution + treemap. Size order is the
-  // largest first, or the largest move for Changed. Removed / Added size
-  // their version column to the longest list (monospace, so in `ch`), so
-  // versions and sizes line up row to row.
+  // One package group, each with its versions and size, its package's color
+  // dot as the treemap's. Removed / Added size their version column to the
+  // longest list, so versions and sizes line up row to row.
   _pkgGroup(title, rows, kind, lanes) {
     const sort = this._pkgSort[kind]
     // A side without a size sorts last.
     const weight = r => { const value = kind === 'changed' ? r.delta : r.bytes; return value == null ? -1 : Math.abs(value) }
     const sorted = rows.toSorted((a, b) => (sort === 'size' ? weight(b) - weight(a) : 0) || pkgLabel(a.pkg).localeCompare(pkgLabel(b.pkg)))
-    const versionChars = kind === 'changed' ? 0 : Math.min(MAX_VERSION_CHARS, Math.max(0, ...rows.map(r => versionList(r.versions).length)))
-    return this._group(title, sorted, kind, (r) => r.pkg, (r) => html`<li><div class="bundle-compare-row">
+    const versionChars = kind === 'changed' ? 0 : Math.min(MAX_VERSION_CHARS, Math.max(0, ...rows.map(r => r.versions.join(', ').length)))
+    return this._group(title, sorted, kind, r => r.pkg, r => html`<li><div class="bundle-compare-row">
       <span class="bundle-compare-pkg-dot" style=${styleMap({ background: pkgColor(r.pkg) })}></span>
       <span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=${pkgLabel(r.pkg)}>${pkgLabel(r.pkg)}</span>
-      ${kind === 'changed' ? this._versionCell(r) : versionChars > 0 ? html`<span class="bundle-compare-dep-ver" data-tooltip-truncated data-tooltip=${versionList(r.versions)}>${versionList(r.versions)}</span>` : nothing}
+      ${kind === 'changed' ? this._versionCell(r) : versionChars > 0 ? html`<span class="bundle-compare-dep-ver" data-tooltip-truncated data-tooltip=${r.versions.join(', ')}>${r.versions.join(', ')}</span>` : nothing}
       ${this._sizeCells(kind === 'changed' ? r : { bytes: r.bytes })}
     </div></li>`, this._sortActions('_pkgSort', kind, 'package'),
     { fill: true, lanes, style: versionChars > 0 ? { '--compare-version-width': `${versionChars}ch` } : {} })
   }
 
-  // A changed package's versions: `old → new` with the new side colored by
-  // direction (↑ green / ↓ red / ± amber) and a matching glyph, spelled out
-  // for screen readers; the one list when only its size moved; nothing for
-  // a package without versions (own source, workspace modules).
+  // A changed package's versions, `old → new`, the new side and a glyph
+  // colored by direction, spelled out for screen readers; the one list when
+  // only its size moved; nothing for one without versions.
   _versionCell(r) {
-    const after = r.otherVersions, before = r.baseVersions
-    if (before.join() === after.join()) {
-      return before.length > 0 ? html`<span class="bundle-compare-dep-ver">${versionList(before)}</span>` : nothing
-    }
+    const after = r.otherVersions.join(', '), before = r.baseVersions.join(', ')
+    if (r.baseVersions.join() === r.otherVersions.join()) return r.baseVersions.length > 0 ? html`<span class="bundle-compare-dep-ver">${before}</span>` : nothing
     const direction = r.direction ?? 'changed'
-    const glyph = direction === 'up' ? '↑' : direction === 'down' ? '↓' : '±'
-    const word = direction === 'up' ? 'Upgraded' : direction === 'down' ? 'Downgraded' : 'Changed'
-    return html`<span class="bundle-compare-ver" aria-label=${`${word}: ${versionList(before) || 'none'} to ${versionList(after) || 'none'}`}>
-      <span class="bundle-compare-ver-from">${versionList(before) || '—'}</span>
-      <span class="bundle-compare-ver-arrow" aria-hidden="true">→</span>
-      <span class=${`bundle-compare-ver-to ${direction}`}>${versionList(after) || '—'}</span>
-      <span class=${`bundle-compare-ver-dir ${direction}`} aria-hidden="true">${glyph}</span>
-    </span>`
+    const [glyph, word] = direction === 'up' ? ['↑', 'Upgraded'] : direction === 'down' ? ['↓', 'Downgraded'] : ['±', 'Changed']
+    return versionMove(`${word}: ${before || 'none'} to ${after || 'none'}`, before || '—', after || '—', direction, glyph)
   }
 
-  // A source's dependencies (see `source`): the range each requires, or for
-  // Changed the one it moved from and to; `kind` marks peer and optional, and
-  // the source's `dependencyTags` what else it tags one with.
+  // A source's dependencies: the range each requires, or for Changed the
+  // one it moved from and to, its kind (peer, optional) and the source's tags.
   _depGroup(title, rows, kind, lanes) {
     const rangeChars = kind === 'changed' ? 0 : Math.min(MAX_VERSION_CHARS, Math.max(0, ...rows.map(r => r.range.length)))
     const cells = r => html`<span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=${r.name}>${r.name}</span>
       ${this.source?.dependencyTags?.(r, kind) ?? nothing}${r.kind ? html`<span class="npm-dependency-kind">${r.kind}</span>` : nothing}
-      ${kind === 'changed' ? html`<span class="bundle-compare-ver" aria-label=${`Changed: ${r.from} to ${r.to}`}>
-          <span class="bundle-compare-ver-from">${r.from}</span>
-          <span class="bundle-compare-ver-arrow" aria-hidden="true">→</span>
-          <span class="bundle-compare-ver-to changed">${r.to}</span>
-        </span>`
+      ${kind === 'changed' ? versionMove(`Changed: ${r.from} to ${r.to}`, r.from, r.to, 'changed')
         : html`<span class="bundle-compare-dep-ver" data-tooltip-truncated data-tooltip=${r.range}>${r.range}</span>`}`
     // One the source can open (`openDependency`), it opens.
     const open = this.source?.openDependency
@@ -583,41 +445,35 @@ class BundleCompare extends LitElement {
     if (lanes.length === 0) return nothing
     return html`<section class="bundle-compare-section">
       <h3 class="bundle-compare-section-head">Dependencies</h3>
-      ${this._cols(lanes, html`
-        ${this._depGroup(`Removed · only in ${baseName}`, rows.removed, 'removed', lanes)}
-        ${this._depGroup(`Added · only in ${otherName}`, rows.added, 'added', lanes)}
-        ${this._depGroup('Changed', rows.changed, 'changed', lanes)}`, 'dependencies')}
+      ${this._cols(lanes, (...group) => this._depGroup(...group), rows, baseName, otherName, 'dependencies')}
     </section>`
   }
 
-  // Packages section: removed | added | changed, each package once, from
-  // its files' sizes and the versions each bundle records. Returns
-  // `nothing` when no package moved.
+  // Packages: each package once, from its files' sizes and the versions each bundle records.
   _renderPackages(rows, baseName, otherName, lanes = LANES) {
     if (rows.removed.length === 0 && rows.added.length === 0 && rows.changed.length === 0) return nothing
     return html`<section class="bundle-compare-section">
       <h3 class="bundle-compare-section-head">Packages</h3>
-      ${this._cols(lanes, html`
-        ${this._pkgGroup(`Removed · only in ${baseName}`, rows.removed, 'removed', lanes)}
-        ${this._pkgGroup(`Added · only in ${otherName}`, rows.added, 'added', lanes)}
-        ${this._pkgGroup('Changed', rows.changed, 'changed', lanes)}`, 'packages')}
+      ${this._cols(lanes, (...group) => this._pkgGroup(...group), rows, baseName, otherName, 'packages')}
     </section>`
   }
 
-  // Removed | Added | Changed columns, one lane per kind in `lanes`
-  // (Changed's the widest). Files takes Packages' lanes to line up under
-  // them when it can (see _renderDiff), an empty lane where it lacks a kind.
-  // `section` names whose lanes they are, for the stylesheet.
-  _cols(lanes, groups, section) {
+  // Removed | Added | Changed columns of `rows`' groups, each drawn by
+  // `group`, one lane per kind in `lanes` (Changed's the widest); Files
+  // takes Packages' lanes where it can (_renderDiff). `section` names whose
+  // lanes they are, for the stylesheet.
+  _cols(lanes, group, rows, baseName, otherName, section) {
     const template = lanes.map(kind => kind === 'changed' ? 'minmax(0, 5fr)' : 'minmax(0, 4fr)').join(' ')
-    return html`<div class="bundle-compare-cols" data-lanes=${lanes.length} data-section=${section} style=${styleMap({ '--compare-lanes': template })}>${groups}</div>`
+    return html`<div class="bundle-compare-cols" data-lanes=${lanes.length} data-section=${section} style=${styleMap({ '--compare-lanes': template })}>
+        ${group(`Removed · only in ${baseName}`, rows.removed, 'removed', lanes)}
+        ${group(`Added · only in ${otherName}`, rows.added, 'added', lanes)}
+        ${group('Changed', rows.changed, 'changed', lanes)}</div>`
   }
 
-  // A section that opens on demand, its heading the disclosure (with an
-  // optional path `note`); its contents render only while it is open. A
-  // click on the heading opens it through the render, contents and all:
-  // left to the browser, it opened a frame before its contents arrived. A
-  // toggle the browser makes on its own (find in page) still lands.
+  // A section that opens on demand, its contents drawn only while open. A
+  // click on its heading opens it through the render, contents and all (left
+  // to the browser, it opened a frame before them); a toggle the browser
+  // makes itself (find in page) still lands.
   _collapsible(id, title, count, content, note = '') {
     const open = this._openSections.has(id)
     return html`<details class="bundle-compare-section bundle-compare-collapsible" .open=${live(open)}
@@ -636,10 +492,9 @@ class BundleCompare extends LitElement {
   }
 
   // Import resolutions as tables, File | Import | Before | After |
-  // Conditions, one line a row, in cards like the groups': those only the
-  // one picked records and those only the open one does, each of a file the
-  // two hold alike, their other side reading (none), then those repointed. A
-  // file opens in Code. Conditions drops out when every row reads `*`.
+  // Conditions, in cards like the groups': those one side records alone,
+  // then those repointed; a file opens in Code. Conditions drops out where
+  // every row reads `*`.
   _renderResolutions(resolutions, baseName, otherName) {
     if (resolutions.totalChanges === 0) return nothing
     const groups = [
@@ -676,17 +531,12 @@ class BundleCompare extends LitElement {
       </section>`))
   }
 
-  // The comparison of the current pairing: loading, ready with its `diff`,
-  // or failed (bundle-comparison.js).
+  // The pairing's comparison: loading, ready with its `diff`, or failed.
   _comparison() {
     return bundleComparison(this._otherDetails, this.details, this._scope, this._repaint)
   }
 
-  // Summary band — dependency, size and line deltas, then the file delta
-  // with its bucket chips beside it (a removed, added or changed count of
-  // none left out), wrapping on their own so the mode
-  // tabs keep to the right of the first line. Sits under the picker once a
-  // comparison is live.
+  // The summary band under the picker, the mode tabs at its end.
   _renderSummary(diff) {
     return renderComparisonSummary(diff, html`<div class="bundle-compare-modes" role="tablist" aria-label="Comparison view">
       ${[['overview', 'Overview'], ['code', 'Code']].map(([mode, label]) => html`<button type="button" role="tab"
@@ -699,13 +549,12 @@ class BundleCompare extends LitElement {
       from: { options: others, value: this._targetIntegrity, pick: value => this._pick(value) },
       to: { options: this._baseOptions(), value: this._baseKey, placeholder: this._nameFor(this.integrity), pick: value => this._pickBase(value) },
       clear: hasTarget ? { run: () => this._pick(null) } : null,
-      swap: hasTarget && this.source?.canSwap?.(this._targetIntegrity) !== false ? () => this._swap() : null,
+      swap: hasTarget ? () => this._swap() : null,
       extras: scopeSelector, comparison, openLine: detail => this._openLine(detail),
     })
   }
 
-  // What this side may become: the open bundle and those it compares with,
-  // or a source's choices.
+  // What this side may become: the open bundle and those it compares with, or a source's choices.
   _baseOptions() {
     if (this.source) return compareSourceOptions(this.source.choices ?? [])
     const base = (state.bundles ?? []).find(bundle => bundle.integrity === this.integrity)
@@ -713,22 +562,20 @@ class BundleCompare extends LitElement {
     return this._bundleOptions(base ? [base, ...others] : others)
   }
 
-  // Build the picker option list, disambiguating duplicate names with a
-  // short integrity suffix so two same-named bundles are tellable apart.
   _otherOptions() {
     if (this.source) return compareSourceOptions(this.source.options)
     return this._bundleOptions(bundleComparisonCandidates(state.bundles ?? [], this.integrity))
   }
 
+  // Bundles as picker options, same-named ones told apart by a short integrity suffix.
   _bundleOptions(others) {
-    const nameCounts = new Map()
-    for (const b of others) nameCounts.set(b.name, (nameCounts.get(b.name) ?? 0) + 1)
+    const named = Map.groupBy(others, b => b.name)
     return others.map((b) => ({
       id: b.integrity, integrity: b.integrity,
       kind: b.kind ?? (b.name.toLowerCase().endsWith('.map') ? 'sourcemap' : 'stasis'),
       summary: b.summary,
       size: typeof b.size === 'number' ? formatBytes(b.size) : '—',
-      filename: nameCounts.get(b.name) > 1
+      filename: named.get(b.name).length > 1
         ? `${b.name} · ${b.integrity.slice('sha512-'.length, 'sha512-'.length + 6)}…`
         : b.name,
     }))
@@ -736,104 +583,70 @@ class BundleCompare extends LitElement {
 
   render() {
     const others = this._otherOptions()
-    // The picked bundle may have been deleted out from under us (in
-    // this tab or another) while its diff was showing — treat a target
-    // that's no longer on disk as no selection so we don't keep
-    // rendering a diff against a bundle the user can't see in the list.
-    // A source's target stands while its options are still listing: the
-    // load says whether it exists.
+    // A picked bundle deleted meanwhile is no target; a source's stands while
+    // its options list, its load telling whether it exists.
     const hasTarget = Boolean(this._targetIntegrity)
       && (Boolean(this.source) || others.some((o) => o.integrity === this._targetIntegrity))
-    // From the bundle picked to the open one, as the picker reads, a pair of
-    // trees one names and the other doesn't labelled so (bundleCompareScopes).
     const scopes = this._baseReady ? bundleCompareScopes(hasTarget ? this._otherDetails : null, this.details) : []
     const scopeSelector = scopes.length > 0
       ? html`<bundle-scope-selector .reasons=${scopes} .value=${this._scope} label="Compare scope" @scope-change=${event => { this._scope = event.detail.value }}></bundle-scope-selector>`
       : nothing
-    const noun = this.source?.noun ?? 'bundle'
-    const ready = hasTarget
-      && this._status === 'ready'
-      && this._otherDetails
-      && (this._otherDetails.json || this._otherDetails.bundle)
-      && !this._otherDetails.error
+    const ready = hasTarget && this._status === 'ready' && this._otherDetails && (this._otherDetails.json || this._otherDetails.bundle) && !this._otherDetails.error
     const paired = this._baseReady && ready ? this._comparison() : null
     const diff = paired?.status === 'ready' ? paired.diff : null
     const comparison = diff ? { base: this._otherDetails, other: this.details, files: diff.files } : null
-    // Picker is always present (when there's anything to pick) so the
-    // user can switch the compared bundle without leaving the tab; the
-    // swap button rides next to the clear button once a target is live,
-    // and the scope selector and a source's badges sit at the row's right
-    // end, so the head is one row before a pick and two (picker, summary)
-    // after.
+    // The picker is there whenever there is anything to pick, so the head is
+    // one row before a pick and two (picker, summary) after.
     const picker = others.length > 0 || this.source ? this._renderPicker(others, hasTarget, scopeSelector, comparison) : scopeSelector
-
     const mode = diff ? this._mode : 'overview'
-    let body
-    if (!this._baseReady) {
-      body = html`<div class="bundle-compare-empty">Loading bundle…</div>`
-    } else if (this.source && !hasTarget && (this.source.pending || this.source.error || (!this.source.select && others.length === 0))) {
-      body = html`<div class=${`bundle-compare-empty${this.source.error ? ' is-error' : ''}`}>${this.source.pending ? `Loading ${noun}s…`
-        : this.source.error ?? html`No other ${noun}s to compare <strong>${this._nameFor(this.integrity)}</strong> with.`}</div>`
-    } else if (others.length === 0 && !this.source) {
-      body = html`<div class="bundle-compare-empty">No other bundles to compare with. Drop a second <code>.map</code> or <code>.stasis.code.br</code> bundle to diff against this one.</div>`
-    } else if (!hasTarget) {
-      body = html`<div class="bundle-compare-empty">Pick a ${noun} above to compare <strong>${this._nameFor(this.integrity)}</strong> against.</div>`
-    } else if (this._status === 'loading' || !this._otherDetails) {
-      body = html`<div class="bundle-compare-empty">Comparing…</div>`
-    } else if (this._otherDetails.error) {
-      body = html`<div class="bundle-compare-empty is-error">Couldn't read the selected ${noun}: ${this._otherDetails.error}</div>`
-    } else if (!this._otherDetails.json && !this._otherDetails.bundle) {
-      body = html`<div class="bundle-compare-empty is-error">The selected ${noun} couldn't be parsed.</div>`
-    } else if (paired?.status === 'error') {
-      body = html`<div class="bundle-compare-empty is-error">Couldn't compare the ${noun}s: ${paired.message}</div>`
-    } else if (!diff) {
-      body = html`<div class="bundle-compare-empty">Comparing…</div>`
-    } else if (mode !== 'code') {
-      // Code shows in place of the body.
-      body = this._renderDiff(diff)
-    }
-
     return html`<div class="bundle-compare">
       ${renderComparisonHeader(picker, diff ? this._renderSummary(diff) : nothing)}
       ${mode === 'code' ? renderComparisonViewer({ base: this._otherDetails, other: this.details, diff, source: this.source,
         path: this._codePath, seek: this._codeSeek, baseName: this._nameFor(this._targetIntegrity), otherName: this._nameFor(this.integrity), select: path => { this._codePath = path },
       })
-        : html`<div class="bundle-compare-body">${body}</div>`}
+        : html`<div class="bundle-compare-body">${diff ? this._renderDiff(diff) : this._empty(others, hasTarget, paired)}</div>`}
     </div>`
+  }
+
+  // What the body says while there is no comparison to show.
+  _empty(others, hasTarget, paired) {
+    const name = html`<strong>${this._nameFor(this.integrity)}</strong>`, noun = this.source?.noun ?? 'bundle'
+    const empty = (content, error = false) => html`<div class=${error ? 'bundle-compare-empty is-error' : 'bundle-compare-empty'}>${content}</div>`
+    if (!this._baseReady) return empty('Loading bundle…')
+    if (this.source && !hasTarget && (this.source.pending || this.source.error || (!this.source.select && others.length === 0))) {
+      return empty(this.source.pending ? `Loading ${noun}s…` : this.source.error ?? html`No other ${noun}s to compare ${name} with.`, Boolean(this.source.error))
+    }
+    if (others.length === 0 && !this.source) {
+      return empty(html`No other bundles to compare with. Drop a second <code>.map</code> or <code>.stasis.code.br</code> bundle to diff against this one.`)
+    }
+    if (!hasTarget) return empty(html`Pick a ${noun} above to compare ${name} against.`)
+    if (this._status === 'loading' || !this._otherDetails) return empty('Comparing…')
+    if (this._otherDetails.error) return empty(`Couldn't read the selected ${noun}: ${this._otherDetails.error}`, true)
+    if (!this._otherDetails.json && !this._otherDetails.bundle) return empty(`The selected ${noun} couldn't be parsed.`, true)
+    if (paired?.status === 'error') return empty(`Couldn't compare the ${noun}s: ${paired.message}`, true)
+    return empty('Comparing…')
   }
 
   _renderDiff(diff) {
     // From the one picked to the open one.
     const baseName = this._nameFor(this._targetIntegrity)
     const otherName = this._nameFor(this.integrity)
-    // Display paths are prefix-stripped over the union of everything
-    // listed, so the rows don't repeat a shared build-output root; the
-    // click target keeps the original (un-stripped) key.
-    const allPaths = [
-      ...diff.files.onlyBase.map((r) => r.path),
-      ...diff.files.onlyOther.map((r) => r.path),
-      ...diff.files.changed.flatMap((r) => r.renamedFrom == null ? [r.path] : [r.path, r.renamedFrom]),
-    ]
-    // Where the bundles' roots differ, the heading reads the move at the root.
+    // Display paths drop the root shared by everything listed; where the
+    // bundles' roots differ, the heading reads the move at the root.
+    const files = { removed: diff.files.onlyBase, added: diff.files.onlyOther, changed: diff.files.changed }
+    const allPaths = [...files.removed, ...files.added, ...files.changed].flatMap(r => r.renamedFrom == null ? [r.path] : [r.path, r.renamedFrom])
     const root = rootLabel(diff.files.root, stripCommonPathPrefix(allPaths).prefix)
     const { prefix } = root
-    const displayOf = (p) => prefix && p.startsWith(prefix) ? p.slice(prefix.length) : p
-
-    const fileCount = diff.files.onlyBase.length + diff.files.onlyOther.length + diff.files.changed.length
-    const files = { removed: diff.files.onlyBase, added: diff.files.onlyOther, changed: diff.files.changed }
+    const displayOf = p => withoutPrefix(p, prefix)
+    const fileCount = files.removed.length + files.added.length + files.changed.length
     const listsFiles = !diff.totals.identical
-    // Files line up under Packages, the main columns, while Packages has a
-    // lane for each kind Files lists; otherwise each lays out its own kinds,
-    // Packages without an empty column.
-    // A source may list its own dependencies in place of Packages.
+    // Files line up under Packages (or a source's own dependencies) while
+    // that has a lane for each kind Files lists; else each lays out its own.
     const dependencies = this.source?.dependencies?.(this._otherDetails, this.details) ?? null
     const packageLanes = LANES.filter(kind => (dependencies ?? diff.packageRows)[kind].length > 0)
     const fileKinds = listsFiles ? LANES.filter(kind => files[kind].length > 0) : []
     const fileLanes = fileKinds.every(kind => packageLanes.includes(kind)) ? packageLanes : fileKinds
-
-    // The header and the group titles already say which bundle is which;
-    // the shared root the file rows drop rides on the Files heading. Over
-    // it, a source's warning on the files the open one adds or changes.
+    // Over the files, a source's warning on those the open one adds or changes.
     const warning = listsFiles ? this.source?.files?.warning?.(this.details, [...files.added, ...files.changed].map(r => r.path)) : nothing
     return html`
       ${dependencies ? this._renderDependencies(dependencies, baseName, otherName, packageLanes)
@@ -843,10 +656,8 @@ class BundleCompare extends LitElement {
         ? diff.resolutions.totalChanges > 0
           ? html`<div class="bundle-compare-caption">File contents are unchanged; import resolutions differ.</div>`
           : html`<div class="bundle-compare-identical">These two ${this.source?.noun ?? 'bundle'}s carry identical files (${diff.totals.unchangedFiles.toLocaleString()} ${diff.totals.unchangedFiles === 1 ? 'file' : 'files'})${root.from ? html`, moved <span class="mono">${rootTemplate(root)}</span>` : ''}.</div>`
-        : this._collapsible('files', 'Files', fileCount, () => this._cols(fileLanes, html`
-            ${this._fileGroup(`Removed · only in ${baseName}`, files.removed, 'removed', displayOf, fileLanes)}
-            ${this._fileGroup(`Added · only in ${otherName}`, files.added, 'added', displayOf, fileLanes)}
-            ${this._fileGroup('Changed', files.changed, 'changed', displayOf, fileLanes)}`, 'files'), root.from ? `${root.from} → ${root.to}` : prefix)}
+        : this._collapsible('files', 'Files', fileCount, () => this._cols(fileLanes, (title, rows, kind, lanes) => this._fileGroup(title, rows, kind, displayOf, lanes),
+          files, baseName, otherName, 'files'), root.from ? `${root.from} → ${root.to}` : prefix)}
       ${this._renderResolutions(diff.resolutions, baseName, otherName)}
     `
   }

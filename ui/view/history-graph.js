@@ -49,18 +49,15 @@ export function firstParentLine(commits, tip) {
   return line
 }
 
-// The graph of `ordered` (historyOrder's): each row's commit, the lane its
-// node is on (`col`) and its line's `color`; the line segments between rows,
-// each from a lane at a row to a lane at the next (`row`, `from`, `to`,
-// `color`); and the parents not among the commits, each a short line on from
-// its child's node (`stubs`, `straight` down its lane, else aside), the
-// history going on past them. `width` is how many lanes it takes. Each line,
-// a branch's from its tip or a merge's other parent's, takes the next of
-// `colors` in turn, unlike its neighbors' where it can, and keeps it down to
-// where it ends. `trunk`, the commits of a line (firstParentLine) to keep on
-// the first lane, in the first color, alone, as the default branch's.
-// `linear` draws each commit's parent as the next listed, as for the commits
-// touching a directory, whose parents GitHub doesn't rewrite to those listed.
+// The graph of `ordered` (historyOrder's): each row's commit, its lane
+// (`col`) and `color`; the segments from a lane at a row to one at the next;
+// the parents not listed, a short line on from their child (`stubs`,
+// `straight` down its lane, else aside); and how many lanes (`width`). Each
+// line takes the next of `colors`, unlike its neighbors' where it can, down
+// to its end. `trunk` (firstParentLine) keeps the default branch's line on
+// the first lane and color alone; `linear` takes each commit's parent for
+// the next listed, as a directory's commits, whose parents GitHub doesn't
+// rewrite, are drawn.
 export function historyLayout(ordered, { linear = false, trunk = null, colors: palette = 8 } = {}) {
   const known = new Set(ordered.map(commit => commit.sha))
   const reserved = trunk?.size > 0 ? 1 : 0

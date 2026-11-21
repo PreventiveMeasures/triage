@@ -1,13 +1,10 @@
-/* Objstore recovery dialog — per-object status list. Composed on top
-   of dialog-base.css + dialog-list.css (reuses .lwd-body, .lwd-kind-tag,
-   .nwd-actions); only the recovery-specific `.rec-*` chrome lives here. */
-/* The corner × (`.detail-action` supplies the look). The dialog is in
-   the top layer, so it's the containing block; the header keeps clear
-   of the button. */
+/* Objstore recovery dialog: the per-object status list, over dialog-base.css
+   and dialog-list.css. The corner × takes `.detail-action`'s look; the
+   top-layer dialog is its containing block. */
 .rec-close { position: absolute; top: 6px; right: 6px; z-index: 1; }
 header { padding-right: 1.5rem; }
 .rec-list {
-  margin: .2rem 0 .55rem; padding: 0;
+  margin: .2rem 0 .55rem;
   list-style: none;
   max-height: 320px; overflow-y: auto;
 }
@@ -31,18 +28,25 @@ header { padding-right: 1.5rem; }
   text-transform: uppercase; letter-spacing: .04em;
 }
 .rec-status-checking { color: var(--muted); }
-.rec-status-good { color: var(--ok, #16a34a); }
-/* The two directions a re-check can repair in get their own hues:
-   the cloud copy changed (`uploaded`, like `reuploaded`) reads as the
-   accent; YOUR copy changed (`updated` — its bytes were replaced) reads
-   orange, so a local overwrite stands out. */
+.rec-status-good { color: #16a34a; }
+/* A repair to the cloud copy reads as the accent; one that replaced YOUR
+   copy (`updated`) orange, so a local overwrite stands out. */
 .rec-status-uploaded,
-.rec-status-reuploaded { color: var(--accent, #2563eb); }
-.rec-status-updated { color: var(--high, #d57422); }
-/* Waiting on the user's choice — the attention amber. */
-.rec-status-differs { color: var(--warning, #d97706); }
-/* The "Use cloud copy" / "Upload mine" pair on a `differs` row: sized
-   down to the row's text so it doesn't dwarf the label beside it. */
+.rec-status-reuploaded { color: var(--accent); }
+.rec-status-updated { color: var(--high); }
+/* Waiting on the user — a choice (`differs`) or a retry (`failed`, and
+   `check-failed`: the verification download errored, health unknown) —
+   amber, as a tinted chip so "local updated"'s orange isn't mistaken for
+   it; `missing` (nothing to restore from) is the terminal red. */
+.rec-status-differs,
+.rec-status-failed,
+.rec-status-check-failed {
+  color: var(--warning);
+  background: rgb(from var(--warning) r g b / .14);
+}
+.rec-status-missing { color: var(--critical); }
+/* The "Use cloud copy" / "Upload mine" pair on a `differs` row, sized to
+   the row's text. */
 .rec-choice {
   flex: 0 0 auto;
   display: flex; gap: .3rem;
@@ -55,30 +59,14 @@ header { padding-right: 1.5rem; }
     cursor: default;
 
     &:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-    &:disabled { opacity: .5; cursor: default; }
+    &:disabled { opacity: .5; }
   }
 }
-/* `failed` (a re-upload / update / upload errored) and `check-failed`
-   (verification DOWNLOAD errored — transport/session hiccup or decrypt
-   failure, health unknown) are both retryable, so both read amber —
-   distinct from `missing` (no local copy / mismatch), the terminal red.
-   The two amber states are told apart by their label ("failed" vs
-   "check failed") + the reason on hover, since they call for the same
-   user action (re-check / retry). */
-.rec-status-failed,
-.rec-status-check-failed { color: var(--warning, #d97706); }
-/* Statuses that wait on the user (choose, or retry) read as a tinted
-   chip; outcomes stay plain text — so "local updated"'s orange isn't
-   mistaken for a failure's amber. */
-.rec-status-differs,
-.rec-status-failed,
-.rec-status-check-failed { background: rgb(from var(--warning, #d97706) r g b / .14); }
-.rec-status-missing { color: var(--critical, #dc2626); }
 .rec-summary {
   margin: .1rem 0 .2rem;
   color: var(--muted); font-size: .76rem; line-height: 1.45;
 }
 .rec-error {
   margin: .3rem 0 .2rem;
-  color: var(--critical, #f87171); font-size: .76rem; line-height: 1.4;
+  color: var(--critical); font-size: .76rem; line-height: 1.4;
 }

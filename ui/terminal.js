@@ -1,13 +1,6 @@
-// Bundle-source terminal UI — separate esbuild entry point so the
-// virtual-shell runtime (`@preventive/terminal`) and the lit
-// component don't land in the main view.js bundle. `ui/view/
-// terminal-attach.js` `await import('./terminal.js')`s this module
-// lazily the first time the Terminal tab, or the Code tab's terminal
-// pane, opens.
-//
-// The component is mostly scaffolding (scrollable output, an input
-// row, ↑/↓ history, click-anywhere-to-focus). All pipeline / fs /
-// command behavior lives in `@preventive/terminal`.
+// Bundle-source terminal: its own esbuild entry, so `@preventive/terminal`
+// stays out of view.js; terminal-attach.js imports it the first time a
+// terminal opens. All shell behavior lives in `@preventive/terminal`.
 
 import { LitElement, html, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
@@ -15,43 +8,24 @@ import { styleMap } from './view/style-map.js'
 import { createTerminal } from '@preventive/terminal'
 import { classifyDiff } from './view/diff-color.js'
 import { silencedGaps } from './view/silenced-gaps.js'
-// Imported as a text string at build time (see build.js — the
-// lit-css-as-text plugin routes JS-side `.css` imports through the
-// text loader). unsafeCSS wraps the literal in a CSSResult; the
-// bytes are static, never user input.
+// Static text from the build's CSS loader, never user input.
 import terminalCSS from './view/terminal.css'
 
-// Where the bundle's file tree is mounted. Not `/`: the writable
-// overlay below is refused when the read-only source tree is mounted at
-// `/`, `/tmp`, or inside `/tmp`, and a tree covering the root would
-// leave nowhere to write. It doubles as the prompt's resting place —
-// `cwd` is left unset so it defaults to the mount.
+// Not `/`: the writable overlay is refused over a read-only tree mounted at
+// `/` or in `/tmp`. The prompt starts here (`cwd` defaults to the mount).
 const MOUNT = '/sources'
 
 const TERMINAL_OPTIONS = {
   mount: MOUNT,
-  // `~`, `$HOME` and a bare `cd` land at the root rather than following
-  // the mount (which is what they would default to), so `cd` with no
-  // argument steps out to where both /sources and /tmp are in view.
+  // A bare `cd` steps out to where both /sources and /tmp are in view.
   home: '/',
-  // Scratch space, so a redirect has somewhere to go: `foo > /tmp/out`
-  // and the commands that write files work, while the bundle itself
-  // stays read-only — writing into /sources still fails, and says why.
+  // Scratch space for redirects; the bundle itself stays read-only.
   writable: '/tmp/',
 }
 
-// Banner suggestions. `ls` and `find /` are always present; the
-// grep example surfaces the first symbol from SEARCH_SYMBOLS that
-// actually appears in the bundle so the suggestion isn't a dead
-// `grep` for a marker no one used (falling back to the first
-// entry — `TODO` — when nothing matches or the bundle is empty).
-// The `cat ... | head -n 20` example uses the shortest path from
-// the bundle so it Just Works without the user having to invent a
-// real file name; skipped entirely when the bundle has no files.
-//
-// Both read text files only. A binary arrives as `{ format: 'base64',
-// data }`, which has no text to search — and no `.includes` to call —
-// and which `cat` declines to print.
+// Banner suggestions: a grep for a symbol the bundle holds, and a `cat` of
+// its shortest path (`./` or `/` dropped). Both read text files only: a
+// binary arrives as `{ format: 'base64', data }`, which `cat` won't print.
 function bannerCommands(sources) {
   const symbol = pickSearchSymbol(sources)
   const cmds = ['ls', 'find /', `grep -r ${symbol} .`]
@@ -59,19 +33,14 @@ function bannerCommands(sources) {
   let shortest = null
   for (const [key, content] of sources) {
     if (typeof content !== 'string') continue
-    const p = stripLeading(key)
+    const p = key.replace(/^\.?\//u, '')
     if (shortest === null || p.length < shortest.length) shortest = p
   }
   if (shortest) cmds.push(`cat ${shortest} | head -n 20`)
   return cmds
 }
 
-// Priority list for the grep suggestion: code markers first
-// (TODO/FIXME/etc., where a hit means something interesting to
-// look at), then JS keywords (rougher "any code at all" probe),
-// then `//` as a near-universal JS fallback. The first entry that
-// matches any file content wins; `TODO` is the static default
-// when nothing does.
+// Code markers first, then keywords; `TODO` when nothing matches.
 const SEARCH_SYMBOLS = ['TODO', 'FIXME', 'XXX', 'HACK', 'NOTE', 'BUG', 'export', 'import', 'require', '//']
 
 function pickSearchSymbol(sources) {
@@ -84,36 +53,19 @@ function pickSearchSymbol(sources) {
   return SEARCH_SYMBOLS[0]
 }
 
-// The bundle map may key files with `./` or `/`-prefixed paths
-// depending on how the source tree was assembled. Drop a single
-// leading slash or `./` so the banner shows the clean form.
-function stripLeading(path) {
-  if (path.startsWith('./')) return path.slice(2)
-  if (path.startsWith('/')) return path.slice(1)
-  return path
-}
-
 class BundleTerminal extends LitElement {
-  // Render-driving state stays as Lit reactive properties: Lit
-  // installs prototype accessors that auto-`requestUpdate()` on
-  // assignment, which `#`-private fields can't do. Everything else
-  // (the shell handle, history bookkeeping, the saved draft) lives
-  // in true `#`-private fields so a stray `el._term = …` poke from
-  // another module can't perturb the component.
+  // Render-driving state is reactive; the rest is `#`-private.
   static properties = {
     sources: { attribute: false },
     _lines: { state: true },
     _input: { state: true },
     _cwd: { state: true },
-    // Faint "ghost" continuation rendered behind the input —
-    // suffix-only, so the overlay span has a transparent copy of
-    // `_input` to push it past the caret.
+    // The completion's suffix, drawn behind the input after a transparent
+    // copy of `_input`.
     _ghost: { state: true },
-    // Transient hint stack drawn over the top-right corner. Entries
-    // are `{ id, text, dwell }`; see #pushNotes.
+    // Transient hints top-right, `{ id, text, dwell }` each (#pushNotes).
     _notes: { state: true },
-    // True while a line is in flight. Drives the busy cue, and is the
-    // guard that keeps a second line from being sent — see #onSubmit.
+    // A line is in flight (#onSubmit).
     _running: { state: true },
   }
 
@@ -124,31 +76,19 @@ class BundleTerminal extends LitElement {
   #history = []
   #histIdx = -1
   #draft = ''
-  // Tab-completion cycle state. When `complete()` returns multiple
-  // variants the first Tab fills in [0] and stashes the list here;
-  // repeat Tabs rotate. Any input change invalidates the cycle —
-  // the self-check `items[index] === _input` covers typing, history
-  // navigation, and submit-reset without an explicit reset hook.
+  // Tab-completion cycle `{ items, index }`; any input change invalidates it,
+  // as `items[index]` then no longer matches `_input`.
   #completions = null
-  // Ghost-suggestion debounce. Each `_input` mutation reschedules
-  // the timer; the suggestion only materialises ~200ms after typing
-  // (or any other input change) settles. See #scheduleGhost.
+  // The ghost appears once input has settled for #GHOST_DELAY_MS.
   #ghostTimer = null
-  // Window short enough to feel instant after a pause, long enough
-  // that mid-burst typing doesn't trigger a compute every keystroke.
   static #GHOST_DELAY_MS = 200
-  // Live hint timers, keyed by note id: one pending removal each.
-  // `#noteSeq` only ever climbs, so an id is never reused and a
-  // stale timer can't expire a later note that took its slot.
+  // One removal timer per note id; ids only climb, so a stale timer can't
+  // expire a later note.
   #noteTimers = new Map()
   #noteSeq = 0
-  // A line can report several notes at once (a glob that skipped a
-  // hidden entry *and* matched nothing). Keep the newest few so a
-  // burst can't wallpaper the output it's commenting on.
+  // The newest few, so a burst can't cover the output it comments on.
   static #NOTE_MAX = 3
-  // Kept in step with the fade-out in terminal.css: each note carries
-  // `--dwell-out` (dwell − fade) so the CSS animation reaches zero
-  // opacity just as the removal timer fires.
+  // Matches the fade in terminal.css (`--dwell-out` is dwell − fade).
   static #NOTE_FADE_MS = 400
 
   constructor() {
@@ -162,16 +102,9 @@ class BundleTerminal extends LitElement {
     this._running = false
   }
 
-  // Bind to the current sources map: a Map reference change means
-  // a different bundle, so rebuild the shell and reset history.
-  // Idempotent within a bundle — re-renders passing the same Map
-  // reference leave the running session alone.
-  //
-  // The `_input` branch drives ghost-text refresh: clear the prior
-  // suggestion and rearm the debounce. Doing it here rather than in
-  // `#onInput` covers every path that mutates the field through a
-  // single seam — typing, history nav, Tab fill, submit-reset, and
-  // the bundle-swap reset above.
+  // A new sources Map is a different bundle: a new shell, history, input,
+  // completions and hints. Any change of `_input`, by any path, rearms the
+  // ghost.
   willUpdate(changed) {
     if (changed.has('sources') && this.sources !== this.#lastSources) {
       this.#term = this.sources ? createTerminal(this.sources, TERMINAL_OPTIONS) : null
@@ -180,13 +113,8 @@ class BundleTerminal extends LitElement {
       this.#history = []
       this.#histIdx = -1
       this.#draft = ''
-      // An in-progress completion cycle is tied to the previous bundle's
-      // FS / command list — keeping it would let a stale candidate
-      // appear after the swap. Same reasoning for an unsubmitted input.
       this.#completions = null
       this._input = ''
-      // Hints describe a command run against the previous bundle —
-      // they'd be read as commentary on the new one.
       this.#clearNotes()
       this.#lastSources = this.sources
     }
@@ -196,38 +124,24 @@ class BundleTerminal extends LitElement {
     }
   }
 
-  // Reconnecting after detach (tab flip Terminal → Code → Terminal,
-  // via terminal-attach.js's element cache) loses the inner .output
-  // scrollTop: the browser clears it on element removal, and no Lit
-  // update fires on reattach (no reactive property changed), so
-  // `updated()` can't restore it. Scroll explicitly here.
-  // updateComplete waits for the pending first render so
-  // scrollHeight is meaningful; on later reconnects (no pending
-  // update) it resolves immediately.
+  // terminal-attach.js reattaches a cached element, whose .output lost its
+  // scrollTop on removal and gets no update to restore it.
   connectedCallback() {
     super.connectedCallback()
     this.updateComplete.then(() => this.#scrollToBottom())
   }
 
-  // The element is reused across tab flips (see terminal-attach.js),
-  // so a pending ghost timer can outlive a detach. Cancel it — the
-  // reattach path will reschedule on the next `_input` change.
+  // The cached element outlives a detach; its timers must not.
   disconnectedCallback() {
     super.disconnectedCallback()
     this.#cancelGhost()
-    // Same reasoning as the ghost timer: the cached element outlives
-    // a detach, and a hint that expires while off-screen would
-    // otherwise reappear mid-fade on the next tab flip.
     this.#clearNotes()
   }
 
   firstUpdated() { this.focusInput() }
 
-  // Only follow the bottom when output actually grew (a new command
-  // ran, or the bundle / banner reset). Typing into the input
-  // toggles `_input`, which used to fire scrollToBottom on every
-  // keystroke and prevented the user from scrolling up to read
-  // earlier output while composing the next command.
+  // Follow the bottom only as output grows, not while typing, so earlier
+  // output stays readable.
   updated(changed) {
     if (changed.has('_lines') || changed.has('sources')) this.#scrollToBottom()
   }
@@ -244,53 +158,31 @@ class BundleTerminal extends LitElement {
     if (out) out.scrollTop = out.scrollHeight
   }
 
-  // One line at a time. `run` is a promise since 2.0, and a genuinely
-  // asynchronous one — even `pwd` does not settle within a microtask —
-  // so a second Enter can land while the first line is still going.
-  // Both would then read their own snapshot of the prompt's cwd and the
-  // transcript, so `cd sub` followed straight by `pwd` would print the
-  // second prompt at the old directory; and `clear` would empty a
-  // transcript that a pending line then appended to.
-  //
-  // The send is refused rather than queued. The field stays live, so
-  // the next command can be typed while one runs — it just is not sent
-  // until that one is done.
+  // One line at a time: `run` is truly asynchronous, and two lines in flight
+  // would each read a stale cwd and transcript (`cd sub` then `pwd`, or a
+  // `clear` a pending line appends to). A second send is refused, not
+  // queued; the field stays live.
   #onSubmit = async (e) => {
     e.preventDefault()
     if (!this.#term || this._running) return
     const line = this._input
-    const trimmed = line.trim()
-    // `clear` is a UI-only command — the shell module doesn't carry
-    // it (a stateless CLI has nothing to clear). Mirrors bash's
-    // built-in. Still recorded in history so ↑ recalls it.
-    if (trimmed === 'clear') {
-      this._lines = []
-      // The hints are on the screen `clear` is clearing.
-      this.#clearNotes()
-      this._input = ''
-      if (trimmed.length > 0) this.#history = [...this.#history, line]
-      this.#histIdx = -1
-      return
-    }
     const cwdBefore = this._cwd
-    // Taking the line and emptying the prompt before the await, so the
-    // field clears on the keypress rather than a microtask later.
-    if (trimmed.length > 0) this.#history = [...this.#history, line]
+    // The prompt empties on the keypress, not after the await.
+    if (line.trim().length > 0) this.#history = [...this.#history, line]
     this.#histIdx = -1
     this._input = ''
-    // `run` is a promise since 2.0, because a command may wait on work
-    // the runtime does rather than the package — `gzip` on a compression
-    // stream. One line runs at a time over the tree, so lines still
-    // resolve in the order they were entered even unawaited.
+    // `clear` is the UI's own, as bash's built-in: the shell has nothing to clear.
+    if (line.trim() === 'clear') {
+      this._lines = []
+      this.#clearNotes()
+      return
+    }
     let r
     this._running = true
     try {
       r = await this.#term.run(line)
     } catch (err) {
-      // What `run` would have thrown, this rejects with — and an async
-      // handler turns an exception that used to reach the console into
-      // a rejection nothing is listening for. Put it where the line
-      // that caused it is, rather than nowhere.
+      // Shown beside the line that caused it, not lost as an unhandled rejection.
       this._lines = [...this._lines,
         { kind: 'prompt', cwd: cwdBefore, text: line },
         { kind: 'stderr', text: `${err?.message ?? err}\n` }]
@@ -300,9 +192,7 @@ class BundleTerminal extends LitElement {
     }
     this._cwd = r.cwd
     const next = [...this._lines, { kind: 'prompt', cwd: cwdBefore, text: line }]
-    // Classified here rather than in render(): render reruns on every
-    // keystroke (the ghost and the hint stack both drive updates), and a
-    // diff can be thousands of lines. `diff` is null for ordinary output.
+    // Classified once here, not on every keystroke's render; null unless a diff.
     if (r.stdout) next.push({ kind: 'stdout', text: r.stdout, diff: classifyDiff(r.stdout) })
     if (r.stderr) next.push({ kind: 'stderr', text: r.stderr })
     this._lines = next
@@ -310,25 +200,14 @@ class BundleTerminal extends LitElement {
   }
 
   #onKeydown = (e) => {
-    // Tab in a browser <input> normally tabs out to the next focusable
-    // element. preventDefault keeps focus here and lets the shell's
-    // completion drive the field instead. #onTab manages the cycle —
-    // skip the reset below.
+    // Tab completes rather than moving focus.
     if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); this.#onTab(); return }
-    // Anything else — arrows, characters, Home/End, even bare modifier
-    // taps — ends the current cycle. Without this, Tab+ArrowRight+Tab
-    // would advance the previous cycle instead of starting a fresh one
-    // (the cursor moved but `_input` didn't, so the items[index]
-    // self-check still matched).
+    // Any other key ends the cycle, cursor-only ones too: Tab, ArrowRight,
+    // Tab starts afresh though `_input` didn't change.
     this.#completions = null
     if (e.key === 'ArrowUp') { e.preventDefault(); this.#historyBack() }
     else if (e.key === 'ArrowDown') { e.preventDefault(); this.#historyForward() }
-    // Rearm the ghost debounce on every non-Tab key. willUpdate
-    // catches keys that mutate `_input`, but cursor-only keys
-    // (ArrowLeft/Right, Home, End) and bare-cycle-resets don't trip
-    // it — and clearing `#completions` above may newly make the
-    // ghost relevant. Double-arming on a char key is harmless: the
-    // willUpdate path that follows just resets the same timer.
+    // Cursor-only keys don't change `_input`, so rearm the ghost here too.
     this.#cancelGhost()
     this.#scheduleGhost()
   }
@@ -336,9 +215,6 @@ class BundleTerminal extends LitElement {
   #onTab() {
     if (!this.#term) return
     const cycle = this.#completions
-    // Self-check the cycle is still valid: if the field no longer
-    // holds what we last filled in (user typed, history nav, etc.)
-    // the cached items don't describe this input anymore.
     if (cycle && cycle.items[cycle.index] === this._input) {
       cycle.index = (cycle.index + 1) % cycle.items.length
       this._input = cycle.items[cycle.index]
@@ -347,8 +223,6 @@ class BundleTerminal extends LitElement {
     const items = this.#term.complete(this._input)
     if (items.length === 0) { this.#completions = null; return }
     this._input = items[0]
-    // Only enter cycle mode when there's something to rotate
-    // through — a unique completion is a one-shot fill.
     this.#completions = items.length > 1 ? { items, index: 0 } : null
   }
 
@@ -368,20 +242,10 @@ class BundleTerminal extends LitElement {
   }
 
   #computeGhost() {
-    if (!this.#term) return
-    // Cycling already commits the user's attention to one candidate
-    // — the second-channel ghost would just be visual noise.
-    if (this.#completions) return
-    // Show only where the suggestion is useful and not noisy:
-    //   - At a word boundary (empty / trailing space / trailing
-    //     pipe) any valid first variant is a "what's next" hint.
-    //   - Mid-token (last char in [\w./]), only when the typed
-    //     text isn't already a valid completion on its own.
-    //     Typing `ls` (a real command) shouldn't tease `lsblk`,
-    //     but typing `lsb` (not a command) should.
-    // Other trailing chars (`&`, `>`, redirects, etc.) drop out —
-    // completion in those contexts is too ambiguous to surface as
-    // a passive hint.
+    // None while cycling. At a word boundary any first variant is a hint;
+    // mid-token only where the typed text isn't a variant itself (`ls`
+    // shouldn't tease `lsblk`; `lsb` should). Elsewhere it is too ambiguous.
+    if (!this.#term || this.#completions) return
     const input = this._input
     const lastChar = input.slice(-1)
     const atBoundary = input === '' || lastChar === ' ' || lastChar === '|'
@@ -389,47 +253,30 @@ class BundleTerminal extends LitElement {
     if (!atBoundary && !inToken) return
     const items = this.#term.complete(input)
     if (items.length === 0) return
+    // Full-line replacements: only the tail beyond what's typed shows.
     const first = items[0]
-    // `complete()` returns full-line replacements; surface only the
-    // tail beyond what's already typed. Defensive check on the
-    // prefix in case the shell ever returns a non-prefix variant.
     if (!first.startsWith(input) || first === input) return
-    // Mid-token, typed text is itself a valid variant: suppress
-    // (the `ls` vs `lsb` rule above).
     if (inToken && items.includes(input)) return
     this._ghost = first.slice(input.length)
   }
 
-  // Everything a run wants to say in the corner, from its two silent
-  // channels. `notes` are informational asides — hidden entries `ls`
-  // left out, a glob that stayed literal, a `head` that truncated —
-  // reported apart from stdout/stderr precisely so a caller can
-  // surface them in its own channel. The gaps are the ones the
-  // command line threw away before anyone could read them (see
-  // silenced-gaps.js); they carry the word `silenced` because a bare
-  // `ls: unknown option: --bogus` in the corner gives no clue why it
-  // is not in the transcript with everything else.
-  //
-  // Gaps go in last, so when a line says more than the stack holds it
-  // is the notes that fall off the top: a hint about hidden entries
-  // can wait, a gap nothing else will report cannot.
+  // A run's asides (`notes`: hidden entries, a literal glob, a truncating
+  // `head`) and the errors its command line silenced (silenced-gaps.js),
+  // labelled so, as nothing else explains their absence from the
+  // transcript. Gaps go last, so it is notes that overflow the stack.
   #pushHints(r) {
     const hints = r.notes.map((text) => ({ text, kind: 'note' }))
     for (const message of silencedGaps(r)) hints.push({ text: `silenced: ${message}`, kind: 'gap' })
     this.#pushNotes(hints)
   }
 
-  // Stack the given hints top-right. Each expires on its own timer;
-  // nothing here waits on a dismissal.
+  // Each hint expires on its own timer.
   #pushNotes(notes) {
     if (notes.length === 0) return
     const next = [...this._notes]
     for (const { text, kind } of notes) {
-      // Re-running a command re-reports its note. Drop the visible
-      // copy and append a fresh one, so the stack keeps a single
-      // entry whose dwell and fade restart from the top rather than
-      // showing a stuttering pair. The new id re-keys the repeat()
-      // entry, which is what actually restarts the CSS animation.
+      // A repeated note replaces the visible copy; its new id re-keys the
+      // repeat() entry, restarting the CSS animation.
       const dup = next.findIndex((n) => n.text === text)
       if (dup !== -1) this.#dropNote(next, dup)
       next.push({ id: ++this.#noteSeq, text, kind, dwell: BundleTerminal.#noteDwell(text) })
@@ -442,18 +289,11 @@ class BundleTerminal extends LitElement {
     this._notes = next
   }
 
-  // Hints run from ~45 characters to a few hundred (a gap naming an
-  // unknown command lists the ones it does have), so a flat dwell
-  // either rushes the long ones or parks the short ones. Scale with
-  // length, floored so a terse hint is still readable and capped so
-  // none of it lingers.
+  // Hints run from ~45 characters to a few hundred: dwell scales with length.
   static #noteDwell(text) {
     return Math.min(10000, 3200 + text.length * 55)
   }
 
-  // Splice an entry out of a *pending* stack, cancelling its timer —
-  // left running it would fire against an id that is no longer
-  // rendered and churn `_notes` for nothing.
   #dropNote(stack, index) {
     const [note] = stack.splice(index, 1)
     this.#clearNoteTimer(note.id)
@@ -503,11 +343,7 @@ class BundleTerminal extends LitElement {
 
   #onInput = (e) => { this._input = e.target.value }
 
-  // Banner-suggestion click: drop the example into the input and
-  // focus, so the user can edit before submitting (or just hit
-  // Enter). Reset history nav state — without that, the next
-  // ArrowDown after a click would walk back to a stale `#draft`
-  // captured before the click.
+  // A banner suggestion, to edit or submit; history navigation starts afresh.
   #runExample = (cmd) => {
     this._input = cmd
     this.#histIdx = -1
@@ -515,14 +351,9 @@ class BundleTerminal extends LitElement {
     this.focusInput()
   }
 
-  // Click-anywhere-to-focus is convenient for "I want to type",
-  // but unconditional refocus also fires at the end of a
-  // drag-select — moving focus into the <input> collapses the
-  // selection inside the shadow root and breaks copy. Bail when
-  // a non-collapsed selection exists so the user can grab output
-  // text. Chromium exposes selections inside shadow roots via
-  // `shadowRoot.getSelection()`; Firefox surfaces them on the
-  // document selection — check both.
+  // Click to focus, but not at the end of a drag-select, which focusing
+  // would collapse. Chromium exposes a shadow root's selection on it,
+  // Firefox on the document.
   #onClickOutput = () => {
     const sel = this.renderRoot.getSelection?.() ?? document.getSelection()
     if (sel && !sel.isCollapsed) return
@@ -531,15 +362,8 @@ class BundleTerminal extends LitElement {
 
   render() {
     return html`
-      <!-- A live region, rendered even when empty: assistive tech has to
-           have the region before content lands in it, or the first hint
-           goes unannounced. \`log\` rather than \`status\` because that is
-           what this is — new entries in order, old ones disappearing —
-           and because \`status\` carries an implicit aria-atomic="true",
-           which re-reads every hint still on screen each time one
-           arrives. aria-atomic is then stated rather than left to the
-           role's implicit value, since an implicit value is exactly
-           what made the stack re-announce itself. -->
+      <!-- Rendered even when empty, so the first hint is announced. \`log\`,
+           not \`status\`, whose implicit aria-atomic re-reads every hint. -->
       <div class="notes" role="log" aria-atomic="false">
         ${repeat(this._notes, (n) => n.id, (n) => html`<div class="note ${n.kind === 'gap' ? 'note-gap' : ''}" style=${styleMap({ '--dwell-out': `${n.dwell - BundleTerminal.#NOTE_FADE_MS}ms` })}>${n.text}</div>`)}
       </div>
@@ -567,9 +391,6 @@ class BundleTerminal extends LitElement {
     `
   }
 
-  // Instance method so the banner branch can close over `this`
-  // for the click handler. Prompts and stdout/stderr remain pure
-  // markup — they don't need the component context.
   #renderLine(l) {
     if (l.kind === 'banner') {
       return html`<div class="banner">Virtual shell over the bundle source tree. Try ${l.commands.map((cmd, i) => html`${i > 0 ? ', ' : ''}\`<span class="cmd" @click=${() => this.#runExample(cmd)}>${cmd}</span>\``)}. ↑/↓ for history, Tab to complete.</div>`
@@ -585,10 +406,8 @@ class BundleTerminal extends LitElement {
     return nothing
   }
 
-  // Diff output gets a span per classified line; everything else stays
-  // the bare text node it was. The newlines are emitted between the
-  // pieces so the <pre> still holds exactly the bytes the command
-  // wrote — selecting and copying a diff yields the original text.
+  // A span per diff line, the newlines between them, so a copy yields the
+  // exact bytes.
   #renderStdout(l) {
     if (!l.diff) return html`<pre class="stdout">${l.text}</pre>`
     const parts = l.diff.flatMap((d, i) => {
@@ -601,10 +420,7 @@ class BundleTerminal extends LitElement {
 
 customElements.define('bundle-terminal', BundleTerminal)
 
-// Build a fresh `<bundle-terminal>` instance bound to the given
-// sources map. Element lifetime is managed by the caller
-// (ui/view/terminal-attach.js caches a single instance per bundle
-// integrity so tab-switch rebuilds don't wipe the running session).
+// terminal-attach.js caches one per bundle, so tab switches keep its session.
 export function createTerminalElement(sources, integrity) {
   const el = document.createElement('bundle-terminal')
   el.dataset.integrity = integrity ?? ''

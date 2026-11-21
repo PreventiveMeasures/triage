@@ -1,25 +1,14 @@
-/* Styles for the <bundle-compare> light-DOM component (the Compare
-   slide in the bundles view — see view/bundle-compare.js). Global (not
-   shadow-scoped) because the component renders into light DOM so its
-   file rows reach the document-level [data-bundle-view-source] click
-   delegate, exactly like the treemap. Coloring is git-style: a leading
-   `+` (added / grew) is green, a leading `−` (removed / shrank) is red,
-   and changed is amber — applied uniformly to chips, group accents, and
-   the per-row size deltas. */
+/* <bundle-compare> (view/bundle-compare.js) renders into light DOM so its file
+   rows reach the document's [data-bundle-view-source] delegate. Git-style
+   colors: added / grew green, removed / shrank red, changed amber. */
 
-.bundles-slide-body > bundle-compare, npm-review > bundle-compare {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  background: var(--bg);
-}
-.bundle-compare {
+.bundles-slide-body > bundle-compare, npm-review > bundle-compare, .bundle-compare {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
 }
+.bundles-slide-body > bundle-compare, npm-review > bundle-compare { background: var(--bg); }
 .bundle-compare-head {
   flex-shrink: 0;
   display: flex;
@@ -129,8 +118,6 @@
 }
 .bundle-compare-metric-value { color: var(--text); }
 .bundle-compare-metric-delta { font-weight: 600; color: var(--muted); }
-.bundle-compare-metric-delta.up { color: var(--green); }
-.bundle-compare-metric-delta.down { color: var(--critical); }
 .bundle-compare-pct { font-weight: 500; color: var(--muted); }
 /* The file count and the chips that break it down, read as one. */
 .bundle-compare-files {
@@ -153,9 +140,11 @@
   border-radius: 3px;
   font-variant-numeric: tabular-nums;
 }
-.bundle-compare-chip.added { color: var(--green); background: rgb(from var(--green) r g b / .16); }
-.bundle-compare-chip.removed { color: var(--critical); background: rgb(from var(--critical) r g b / .16); }
-.bundle-compare-chip.changed { color: var(--yellow); background: rgb(from var(--medium) r g b / .18); }
+:is(.bundle-compare-chip, .bundle-compare-code-kind, .bundle-compare-code-pill) {
+  &.added { color: var(--green); background: rgb(from var(--green) r g b / .16); }
+  &.removed { color: var(--critical); background: rgb(from var(--critical) r g b / .16); }
+  &.changed { color: var(--yellow); background: rgb(from var(--medium) r g b / .18); }
+}
 .bundle-compare-chip.unchanged { color: var(--muted); background: rgb(from var(--muted) r g b / .14); }
 
 /* Scrolling body — caption + package/file diff sections. */
@@ -193,19 +182,17 @@
   letter-spacing: .05em;
   color: var(--muted);
 }
-/* Removed | Added | Changed lanes, Files' those of Packages where it can
-   so their columns line up (`--compare-lanes`, `data-lanes`; each card's
-   `--compare-lane`). Lanes sit side by side once each
-   has ~400px (Changed ~500px) of the pane; three lanes in between keep
-   Removed | Added on a row with Changed under them; below that they stack. */
+/* Removed | Added | Changed lanes; Files' match Packages' where they can so
+   the columns line up (`--compare-lanes`, `data-lanes`, each card's
+   `--compare-lane`). Side by side once each has ~400px (Changed ~500px);
+   three lanes in between put Changed under the other two; then they stack. */
 .bundle-compare-cols {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: .6rem 1.5rem;
   align-items: start;
 }
-/* A lone lane of dependencies or packages, short rows of a name and a
-   version, keeps to about a lane's width rather than the pane's; Files'
+/* A lone lane of short name / version rows keeps to a lane's width; Files'
    paths run on. */
 .bundle-compare-cols[data-lanes='1']:not([data-section='files']) { max-width: 40rem; }
 @container (min-width: 830px) {
@@ -218,11 +205,9 @@
   .bundle-compare-cols[data-lanes='3'] { grid-template-columns: var(--compare-lanes); }
   .bundle-compare-cols[data-lanes='3'] > .bundle-compare-changed { grid-column: var(--compare-lane); }
 }
-/* Every row one fixed line high, and each list stops halfway through the
-   last row it has room for, so the cut-off row says the list scrolls.
-   Files' lists in their last row, with nothing under Files, run on to the
-   pane's foot where it leaves them more room (`--compare-rest`, which the
-   component measures). */
+/* Rows one fixed line high, each list cut off halfway through a row to show
+   it scrolls. Files' lists in the last row run on to the pane's foot where
+   that leaves more room (`--compare-rest`, measured by the component). */
 .bundle-compare-rows--scroll {
   --compare-row: 1.375rem;
 
@@ -236,10 +221,8 @@
   & > li { content-visibility: auto; contain-intrinsic-size: auto var(--compare-row); }
   & .bundle-compare-row { height: var(--compare-row); }
 }
-/* Packages take the pane but for what sits around their lists — the
-   section and card heads, and the Files / Import resolutions headings
-   below, kept in view — still stopping halfway through a row. The
-   component measures what sits around them (`--compare-fill-around`). */
+/* Packages fill the pane less what sits around them (headings kept in view,
+   `--compare-fill-around`, measured), still cut halfway through a row. */
 .bundle-compare-rows--fill {
   max-height: max(5.5 * var(--compare-row),
     round(down, 100cqh - var(--compare-fill-around, 8.25rem) - var(--compare-row) / 2, var(--compare-row)) + var(--compare-row) / 2);
@@ -293,9 +276,7 @@
   &::before { content: '· '; }
 }
 
-/* Each group sits on a very faint, kind-tinted card so Added | Removed
-   (and Changed) read as distinct regions — without it the side-by-side
-   columns and the stacked groups blur together. */
+/* A faint kind-tinted card per group so the lanes read as regions. */
 .bundle-compare-group {
   padding: .45rem .6rem;
   border-radius: var(--ui-radius, 6px);
@@ -366,29 +347,21 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
   flex-shrink: 0;
   border-radius: 50%;
 }
-.bundle-compare-row-size {
-  flex-shrink: 0;
-  min-width: 9ch;
-  font-size: .68rem;
-  text-align: right;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
+.bundle-compare-row-size,
 .bundle-compare-row-delta {
   flex-shrink: 0;
   min-width: 9ch;
   font-size: .68rem;
-  font-weight: 600;
   text-align: right;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-.bundle-compare-row-delta.up { color: var(--green); }
-.bundle-compare-row-delta.down { color: var(--critical); }
+.bundle-compare-row-delta { font-weight: 600; }
+:is(.bundle-compare-metric-delta, .bundle-compare-row-delta).up { color: var(--green); }
+:is(.bundle-compare-metric-delta, .bundle-compare-row-delta).down { color: var(--critical); }
 
-/* Import resolutions: File | Import | Before | After | Conditions, each
-   cell one line, ellipsized; a card for those removed, added and
-   repointed, one under the other. */
+/* Import resolutions: File | Import | Before | After | Conditions, one
+   ellipsized line each; a card each for removed, added and repointed. */
 .bundle-compare-resolutions + .bundle-compare-resolutions { margin-top: .5rem; }
 .bundle-compare-resolutions table {
   width: 100%;
@@ -431,13 +404,8 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
 /* The side a removed or added resolution has none on. */
 .bundle-compare-resolution-none { color: var(--muted); }
 
-/* Dependency version updates (see view/bundle-compare.js
-   _renderVersionUpdates). The "Updated" list is a neutral card: each
-   row's `old → new` already carries the up / down / changed color, so
-   the container stays untinted rather than fight the per-row accent.
-   Added / removed dependencies reuse the tinted group cards. */
-/* `old → new` cell, pinned right of the package name like the size
-   columns; mono + tabular so version numbers line up across rows. */
+/* Dependency updates' `old → new`, right of the name like the size columns;
+   mono and tabular so versions line up. The row carries the color. */
 .bundle-compare-ver {
   flex-shrink: 0;
   display: inline-flex;
@@ -509,10 +477,9 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
   & button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 }
 
-/* ── Diff mode ─────────────────────────────────────────────────────
+/* ── Diff mode ──────────────────────────────────────────────────────
    Every changed file's diff in one list (bundle-compare-all.js) beside
-   Code's rail, each under a head that stays in view while its diff
-   scrolls past. */
+   Code's rail, each head sticky over its diff. */
 bundle-compare-all { min-width: 0; background: var(--bg); }
 .bundle-compare-all-title { flex-shrink: 0; font-size: .78rem; font-weight: 600; }
 /* How a file reads, in its head: as it reads now, after how it read where
@@ -524,9 +491,7 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 .bundle-compare-all-file + .bundle-compare-all-file { margin-top: .75rem; }
 /* Past the files drawn so far (bundle-compare-all.js FILE_BATCH), the rest on asking. */
 .bundle-compare-all-more { display: block; margin: .75rem auto; }
-/* A file's head stays over its diff as it scrolls: glass, as the app's other
-   chrome over moving content, so the code passing under the translucent
-   surface blurs rather than reading through it. */
+/* Glass, as the app's other chrome over moving content. */
 .bundle-compare-all-file-head {
   position: sticky; top: 0; z-index: 3;
   border-top: 1px solid var(--border);
@@ -538,9 +503,9 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 :is(.bundle-compare-code-bar, .bundle-compare-all-file-head) .bundle-code-main-path { min-width: min(12rem, 100%); }
 .bundle-compare-all-file:first-child .bundle-compare-all-file-head { border-top: 0; }
 
-/* ── Code mode ─────────────────────────────────────────────────────
-   The Code tab's rail + splitter + main column (report.css), here over
-   the files that differ, with a review diff in the main column. */
+/* ── Code mode ──────────────────────────────────────────────────────
+   The Code tab's rail + splitter + main column (report.css) over the files
+   that differ, a review diff in the main column. */
 :is(.bundle-compare, npm-review) > :is(bundle-compare-code, bundle-compare-all) {
   display: flex;
   flex: 1;
@@ -626,9 +591,6 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   line-height: 1.3;
   font-variant-numeric: tabular-nums;
 
-  &.added { color: var(--green); background: rgb(from var(--green) r g b / .16); }
-  &.removed { color: var(--critical); background: rgb(from var(--critical) r g b / .16); }
-  &.changed { color: var(--yellow); background: rgb(from var(--medium) r g b / .18); }
   &.renamed { color: var(--info); background: rgb(from var(--info) r g b / .16); }
   &[aria-pressed='false'] {
     color: var(--muted);
@@ -657,36 +619,32 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 .bundle-compare-rename-to { color: var(--green); }
 /* A renamed file's old name, as much of it as changed, after the new. */
 .bundle-compare-code-name.renamed { flex: 0 1 auto; }
-/* A file a bundle or package starts from, labelled in its head; a license
-   file, in grey. */
-.bundle-compare-code-entry {
+/* Tags in a file's head and tree. */
+:is(.bundle-compare-code-entry, .bundle-compare-code-install, .bundle-compare-code-meta, .npm-runs-code, .npm-exfiltration,
+  .npm-new-host, .npm-install-script-name) {
   flex: none; padding: 0 .3rem;
-  color: var(--text); background: color-mix(in srgb, var(--accent) 18%, var(--bg));
-  border: 1px solid color-mix(in srgb, var(--accent) 70%, var(--border)); border-radius: var(--ui-radius, 3px);
+  color: var(--text); border-radius: var(--ui-radius, 3px);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .62rem; font-weight: 600; line-height: 1.45;
+}
+/* A file a bundle or package starts from; a license file, in grey. */
+.bundle-compare-code-entry {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, var(--border));
 
   &.is-license { background: color-mix(in srgb, var(--muted) 14%, var(--bg)); border-color: var(--border); }
 }
-/* A package.json's install scripts, in its head and in the tree, marked as
-   the npm Overview marks their names, one no longer named struck through;
-   those names in the Overview; and what
-   a stasis bundle records of a file that changed (its format, its execute
-   bit, its being an entry point), there and in the Overview's rows, what it
-   no longer is struck through; and what a file's code can run beyond itself
-   (file-runs-code.js), and an exfiltration host it names (file-hosts.js),
-   wherever the file is listed; and in Compare's heads and tree, the hosts it
-   names that the version compared with named nowhere (npm-overview.js
-   npmNewHostTag). */
+/* Warning tags: package.json install scripts (in its head and tree, and the
+   Overview), a stasis bundle's file changes (format, execute bit, entry
+   point), what a file's code can run (file-runs-code.js), exfiltration hosts
+   (file-hosts.js), and hosts new since the compared version
+   (npm-overview.js npmNewHostTag). What a file no longer is, struck through. */
 :is(.bundle-compare-code-install, .bundle-compare-code-meta, .npm-runs-code, .npm-exfiltration, .npm-new-host, .npm-install-script-name) {
-  flex: none; padding: 0 .3rem;
-  color: var(--text); background: color-mix(in srgb, var(--high) 22%, var(--bg));
-  border: 1px solid var(--high); border-radius: var(--ui-radius, 3px);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .62rem; font-weight: 600; line-height: 1.45;
+  background: color-mix(in srgb, var(--high) 22%, var(--bg));
+  border: 1px solid var(--high);
 
   &.is-dropped { color: var(--muted); background: none; border-color: var(--border); text-decoration: line-through; }
-  /* Worse than the others' warning: the whole environment read out, and
-     publishing (file-runs-code.js), and a host that catches what is sent to
-     it (file-hosts.js); less, an IP lookup. */
+  /* Worse: the whole environment read out, publishing, a host that catches
+     what's sent; milder, an IP lookup. */
   &.is-critical { background: color-mix(in srgb, var(--critical) 22%, var(--bg)); border-color: var(--critical); }
   &.is-moderate { background: color-mix(in srgb, var(--yellow) 22%, var(--bg)); border-color: var(--yellow); }
   .bundle-code-tree-link > & { padding: 0 .2rem; font-size: .54rem; }
@@ -725,9 +683,7 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   font-size: .64rem;
   font-weight: 600;
 
-  &.added { color: var(--green); background: rgb(from var(--green) r g b / .16); }
-  &.removed { color: var(--critical); background: rgb(from var(--critical) r g b / .16); }
-  &.changed, &.renamed { color: var(--yellow); background: rgb(from var(--medium) r g b / .18); }
+  &.renamed { color: var(--yellow); background: rgb(from var(--medium) r g b / .18); }
   &.renamed.pure { color: var(--info); background: rgb(from var(--info) r g b / .16); }
 }
 .bundle-compare-code-counts {
@@ -743,10 +699,9 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 }
 /* An added file's head counts no lines removed: its −0 unseen, keeping its room. */
 .bundle-code-main-bar:has(> .bundle-compare-code-pill.added) > .bundle-compare-code-counts > .del { visibility: hidden; }
-/* A file's lines added and removed in the tree, before its letter: `=` for
-   one renamed as it was, `≈` for one whose changes the settings drawing it
-   set aside, and a count with nothing in it there unseen but keeping its
-   room, so the counts line up. */
+/* A file's lines added / removed in the tree, before its letter: `=` for a
+   pure rename, `≈` for changes the settings set aside; an empty count keeps
+   its room so the counts line up. */
 .bundle-compare-code-line-counts {
   flex: none;
   display: inline-flex;
@@ -791,9 +746,8 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   /* JSON's third state, folded: its braces drawn closer together. */
   &.is-folded > svg { transform: scaleX(.7); }
 }
-/* What the diff hides, in one frame as tall as the toggles beside it: Hide:,
-   then a named switch for each (mode-switch, as the treemap's Sunburst). In a
-   pane narrower than all of them, they wrap within it. */
+/* What the diff hides: Hide:, then a named switch each (mode-switch), in a
+   frame as tall as the toggles, wrapping in a narrow pane. */
 .bundle-compare-code-hide {
   flex: 0 1 auto;
   display: inline-flex;
@@ -820,9 +774,8 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   .bundle-compare-code-pill { display: none; }
 }
 
-/* The diff: one row per line, number columns sticky while the code
-   scrolls sideways. Unwrapped, the table is as wide as its widest line,
-   so every row's colour runs the full width. */
+/* The diff: a row per line, number columns sticky while the code scrolls
+   sideways; unwrapped, the table is as wide as its widest line. */
 .bundle-compare-diff {
   flex: 1;
   min-height: 0;
@@ -855,7 +808,6 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 }
 .diff-num {
   flex: none;
-  box-sizing: border-box;
   width: var(--diff-num-col);
   padding: 0 .45rem;
   text-align: right;
@@ -878,9 +830,8 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   background: rgb(from var(--accent) r g b / .1);
   & .diff-num { background: color-mix(in oklch, var(--accent) 20%, var(--bg)); color: var(--text); }
 }
-/* Content-box, against theme.css's border-box: its padding is besides the
-   1.6ch, so the sign keeps .6ch of space before the code rather than
-   overflowing into it. */
+/* Content-box, against the global border-box: the padding comes on top of
+   the 1.6ch, keeping .6ch before the code. */
 .diff-sign {
   flex: none;
   box-sizing: content-box;
@@ -942,7 +893,7 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   position: sticky;
   top: 0;
   z-index: 2;
-  font-family: var(--font-ui, system-ui);
+  font-family: system-ui;
   font-size: .68rem;
   color: var(--muted);
   background: var(--surface);
@@ -958,7 +909,7 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   min-height: 1.75rem;
   background: var(--diff-fold);
   color: var(--muted);
-  font-family: var(--font-ui, system-ui);
+  font-family: system-ui;
   font-size: .7rem;
 }
 .diff-fold-actions {
@@ -968,7 +919,6 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   align-items: center;
   justify-content: center;
   gap: .1rem;
-  box-sizing: border-box;
   width: calc(2 * var(--diff-num-col));
   align-self: stretch;
   background: color-mix(in oklch, var(--accent) 14%, var(--bg));
@@ -1003,7 +953,7 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   padding: .75rem 1.5rem;
   background: var(--diff-fold);
   color: var(--muted);
-  font-family: var(--font-ui, system-ui);
+  font-family: system-ui;
   font-size: .82rem;
 }
 .bundle-compare-code-more {
@@ -1067,11 +1017,8 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 .bundle-compare-code-pill.repointed,
 .bundle-compare-code-kind.repointed[aria-pressed='true'] { background: rgb(from var(--accent) r g b / .14); }
 
-/* Repointed imports of the open file, above its diff: the specifier, the
-   old and new target, and the line importing it. */
-/* Over package.json's diff, its dependencies' changes under one head, as
-   chips, each tinted as its group is in the Overview (added, changed,
-   removed, that one struck through), its range beside its name. */
+/* Over package.json's diff, its dependencies' changes as chips tinted by
+   group (removed struck through), each range beside its name. */
 .bundle-compare-code-deps {
   margin: .75rem;
   padding: .55rem .7rem;
@@ -1113,6 +1060,8 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 
   & b { color: color-mix(in srgb, var(--dep) 75%, var(--text)); font-weight: 600; }
 }
+/* Repointed imports of the open file, over its diff: specifier, old and
+   new target, and the importing line. */
 .bundle-compare-code-repointed {
   margin: .75rem;
   padding: .55rem .7rem;

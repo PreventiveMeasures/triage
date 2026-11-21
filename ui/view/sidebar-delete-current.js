@@ -1,17 +1,7 @@
-// `<sidebar-delete-current>` — the `Delete current` button in the
-// sidebar's actions row. Targets whichever artifact is currently
-// active: the selected bundle in the bundles view, otherwise the
-// open report. Disabled when neither is in play.
-//
-// The disabled state reads `state.currentFile` /
-// `state.selectedBundle` / `state.currentView` reactively via
-// StateElement's autorun, so it follows any mutation in those slots
-// without a sidebar repaint.
-//
-// The native button click bubbles through the host to sidebar.js's
-// `onSidebarClick` delegate, which uses
-// `closest('sidebar-delete-current')` to run the bundle-then-report
-// deletion dispatch.
+// `<sidebar-delete-current>` — the sidebar's `Delete current` button, for
+// the bundles view's bundle or else the open report, disabled with neither
+// (followed through the autorun, without a sidebar repaint). The click
+// bubbles to sidebar.js's delegate, which deletes.
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 

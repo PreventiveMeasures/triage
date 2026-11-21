@@ -1,10 +1,8 @@
-// GitHub accounts as the app shows them. A repository's activity (its
-// commits, issues, pull requests, agents and pulse) names GitHub accounts;
-// the server answers with the app's users and agents among them
-// (server-managed/github-users.ts), a linked account's as its user, which are
-// kept here as they come for each tab to show, a user by their avatar and the
-// name they chose, an agent as the Agents tab draws it, for the session they
-// came to.
+// GitHub accounts as the app shows them. A repository's activity names
+// GitHub logins; the server says which are the app's users or agents
+// (server-managed/github-users.ts; a linked account as its user), kept here
+// for the session: a user drawn by avatar and chosen name, an agent as the
+// Agents tab draws it.
 import { html, nothing } from 'lit'
 import { GITHUB_AGENTS, githubAgent, oneAgent } from '../../common/managed/github-agents.ts'
 import { namedAccounts } from '../../common/managed/github-logins.ts'
@@ -69,11 +67,9 @@ export async function knowingGithubUsers(read) {
 // address changes with it, as the page would show its image as first loaded.
 const avatarRevisions = new Map()
 
-// A user's avatar asked for again under its own address, the browser keeping
-// the image it answers in place of the one it kept (the server lets it keep
-// one a while, server-managed/http.ts USER_AVATAR_CACHE): the next page
-// drawn shows the one chosen too. A failure leaves the one kept, shown till
-// the browser asks again by itself.
+// Re-fetch a user's avatar past the browser cache (the server lets it keep
+// one a while, server-managed/http.ts USER_AVATAR_CACHE), so the next page
+// shows the new one too; a failure keeps the cached one.
 function refreshAvatar(userId) {
   globalThis.fetch(`/api/avatar/${encodeURIComponent(userId)}`, { cache: 'reload', credentials: 'same-origin' }).catch(() => {})
 }
@@ -85,13 +81,11 @@ let profileChanges = 0
 const unlinked = new Set()
 const unlinkedIds = new Set()
 
-// The signed-in user (`userId`) changed their profile in this session, as
-// `profile` now is: what was kept of them takes it, before an answer kept a
-// while is asked again, under every login of theirs, those they signed in
-// or linked with before renaming on GitHub among them (the server knows them
-// by their account's id). The account they unlinked (`unlinkedAccount`, its
-// login and GitHub id) is no longer theirs, by any login this session's
-// answers named it by.
+// The signed-in user (`userId`) changed their profile to `profile`: every
+// login kept as theirs takes it at once (old ones from before a GitHub
+// rename included — the server knows them by account id), before any answer
+// is asked again. `unlinkedAccount` (login and GitHub id) is no longer
+// theirs under any login this session's answers named it by.
 export function knowProfile(userId, profile, avatarChanged = false, unlinkedAccount = null) {
   if (avatarChanged) {
     avatarRevisions.set(userId, (avatarRevisions.get(userId) ?? 0) + 1)

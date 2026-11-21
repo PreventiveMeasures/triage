@@ -1,42 +1,16 @@
-// `<finding-card>` — one dedup-group rendered as a card. Used in
-// three places: the table view's side details aside, the
-// grouped-by-file list (inside `<div class="file-body">`), and the
-// flat list (inside `<div class="flat-group">`). The host element
-// IS the `.finding` card: classes derived from the dedup group
-// (`is-critical`, `mark-{red|blue|green|gray}`, `has-conflict`,
-// `triage-{inprogress|fixed|invalid|deleted|ignored}`, `multi-case`) plus the literal `finding` class are
-// reflected onto `this.classList`, and `this.dataset.gid` carries
-// the group key (events.js's `pathClosest('[data-gid]')` finds the
-// targeted card from action-button clicks).
-//
-// `inGroup` reflects to the `in-group` attribute and tells the
-// shadow stylesheet to suppress the in-body `.line-row` — the parent
-// flat-group wrapper paints a header above the card with the same
-// info. Used only by the flat list mode.
-//
-// `lazy` (the two list surfaces set it) defers the card's body until
-// the card is within a viewport of being seen — see the notes over
-// `render` and view/lazy-render.js. The single-card surfaces (the
-// table's details aside, the focus view, the kanban dialog) leave it
-// off and paint at once, as they always did.
-//
-// Reactivity: extends StateElement, which wraps render() in an
-// observer-util reaction. State reads inside the helpers
-// (state.triage, state.activeTabByGroup, state.shownTriage) get
-// auto-tracked, so a mutation that invalidates the card triggers a
-// targeted re-render. The classList stamping happens inside render()
-// so its `state.shownTriage` read joins the same tracked set.
-//
-// Click semantics: action buttons (`.tab`, `.mark-comment`, `.mark-fix`,
-// `.triage-menu-item`, the `<color-marker>` dots) bubble out composed:true and reach events.js's
-// `pathClosest`-based delegate. No row-select equivalent — cards
-// don't drive a side-details panel.
+// `<finding-card>`: one dedup group as a card, in the table's details, the
+// grouped list and the flat list. The host is the `.finding` card, its
+// group's classes (findingCardClasses) stamped on it and `data-gid`
+// naming it for events.js's delegate, which the action buttons' composed
+// clicks reach. `inGroup` (`in-group`) hides the in-body `.line-row` under
+// the flat list's header. A StateElement: the state its render reads is
+// tracked, so a change to it re-renders the card alone.
 import { unsafeCSS } from 'lit'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { installShadowTooltipListener } from './tooltip.js'
-import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
+import { NearViewport } from './lazy-render.js'
 import { groupKey } from './group.js'
-import { findingCardClasses, findingCardInnerTemplate } from './render-finding.js'
+import { ROW_HOST_CLASSES, findingCardClasses, findingCardInnerTemplate } from './render-finding.js'
 import { revealCitedLines } from './reveal-cited.js'
 import cardCSS from './finding-card.css'
 import quoteCSS from '../styles/md-quote.css'
@@ -48,45 +22,23 @@ import actionsCSS from './finding-actions.css'
 import codeTokensCSS from '../styles/code-tokens.css'
 import managedCommentCSS from './managed-comment.css'
 
-const MANAGED_HOST_CLASSES = [
-  'finding',
-  'is-critical',
-  'mark-red', 'mark-blue', 'mark-green', 'mark-gray',
-  'has-conflict',
-  'triage-inprogress', 'triage-fixed', 'triage-invalid', 'triage-deleted', 'triage-ignored',
-  'multi-case',
-]
+const MANAGED_HOST_CLASSES = ['finding', ...ROW_HOST_CLASSES, 'multi-case']
 
-class FindingCard extends StateElement {
+class FindingCard extends NearViewport(StateElement) {
   static properties = {
     group: { attribute: false },
     inGroup: { type: Boolean, attribute: 'in-group', reflect: true },
-    // Caller-stamped variant flag — `'focus'` opts into the inlined
-    // triage actions + expanded button labels variants emitted by
-    // `findingCardInnerTemplate`. Reflected so the same value reaches
-    // the shadow CSS via `:host([context='focus'])`.
+    // `'focus'` for the focus view's labelled actions, reflected for
+    // `:host([context='focus'])`.
     context: { type: String, reflect: true },
-    // Render the body only once the card is near the viewport. Set by
-    // the list / grouped templates (render.js findingCardPlaceholder);
-    // absent on the single-card surfaces.
+    // The body rendered only once the card nears the viewport (the lists,
+    // render.js findingCardPlaceholder); eager on the single-card surfaces.
     lazy: { type: Boolean },
   }
 
-  // Share group tabs with table rows, the Prism token palette with the
-  // export preview dialog, and the quote and alert rules with the
-  // dialogs that draw prose. The remaining styles belong to the card.
+  // Shared with table rows (tabs), the export preview (Prism tokens) and
+  // the prose dialogs (quotes and alerts).
   static styles = [unsafeCSS(fileIconsCSS), unsafeCSS(reportButtonCSS), unsafeCSS(marksCSS), unsafeCSS(cardCSS), unsafeCSS(quoteCSS), unsafeCSS(actionsCSS), unsafeCSS(tabsCSS), unsafeCSS(codeTokensCSS), unsafeCSS(managedCommentCSS)]
-
-  // Whether the body is (to be) rendered. Always true for an eager
-  // card; for a lazy one it flips when the observer reports the card
-  // within range, and back when a reconnect lands it out of range
-  // (see `_onNear`). Not a reactive property: the flip requests the
-  // update itself, and reflecting it would add an attribute for
-  // nothing to read.
-  _near = false
-  // The element the observer watches on this card's behalf, kept from
-  // watch to unwatch — a detached card can no longer find its wrapper.
-  _watched = null
 
   constructor() {
     super()
@@ -98,55 +50,27 @@ class FindingCard extends StateElement {
 
   render() {
     if (!this.group) return html``
-    // Stamp host attributes/classes inside render() so the state reads
-    // (state.shownTriage via findingCardClasses, state.triage /
-    // state.activeTabByGroup via findingCardInnerTemplate) join
-    // StateElement's tracked set and re-render on mutation.
+    // Stamped in render(), so the state these read is tracked with it.
     this.dataset.gid = groupKey(this.group)
     if (this.lazy && !this._near) {
-      // Out of range: an empty shell in the card's own chrome, so the
-      // list keeps its rhythm and `.flat-group .finding` still matches
-      // the host. Nothing in here reads state, so the autorun this
-      // runs in subscribes to nothing — a change elsewhere in the
-      // list costs an unrendered card nothing. The `.card-pending`
-      // min-height (finding-card.css) holds a card's worth of space
-      // for the frame between the shell painting and the body
-      // landing.
+      // Out of range: an empty shell reading no state, so a change elsewhere
+      // costs it nothing; `.card-pending` holds a card's height.
       this.classList.add('finding')
       return html`<div class="card card-pending" aria-busy="true"></div>`
     }
     const next = new Set(findingCardClasses(this.group))
     for (const c of MANAGED_HOST_CLASSES) this.classList.toggle(c, next.has(c))
-    // Visual chrome lives on the inner `.card`, not the host, so
-    // theme.css's global `* { padding: 0 }` reset can't override our
-    // padding/border via the shadow boundary's outer-wins cascade
-    // rule. See finding-card.css.
+    // The chrome on the inner `.card`, which theme.css's global
+    // `* { padding: 0 }` can't override across the shadow boundary.
     return html`<div class="card">${findingCardInnerTemplate(this.group, { context: this.context })}</div>`
   }
 
-  // A source preview that opened on a range taller than its ten-line
-  // cap has to be SCROLLED to the citation, or it opens on the context
-  // above and the reader has to go looking for the lines they asked
-  // for. Same rule as the focus panel (reveal-cited.js): centre the
-  // block, clamped to a line of lead-in.
-  //
-  // Here rather than in the template because it is a measurement, and
-  // it has to run after the paint that produced the lines.
-  //
-  // Re-applied on EVERY pass, not once, because a preview's content
-  // arrives in stages — the placeholder, then the source, then the
-  // highlight — and any of those can land the scroll somewhere else:
-  // a pass that positions an element which is about to be replaced
-  // has positioned nothing, and swapping a scrolled box's contents can
-  // clamp the offset it had. Positioning once was betting on which
-  // pass would be the last one.
-  //
-  // What keeps that from fighting the reader is remembering the offset
-  // we set: if the box is still sitting where we put it, it is ours to
-  // move, and if it isn't, they scrolled it and we leave it alone.
+  // A source preview taller than its cap scrolled to its cited lines
+  // (reveal-cited.js), after the paint that drew them. On every pass, as its
+  // content arrives in stages that can move the scroll; but only while it
+  // sits where it was put (`revealedTo`), else the reader scrolled it.
   updated() {
-    // The outer list headers and backgrounds may appear only after the
-    // body has reached the DOM, including after a reconnect goes lazy.
+    // The list's headers may show only once the body is in the DOM.
     this.classList.toggle('content-ready', !!this.group && (!this.lazy || this._near))
     for (const preview of this.renderRoot.querySelectorAll('.code-preview')) {
       const ours = preview.dataset.revealedTo
@@ -160,79 +84,19 @@ class FindingCard extends StateElement {
 
   connectedCallback() {
     super.connectedCallback()
-    // The GitHub marks inside carry `data-tooltip`; the shared tooltip
-    // (view/tooltip.js) draws it. Its document-level listener can't see
-    // in here — `closest` stops at the boundary — so this root gets its
-    // own. Idempotent, and reconnects are how this component is used.
+    // Its own tooltip listener: the document's `closest` stops at the
+    // shadow boundary. Idempotent.
     installShadowTooltipListener(this.renderRoot)
     if (this.lazy) {
-      // Ask where the card is. In the flat list the observer watches
-      // the `.flat-group` wrapper: it carries the `content-visibility`
-      // (findings.css), so it is the element with a box while the
-      // group is skipped, and it is what scrolls the card into view.
-      // Every connect asks afresh — Lit's keyed `repeat` moves a card
-      // by detaching and re-inserting it, and a re-sort can carry a
-      // rendered card a thousand rows from the viewport.
-      this._watched = this.closest('.flat-group') ?? this
-      watchNearViewport(this._watched, (near) => this._onNear(near))
+      // The flat list's `.flat-group` wrapper has the box while skipped
+      // (`content-visibility`). Asked afresh on every connect: a keyed
+      // `repeat` moves a card by reinserting it, perhaps far from view.
+      this._watchNear(this.closest('.flat-group') ?? this)
       return
     }
-    // Force a render after every (re)connect so StateElement's wrapped
-    // render() runs and re-registers a fresh autorun. Lit's keyed
-    // repeat keeps cards connected across steady-state list renders,
-    // but view-mode switches rebuild them and a card can move between
-    // parents (e.g. table-details aside vs. file-group body) —
-    // reconnects where Lit wouldn't re-render on its own when `group`
-    // didn't change.
+    // Rendered again on every reconnect, so StateElement registers a fresh
+    // autorun where Lit, `group` unchanged, wouldn't update.
     if (this.hasUpdated) this.requestUpdate()
-  }
-
-  disconnectedCallback() {
-    if (this._watched) {
-      unwatchNearViewport(this._watched)
-      this._watched = null
-    }
-    super.disconnectedCallback()
-  }
-
-  // The observer's answer. In range: render the body — which, on a
-  // reconnect of a card that already had one, is also what
-  // re-registers the autorun the disconnect disposed — and stop
-  // watching, since a rendered card stays rendered while it stays
-  // connected (a reader's open disclosures survive a scroll away and
-  // back). Out of range on a reconnect: drop the body back to the
-  // shell, so the cost of a sort or a filter is bounded by the
-  // viewport however far the reader had scrolled before it.
-  _onNear(near) {
-    if (near) {
-      if (this._watched) {
-        unwatchNearViewport(this._watched)
-        this._watched = null
-      }
-      this._near = true
-      this.requestUpdate()
-    } else if (this._near) {
-      this._near = false
-      this.requestUpdate()
-    }
-  }
-
-  // Render the body now whether or not the card is in range — for the
-  // print pipeline, which puts every card on paper, and the deep-link
-  // reveal, which scrolls to a card and wants it at its real height
-  // when it gets there. Resolves once the body is in the DOM.
-  //
-  // `sync` performs the update before returning instead of leaving it
-  // to Lit's microtask. A `beforeprint` handler cannot await one, and
-  // the browser may take its snapshot the moment the handler returns,
-  // so the native print path (Ctrl+P, the browser menu) asks for the
-  // body on the spot. `performUpdate` is Lit's own door for that: it
-  // processes the update just requested, and the queued one then finds
-  // nothing left to do.
-  ensureRendered({ sync = false } = {}) {
-    if (this.lazy && !this._near) this._onNear(true)
-    if (sync && this.isConnected && this.isUpdatePending) this.performUpdate()
-    return this.updateComplete
   }
 }
 

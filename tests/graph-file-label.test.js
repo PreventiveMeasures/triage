@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { bundlePkgOf } from '../ui/view/bundle-pkg-of.js'
+import { bundlePkgOf } from '../common/bundle-pkg-of.js'
 import { fileLabelOf } from '../ui/view/graph/file-label.js'
 import { buildSizeFlow } from '../ui/view/graph/size-flow-model.js'
 import { buildDependencyMatrix } from '../ui/view/graph/matrix-model.js'

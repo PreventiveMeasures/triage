@@ -18,9 +18,9 @@ function withoutCrowded(network, limit, pkgOf) {
   if (hidden.size === 0) return network
   const shown = id => !hidden.has(pkgOf(id))
   const nodes = network.nodes.filter(n => shown(n.file))
+  const keep = (links, as) => new Map([...links].filter(([id]) => shown(id)).map(([id, targets]) => [id, as([...targets].filter(shown))]))
   return { ...network, nodes, nodeByFile: new Map(nodes.map(n => [n.file, n])),
-    importsOf: new Map([...network.importsOf].filter(([id]) => shown(id)).map(([id, targets]) => [id, targets.filter(shown)])),
-    cycleImportsOf: new Map([...network.cycleImportsOf].filter(([id]) => shown(id)).map(([id, targets]) => [id, new Set([...targets].filter(shown))])) }
+    importsOf: keep(network.importsOf, targets => targets), cycleImportsOf: keep(network.cycleImportsOf, targets => new Set(targets)) }
 }
 
 export function dependencyNetwork(graph, packagesView) {
@@ -48,9 +48,9 @@ export function packageNetwork(graph) {
       const node = { file: '__own__', pkg: '__own__', label: 'own source', fileCount: 0, size: null, totalIssues: 0, deg: 0, x: 0, y: 0 }
       pg.nodes.push(node); pg.byPkg.set(node.pkg, node)
     }
-    pg.importsOf.set('__own__', [...new Set([...(pg.importsOf.get('__own__') ?? []), ...graph.layerRoots.appImports])].filter((id) => id !== '__own__' && pg.byPkg.has(id)))
-    pg.cycleImportsOf.set('__own__', new Set([...(pg.cycleImportsOf.get('__own__') ?? []), ...graph.layerRoots.appImports]
-      .filter(id => id !== '__own__' && pg.byPkg.has(id))))
+    const withApp = links => [...new Set([...(links ?? []), ...graph.layerRoots.appImports])].filter(id => id !== '__own__' && pg.byPkg.has(id))
+    pg.importsOf.set('__own__', withApp(pg.importsOf.get('__own__')))
+    pg.cycleImportsOf.set('__own__', new Set(withApp(pg.cycleImportsOf.get('__own__'))))
   }
   pg = withoutCrowded(pg, MAX_PACKAGE_EDGES, pkg => pkg)
   pg.byPkg = pg.nodeByFile

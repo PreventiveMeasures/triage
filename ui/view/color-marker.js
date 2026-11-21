@@ -1,22 +1,11 @@
-// `<color-marker>` — the four-dot mark-color picker rendered inside
-// each finding's action row (and the table-view row). The four dots
-// live in their own shadow root with a single shared stylesheet;
-// each component just drops a `<color-marker .selected=…>` in.
-//
-// Colors are oklch so the four hues sit at matched lightness/chroma
-// instead of drifting visually (as a hand-tuned hex set tends to).
-// Independent of the muted per-component row-tint values
-// (`:host(.mark-red) .row { background: #6b1820 }` etc.) that paint
-// the marked-row background — same logical mark color, darker
-// treatment for that fill role.
-//
-// Click semantics: a composed-bubbling `mark-color`
-// `CustomEvent({ detail: { color } })` lets events.js handle the
-// per-tab toggle (set/delete `state.markers[activeKey]`, including
-// toggling off the selected dot) without the component knowing about
-// findings, groups, or active tabs — it just reports which dot was clicked.
+// `<color-marker>` — the four-dot mark-color picker in each finding's action
+// row. Its oklch dots sit at matched lightness/chroma; the marked row's
+// darker tint is the components' own. A click reports which dot as a
+// `mark-color` event, which events.js applies to the active tab (the marked
+// color again clears it), so the component knows nothing of findings.
 import { LitElement, html, unsafeCSS } from 'lit'
 import markerCSS from './color-marker.css'
+import { emit } from './emit.js'
 
 const COLORS = ['red', 'blue', 'green', 'gray']
 
@@ -46,12 +35,7 @@ class ColorMarker extends LitElement {
 
   _onClick = (e) => {
     if (this.disabled) return
-    const color = e.currentTarget.dataset.color
-    this.dispatchEvent(new CustomEvent('mark-color', {
-      detail: { color },
-      bubbles: true,
-      composed: true,
-    }))
+    emit(this, 'mark-color', { color: e.currentTarget.dataset.color })
   }
 }
 

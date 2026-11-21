@@ -17,7 +17,7 @@ import { bundleLayerRoots } from '../ui/view/bundle-graph-inputs.js'
 
 const { buildGraph, buildPackageGraph } = await import('../ui/view/graph/data.js')
 const { dependencyFilesOn, dependencyNetwork } = await import('../ui/view/graph/package-network.js')
-const { bundlePkgOf } = await import('../ui/view/bundle-pkg-of.js')
+const { bundlePkgOf } = await import('../common/bundle-pkg-of.js')
 const { depsDirName } = await import('../ui/view/format.js')
 
 it('the report graph also classifies all ordinary source files as one package', () => {

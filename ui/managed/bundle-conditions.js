@@ -45,13 +45,8 @@ export class BundleConditions extends LitElement {
     return { preset: this._preset, conditions: this.conditions, platforms: this._preset === 'metro' ? [...this._platforms] : [] }
   }
 
-  get presetConditions() {
-    return PRESETS.find(item => item.id === this._preset).conditions
-  }
-
-  get automaticConditions() {
-    return PRESETS.find(item => item.id === this._preset).automatic
-  }
+  get presetConditions() { return PRESETS.find(item => item.id === this._preset).conditions }
+  get automaticConditions() { return PRESETS.find(item => item.id === this._preset).automatic }
 
   // The preset's condition leads and cannot be removed. Manual conditions follow
   // it and survive preset switches, except under Metro, which sets its own.
@@ -64,8 +59,7 @@ export class BundleConditions extends LitElement {
   }
 
   selectPreset(id) {
-    const preset = PRESETS.find(item => item.id === id)
-    if (!preset) return
+    if (!PRESETS.some(item => item.id === id)) return
     this._preset = id
     this._draft = ''
     this._error = ''

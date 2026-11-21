@@ -1,3 +1,9 @@
+// The ids whose entry differs between two catalogs, in order, either missing
+// counting as a change.
+const changedIds = (previous, next) => [...new Set([...previous?.keys() ?? [], ...next.keys()])].filter(id => previous?.get(id) !== next.get(id))
+// `[id, key]` pairs as a catalog: each id's keys, sorted, as one string.
+const catalogOf = pairs => new Map([...Map.groupBy(pairs, ([id]) => id)].map(([id, group]) => [id, JSON.stringify(group.map(([, key]) => key).toSorted())]))
+
 // Manage data survives custom-element teardown, but never leaves memory. The
 // session boundary is owned by the host, including while no Manage page is open.
 export class ManagedAppState {
@@ -32,15 +38,12 @@ export class ManagedAppState {
   // change invalidates that response, plus affected privileged report previews.
   // Bundle assignments also change which sources its reports can expose.
   setReportCatalog(teams) {
-    const changedTeams = new Set()
     const teamCatalog = new Map(teams.map(team => [team.id, JSON.stringify([
       team.cacheKey ?? null,
       team.reports.map(report => [report.id, report.cacheKey ?? null, report.visible !== false]).toSorted(),
       (team.bundles ?? []).map(bundle => [bundle.id, bundle.filename, bundle.repoFullName, bundle.repoDirectory ?? '']).toSorted(),
     ])]))
-    for (const id of new Set([...this.teamCatalog?.keys() ?? [], ...teamCatalog.keys()])) {
-      if (this.teamCatalog?.get(id) !== teamCatalog.get(id)) changedTeams.add(`team:${id}`)
-    }
+    const changedTeams = new Set(changedIds(this.teamCatalog, teamCatalog).map(id => `team:${id}`))
     for (const key of this.resources.keys()) {
       const prefix = 'reports:content:team:'
       if (key.startsWith(prefix)) {
@@ -49,21 +52,9 @@ export class ManagedAppState {
       }
     }
     this.teamCatalog = teamCatalog
-    const grouped = new Map()
-    for (const team of teams) {
-      for (const report of team.reports) {
-        const keys = grouped.get(report.id) ?? []
-        keys.push(JSON.stringify([team.id, report.cacheKey ?? null]))
-        grouped.set(report.id, keys)
-      }
-    }
-    const next = new Map([...grouped].map(([id, keys]) => [id, JSON.stringify(keys.toSorted())]))
-    const previous = this.reportCatalog
+    const next = catalogOf(teams.flatMap(team => team.reports.map(report => [report.id, JSON.stringify([team.id, report.cacheKey ?? null])])))
+    const changed = new Set([...changedTeams, ...changedIds(this.reportCatalog, next)])
     this.reportCatalog = next
-    const changed = new Set(changedTeams)
-    for (const id of new Set([...previous?.keys() ?? [], ...next.keys()])) {
-      if (previous?.get(id) !== next.get(id)) changed.add(id)
-    }
     for (const key of this.resources.keys()) {
       if (!key.startsWith('reports:content:') || key.startsWith('reports:content:team:')) continue
       const id = key.slice('reports:content:'.length)
@@ -72,22 +63,14 @@ export class ManagedAppState {
         changed.add(id)
       }
     }
-    const bundles = new Map()
-    for (const team of teams) {
-      for (const bundle of team.bundles ?? []) {
-        const keys = bundles.get(bundle.id) ?? []
-        keys.push(JSON.stringify([team.id, team.cacheKey ?? null, bundle.filename, bundle.repoFullName, bundle.repoDirectory ?? '']))
-        bundles.set(bundle.id, keys)
-      }
-    }
-    let bundlesChanged = false
-    const bundleCatalog = new Map([...bundles].map(([id, keys]) => [id, JSON.stringify(keys.toSorted())]))
-    for (const id of new Set([...this.bundleCatalog?.keys() ?? [], ...bundleCatalog.keys()])) {
-      if (this.bundleCatalog?.get(id) === bundleCatalog.get(id)) continue
-      bundlesChanged = true
+    const bundleCatalog = catalogOf(teams.flatMap(team => (team.bundles ?? []).map(bundle => [bundle.id,
+      JSON.stringify([team.id, team.cacheKey ?? null, bundle.filename, bundle.repoFullName, bundle.repoDirectory ?? ''])])))
+    const changedBundles = changedIds(this.bundleCatalog, bundleCatalog)
+    for (const id of changedBundles) {
       changed.add(`bundle:${id}`)
       this.invalidate([`bundle-metadata:${id}`])
     }
+    const bundlesChanged = changedBundles.length > 0
     this.bundleCatalog = bundleCatalog
     for (const key of this.resources.keys()) {
       if (!key.startsWith('report-sources:') && !key.startsWith('finding-history:')) continue

@@ -13,7 +13,7 @@ import { ScanPage } from '../ui/scan/page.js'
 import { templateText as renderText } from './_lit.js'
 import { cloneScanFixtures } from '../ui/scan/fixtures.js'
 import { bundleOptions } from '../ui/view/bundle-selector.js'
-import { createBundleMetadata, parseBundleMetadata } from '../ui/view/bundle-metadata.js'
+import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
 import { createBundleSummary } from '../common/bundle-metadata.js'
 
 describe('Scan scopes', () => {

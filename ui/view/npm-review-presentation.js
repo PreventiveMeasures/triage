@@ -1,10 +1,13 @@
 import { html, nothing } from 'lit'
 import { styleMap } from './style-map.js'
+import { appMarkup } from './markup.js'
+import { DELETE_ICON_SVG } from './icons.js'
+import { sourceFileIcon } from './source-file-icon.js'
 import { appUserBadge } from './github-users.js'
 import { REVIEW_VERDICTS, parseReviewNotes } from '../../common/dependency-reviews.js'
 
 export const verdictLabels = { ...REVIEW_VERDICTS, 'accept-with-nits': 'Accept with nits' }
-export const reviewState = review => review.revokedAt === null ? review.publishedAt === null ? 'Draft' : 'Published' : 'Revoked'
+const reviewState = review => review.revokedAt === null ? review.publishedAt === null ? 'Draft' : 'Published' : 'Revoked'
 const symbols = { accept: '✓', 'accept-with-nits': '·', 'request-changes': '!', reject: '×' }
 export const verdictIcon = status => html`<span class=${`npm-review-verdict-icon ${status ?? 'unchecked'}`} aria-hidden="true">${symbols[status] ?? ''}</span>`
 export const verdictLabel = status => html`<span class="npm-review-verdict">${verdictIcon(status)}${verdictLabels[status] ?? 'Not reviewed'}</span>`
@@ -16,6 +19,13 @@ export const reviewAuthor = review => review.user ? appUserBadge({ id: review.us
 export const reviewDate = time => html`<time datetime=${new Date(time).toISOString()}>${new Date(time).toLocaleString()}</time>`
 export const reviewProgress = (checked, total) => html`<div class="npm-review-progress" role="progressbar" aria-label="Files checked"
   aria-valuemin="0" aria-valuemax=${total || 1} aria-valuenow=${checked}><span style=${styleMap({ width: `${total ? checked / total * 100 : 0}%` })}></span></div>`
+// A published review's coverage, a partial one's marked.
+export const reviewCoverage = ({ coverage }) => coverage === 'full' ? 'Full' : html`<span class="dependency-review-partial">Partial</span>`
+// A reviewed file, by its icon and path.
+export const reviewFile = file => html`<span class="dependency-review-entry-file">${sourceFileIcon(file)}<span>${file}</span></span>`
+export const notesSaid = notes => `${notes} ${notes === 1 ? 'note' : 'notes'}`
+export const discardButton = (disabled, discard) => html`<button type="button" class="dependency-review-discard" aria-label="Discard review" ?disabled=${disabled}
+  @click=${discard}>${appMarkup(DELETE_ICON_SVG)}</button>`
 
 export function reviewFileStates(entries = [], nonTextFiles = []) {
   const nonText = new Set(nonTextFiles)
@@ -31,8 +41,8 @@ export function reviewNote(comment) {
     ${bullets.length > 0 ? html`<ul class="npm-review-note npm-review-note-list">${bullets.map(note => html`<li>${note.text}</li>`)}</ul>` : nothing}`
 }
 
-// A list row opens that exact snapshot, even when a newer private set exists.
-// Keep this handoff inside review components, without changing app routing.
+// A list row opens that exact snapshot, even where a newer draft exists:
+// handed to the review page here, without changing app routing.
 let selection = null
 export const sameReviewContext = (a, b) => ['ecosystem', 'package', 'version', 'integrity', 'patchHash', 'basePackage', 'baseVersion', 'baseIntegrity', 'basePatchHash']
   .every(key => (a[key] ?? null) === (b[key] ?? null))
@@ -43,7 +53,6 @@ export function takeReviewSelection(context) {
   selection = null
   return next
 }
-
 
 // A review's title: its version, patched where it is a patched one's,
 // against its base where it has one.

@@ -1,38 +1,17 @@
-// `<range-slider>` — a dual-thumb numeric range input. Two stacked
-// native `<input type="range">` elements share a single track; the
-// selected range between the thumbs is tinted via a CSS gradient on
-// the track. Used as one filter, vs. the two adjacent `<select>`
-// dropdowns it stands in for.
+// `<range-slider>` — a dual-thumb numeric range: two stacked native range
+// inputs over one track, the span between the thumbs tinted by a gradient.
+// Emits `range-input` while dragging and `range-change` on release, both
+// with `{ low, high }`.
 //
-// Design notes:
-//   * The range tint is a `linear-gradient` on a single track div
-//     (not an absolutely-positioned `.range` div sized via `--low` /
-//     `--high`) — one fewer element, no overlap fights with the inputs.
-//   * Crossing thumbs SWAP roles cleanly: dragging the low thumb past
-//     the high (or vice versa), the dragged thumb keeps following the
-//     cursor and now represents the opposite end. `low` / `high` are
-//     derived as `min` / `max` of the two raw inputs, so track and
-//     property values stay consistent regardless of which native
-//     `<input>` holds which logical value. The inputs are uncontrolled
-//     (no reactive `.value=` binding) so a re-render mid-drag doesn't
-//     yank the dragged thumb back to a sorted slot.
-//   * Two events: `range-input` (continuous, during drag — host may
-//     ignore for filter heaviness) and `range-change` (final, on
-//     release). Both carry `{ low, high }` in `event.detail` and
-//     bubble + compose so the host can listen on a parent without
-//     piercing the shadow.
-//   * `step` is forwarded to both inputs.
-//   * `willUpdate` clamps externally-set values so a host pushing
-//     invalid `low > high` doesn't briefly render a reversed range.
-//
-// Usage:
-//   <range-slider min="0" max="10" step="1" low="3" high="8"
-//     @range-input=${(e) => liveUpdate(e.detail.low, e.detail.high)}
-//     @range-change=${(e) => commit(e.detail.low, e.detail.high)}>
-//   </range-slider>
+// `low` / `high` are the min / max of the two inputs, so thumbs crossing
+// swap roles and the dragged one keeps following the cursor. The inputs are
+// uncontrolled (no `.value=` binding), so a mid-drag render — this
+// element's own, on input — never yanks the held thumb back to a sorted
+// slot; `firstUpdated` seeds them and `updated` follows an external change.
 import { LitElement, html, unsafeCSS } from 'lit'
 import { styleMap } from './style-map.js'
 import sliderCSS from './range-slider.css'
+import { emit } from './emit.js'
 
 class RangeSlider extends LitElement {
   static properties = {
@@ -54,6 +33,7 @@ class RangeSlider extends LitElement {
     this.high = 100
   }
 
+  // A host pushing `low > high` doesn't briefly render a reversed range.
   willUpdate() {
     if (this.low < this.min) this.low = this.min
     if (this.high > this.max) this.high = this.max
@@ -64,11 +44,6 @@ class RangeSlider extends LitElement {
     const span = (this.max - this.min) || 1
     const lowPct = ((this.low - this.min) / span) * 100
     const highPct = ((this.high - this.min) / span) * 100
-    // `.value=` is intentionally NOT bound — the inputs are
-    // uncontrolled, so a mid-drag re-render (e.g. our own _onInput
-    // updating `low` / `high`) won't reassign their values and yank the
-    // held thumb. `firstUpdated` seeds initial values; `updated` syncs
-    // only when external code changes `low` / `high`.
     return html`<div class="track-wrap" style=${styleMap({ '--low': `${lowPct}%`, '--high': `${highPct}%` })}>
       <div class="track"></div>
       <input type="range" min=${this.min} max=${this.max} step=${this.step}
@@ -86,12 +61,9 @@ class RangeSlider extends LitElement {
     this._inputs[1].value = this.high
   }
 
-  // Sync inputs to `low` / `high` only on an external change. Mid-drag,
-  // our own `_onInput` already set the inputs, so the diff guards below
-  // short-circuit. The `inverted` check keeps the dragged thumb in
-  // place when swapped: setting `low = 4` on a swapped slider writes to
-  // whichever input currently holds the lower value, leaving the other
-  // where the user dropped it.
+  // Mid-drag `_onInput` already set the inputs, so the diff guards skip it.
+  // On swapped thumbs, `low` goes to whichever input holds the lower value,
+  // leaving the other where the user dropped it.
   updated(changed) {
     if (!this._inputs) return
     if (!(changed.has('low') || changed.has('high'))) return
@@ -103,11 +75,6 @@ class RangeSlider extends LitElement {
     if (this.high !== cur[highIdx]) this._inputs[highIdx].value = this.high
   }
 
-  // Both raw inputs are sources of truth during drag. Recompute
-  // `low` / `high` by sorting (min / max) so a thumb crossing its
-  // companion swaps roles naturally — the dragged thumb stays under
-  // the cursor as the opposite end. Lit's update re-renders the
-  // gradient track but leaves the inputs alone (see render() comment).
   _onInput = () => {
     const a = Number(this._inputs[0].value)
     const b = Number(this._inputs[1].value)
@@ -119,11 +86,7 @@ class RangeSlider extends LitElement {
   _onChange = () => { this._emit('range-change') }
 
   _emit(name) {
-    this.dispatchEvent(new CustomEvent(name, {
-      detail: { low: this.low, high: this.high },
-      bubbles: true,
-      composed: true,
-    }))
+    emit(this, name, { low: this.low, high: this.high })
   }
 }
 

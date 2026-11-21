@@ -1,15 +1,9 @@
-// Cached references to the static DOM scaffolding declared in index.html.
-// Looking these up once at module load is cheaper than repeatedly
-// querying — and keeps every consumer module's import list short.
+// The static DOM scaffolding of index.html, looked up once.
 import { html, render as litRender, nothing } from 'lit'
 
 export const dropZone = document.querySelector('#drop-zone')
 export const report = document.querySelector('#report')
-// The `<app-sidebar>` shadow-DOM component (view/sidebar.js). The
-// host stays in light DOM so the collapse-state toggle (`view.js`
-// boot + the in-component toggle button) works on `.classList`.
-// `#file-list` lives in the shadow root, not exported here — only
-// sidebar.js touches it, through its own shadow-root reference.
+// `<app-sidebar>`, whose host stays in light DOM for the collapse class.
 export const sidebar = document.querySelector('app-sidebar')
 
 // The slots Lit renders #report's views into: its children, or those of a
@@ -30,13 +24,8 @@ export function replaceReport(...nodes) {
   report.replaceChildren(...nodes)
 }
 
-// Trigger a browser download for the given Blob via a transient
-// hidden anchor. Lit-rendered (rather than raw createElement) so
-// href + download flow through the same auto-escape path the rest
-// of the UI uses. Shared by the workspace export, the global triage
-// backup, the markdown export and the bundle / SBOM downloads in
-// events.js — each produces a blob + filename and wants the same
-// one-shot click + cleanup dance.
+// Download a Blob through a transient hidden anchor, Lit-rendered so href
+// and download take the UI's escaping path.
 export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob)
   const host = document.createElement('span')
@@ -48,11 +37,9 @@ export function downloadBlob(blob, filename) {
   URL.revokeObjectURL(url)
 }
 
-// The error for a dialog that refused to open because another modal is
-// up. `<dialog>.showModal()` does NOT throw in that case — it stacks — so
-// the refusal is `AppDialog`'s own `exclusive` check (app-dialog.js);
-// every wrapper that turns the resulting `modal-conflict` into a promise
-// rejection uses this so the user-facing copy stays consistent.
+// The error for a dialog refusing to open over another modal (`AppDialog`'s
+// `exclusive` check, as `showModal()` stacks rather than throws), one copy
+// for every wrapper turning a `modal-conflict` into a rejection.
 export function makeStackedModalError(cause) {
   return new Error('Another dialog is already open. Close it and try again.', { cause })
 }

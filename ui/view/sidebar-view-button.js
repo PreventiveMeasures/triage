@@ -1,21 +1,8 @@
-// `<sidebar-view-button>` — the Packages / Repositories navigation
-// buttons to the right of the sidebar search input.
-//
-// Extends StateElement and reads `state.currentView` in render() so
-// the `.active` highlight follows view navigation without a
-// `renderSidebar()` repaint.
-//
-// `count` (cross-report packages / repositories in the OPFS-wide
-// index) is NOT observable — `getPackagesIndex()` /
-// `getRepositoriesIndex()` return module-internal Maps the
-// observer-util proxy can't see through — so it arrives as a
-// property the parent (renderSidebar() call site) assigns. count 0
-// → render `nothing`, hiding the button.
-//
-// The native button click bubbles through the host to sidebar.js's
-// `onSidebarClick` delegate, which routes via
-// `closest('sidebar-view-button')` + the host's `kind` attribute to
-// the matching `state.currentView` mutation.
+// `<sidebar-view-button>` — the Packages / Repositories buttons beside the
+// sidebar search. The `.active` highlight follows `state.currentView`
+// through the autorun; `count` (from the OPFS-wide indexes, module Maps no
+// observer sees) is pushed by renderSidebar(), and 0 renders nothing. The
+// click bubbles to sidebar.js's delegate, which routes on `kind`.
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
@@ -35,9 +22,10 @@ const REPOSITORIES_ICON = html`<svg viewBox="0 0 16 16" width="14" height="14" f
   <path d="M12 6a6 6 0 0 1-6 6"/>
 </svg>`
 
+// Each kind is also the view it shows.
 const KIND = {
-  packages:     { title: 'Show packages',     icon: PACKAGES_ICON,     view: 'packages' },
-  repositories: { title: 'Show repositories', icon: REPOSITORIES_ICON, view: 'repositories' },
+  packages:     { title: 'Show packages',     icon: PACKAGES_ICON },
+  repositories: { title: 'Show repositories', icon: REPOSITORIES_ICON },
 }
 
 class SidebarViewButton extends StateElement {
@@ -58,10 +46,9 @@ class SidebarViewButton extends StateElement {
     if (this.count === 0) return nothing
     const config = kindConfig('sidebar-view-button', KIND, this.kind)
     if (!config) return nothing
-    const active = state.currentView === config.view
     return html`<button
       type="button"
-      class=${classMap({ 'sidebar-view-btn': true, active })}
+      class=${classMap({ 'sidebar-view-btn': true, active: state.currentView === this.kind })}
       aria-label=${config.title}
     >${config.icon}<span class="view-btn-count">${this.count}</span></button>`
   }

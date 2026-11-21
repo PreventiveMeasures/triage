@@ -8,7 +8,7 @@ header {
   flex-shrink: 0; padding: .7rem .9rem; border-bottom: 1px solid var(--border);
 }
 header h3 { display: flex; flex-wrap: wrap; gap: .35rem .7rem; min-width: 0; margin: 0; font-size: .92rem; overflow-wrap: anywhere; }
-.heading-version { color: var(--accent); font-family: var(--font-mono, monospace); }
+.heading-version { color: var(--accent); font-family: monospace; }
 header button {
   flex-shrink: 0; border: 0; background: transparent; color: var(--muted);
   font-family: inherit; font-size: 1.4rem; line-height: 1; padding: 0 .25rem;
@@ -20,7 +20,7 @@ header button:hover { color: var(--text); }
 }
 .graph-scroll {
   min-height: 0; overflow: auto; overscroll-behavior: contain;
-  background: var(--bg, var(--surface)); padding: .4rem;
+  background: var(--bg); padding: .4rem;
 }
 .graph { position: relative; margin-inline: auto; }
 .connections { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
@@ -45,10 +45,10 @@ header button:hover { color: var(--text); }
 .name, .location, .version { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .package-main, .package-meta { display: flex; align-items: baseline; gap: .4rem; min-width: 0; }
 .name { flex: 1; font-weight: 600; line-height: 17px; }
-.version { max-width: 45%; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: .65rem; }
+.version { max-width: 45%; flex-shrink: 0; font-family: monospace; font-size: .65rem; }
 .badge { flex-shrink: 0; font-size: .6rem; color: var(--muted); user-select: none; }
 .selected-badge { color: var(--accent); }
-.location { flex: 1; color: var(--muted); font-family: var(--font-mono, monospace); font-size: .61rem; line-height: 14px; }
+.location { flex: 1; color: var(--muted); font-family: monospace; font-size: .61rem; line-height: 14px; }
 .cycle {
   border-radius: var(--ui-radius, 8px); outline: 1px solid var(--border);
   background: color-mix(in srgb, var(--muted) 4%, transparent);

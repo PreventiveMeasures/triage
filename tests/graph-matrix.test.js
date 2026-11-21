@@ -7,7 +7,7 @@ import { MATRIX_LEFT, MATRIX_TOP, matrixFitCell, matrixHit, matrixZoomCell } fro
 import { layoutDependencyLayers } from '../ui/view/graph/layered-layout.js'
 import { makeLargeGraph } from '../examples/large-graph-sample.js'
 import { renderMatrixPanel } from '../ui/view/graph/matrix-panel.js'
-import { bundlePkgOf } from '../ui/view/bundle-pkg-of.js'
+import { bundlePkgOf } from '../common/bundle-pkg-of.js'
 import { graph2 } from '../ui/view/graph/state.js'
 
 function fixture() {

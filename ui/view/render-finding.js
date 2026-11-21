@@ -24,65 +24,37 @@ import { COPY_ICON } from './lit-icons.js'
 
 export { renderCommentText } from './comment-text.js'
 
-// All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
-// here as Lit `html` template results (no `appMarkup`). Lit
-// auto-escapes interpolated text + attribute values, so only
-// structural HTML lives in the templates — no manual `esc()`.
-// render.js's light-DOM surfaces (e.g. the flat list location headers)
-// use the template-returning siblings in format.js (`fileLink` /
-// `lineLink`).
+// All `<finding-row>` / `<finding-card>` shadow-DOM markup, as Lit
+// templates: Lit escapes interpolated text and attributes.
 
-// Display label for the .badge tier text. The class still gets the
-// canonical severity string ('informational' / 'high_bug') so CSS
-// color rules match; only the visible word is adjusted:
-//   informational → info (shortened so it fits the shared badge slot)
-//   high_bug      → "high bug" (underscore → space, reads naturally
-//                   under the shared text-transform: uppercase)
+// A severity's badge text: `informational` → info, `high_bug` → high bug.
+// The class keeps the canonical string for the CSS.
 export function badgeLabel(severity) {
   if (severity === 'informational') return 'info'
   return severity.replaceAll('_', ' ')
 }
 
-// ── Severity badge (corrected + original) ────────────────────────────
-// Single source for the finding severity chip across the tab strip, the
-// finding-left column, and the table-row score column. Reads the global
-// `state.severityMode` lens through format.js's `displayedSeverity`, so
-// the toolbar switch flips every site at once.
-//
-// When the finding carries a severity correction (and we're showing
-// corrected — the default), the primary chip is the corrected tier and a
-// muted, struck `was <original>` companion + a ▲/▼ direction glyph render
-// alongside it; in 'original' mode the primary is the original tier and an
-// outlined companion shows the corrected target. `correctedVariants` adds
-// a "varies" chip when a deduped finding's correction differs across the
-// reports it appeared in (workspace view). The ▲/▼ glyph + strikethrough
-// are shape cues so the corrected/original distinction is never conveyed
-// by color alone; the full detail rides the tooltip + `aria-label`.
-//   variant 'full'    — finding-left / focus (companion stacks below)
-//   variant 'compact' — table row (companion stacks below; tighter)
-//   variant 'tab'     — tab strip (primary + a small ▲/▼ marker only)
+// The severity chip of the tab strip, the finding-left column and the table
+// row, through the toolbar's `state.severityMode` lens. A corrected finding
+// shows the tier shown beside the other (struck `was <original>` in
+// corrected mode, outlined in original mode) and a ▲/▼ glyph, so the
+// distinction is never color alone; a deduped finding whose correction
+// differs across reports adds "varies". Variants: 'full' (finding-left),
+// 'compact' (table row), 'tab' (primary and the glyph only).
 function severityBadge(f, { variant = 'full' } = {}) {
   const mode = state.severityMode
   const shown = displayedSeverity(f, mode)
   const primary = html`<span class=${`badge ${shown}`}>${badgeLabel(shown)}</span>`
   const hasCorr = hasSeverityCorrection(f)
-  // Cross-report divergence is a per-survivor (group-level) concept — not
-  // meaningful on the tiny per-tab badge, so skip it there.
+  // Divergence across reports is the group's, not a tab's.
   const variants = variant === 'tab' ? null : correctedVariants(f)
   if (!hasCorr && !variants) return primary
 
-  const variesTip = variants
-    ? `Corrected severity varies across reports — ${Object.entries(variants).map(([r, v]) => `${r || '(this report)'}: ${badgeLabel(v.severity)}`).join('; ')}`
-    : null
-  const variesChip = variants
-    ? html`<span class="badge-varies" data-tooltip=${variesTip} aria-label=${variesTip}>varies</span>`
-    : nothing
+  const variesTip = variants && `Corrected severity varies across reports — ${Object.entries(variants).map(([r, v]) => `${r || '(this report)'}: ${badgeLabel(v.severity)}`).join('; ')}`
+  const variesChip = variants ? html`<span class="badge-varies" data-tooltip=${variesTip} aria-label=${variesTip}>varies</span>` : nothing
 
-  if (!hasCorr) {
-    // Divergence only — this report's survivor carries no own-correction
-    // but a deduped sibling did. Show the plain primary + the varies hint.
-    return html`<span class=${`badge-pair badge-pair-${variant}`}>${primary}${variesChip}</span>`
-  }
+  // A deduped sibling's correction alone.
+  if (!hasCorr) return html`<span class=${`badge-pair badge-pair-${variant}`}>${primary}${variesChip}</span>`
 
   const original = displayedSeverity(f, 'original')
   const corrected = effectiveSeverity(f)
@@ -103,52 +75,19 @@ function severityBadge(f, { variant = 'full' } = {}) {
     return html`<span class="badge-pair badge-pair-tab" data-tooltip=${tip} aria-label=${aria}>${primary}<span class=${`badge-corr-mark ${dirWord}`} aria-hidden="true">${arrow}</span></span>`
   }
 
-  // The companion: the value NOT currently primary. In corrected mode
-  // that's the (struck) original; in original mode it's the corrected
-  // target (outlined, not struck — it isn't superseded in this view).
+  // The companion: the tier not shown, struck only as the original.
   const other = showingCorrected ? original : corrected
   return html`<span class=${`badge-pair badge-pair-${variant}`} data-tooltip=${tip} aria-label=${aria}>${primary}<span class="badge-orig-wrap"><span class=${`badge-arrow ${dirWord}`} aria-hidden="true">${arrow}</span>${showingCorrected ? html`<span class="badge-pre" aria-hidden="true">was</span>` : nothing}<span class=${`badge-orig ${other}${showingCorrected ? ' struck' : ''}`}>${badgeLabel(other)}</span></span>${variesChip}</span>`
 }
 
-// Render ONE run of prose with inline highlights for `[markdown](links)`,
-// `"quoted"` strings, `` `code` `` spans, and `**bold**` emphasis. The
-// quote / code pair match the prototype's `.summary q` / `.title em`
-// styling (`design/prototypes/DeepView.0.html`). A quote keeps its
-// marks — they're punctuation, and the sentence reads as the report
-// wrote it — but a code span DROPS its backticks: those are markdown
-// syntax for the chip the CSS already draws, so printing them inside
-// it says the same thing twice. (The chip carries its own padding
-// where the backticks used to sit — see `.inline-code`.) Bold spans
-// likewise render as real `<strong>` emphasis with the asterisks
-// dropped, so parser-emitted labels (parse-piolium's `**Impact:**` /
-// `**Root Cause:**`) and source-report emphasis read as emphasis
-// rather than literal markers. Unpaired asterisks stay literal.
-// `_emphasis_` is `<em>` the same way (a pull request's `_Generated by
-// …_` sign-off), between underscores that touch no word on the outside,
-// so snake_case stays as written. Inside, it passes only an underscore
-// within a word (the sign-off link's `session_…`), so the scan from one
-// opener ends before the next and a line of them stays linear. What
-// either wraps is inline text in its own right: `**`file.ts`:**` is a
-// bold code chip, and the sign-off's link stays a link.
-//
-// A `[label](url)` pair becomes a real link, opening in a new
-// tab like every other outbound link here: the claude-security
-// `## Evidence` list cites each site that way and parse-md.js carries
-// that whole section into the description, so these anchors are the
-// only path to the files it names beyond the first. Each href is the
-// report's own, so a row points at ITS file rather than at the
-// finding's; a target `markdownLinkToken` rejects (non-http,
-// malformed) stays plain text. Returns the raw string when nothing
-// matches so we don't churn out single-child arrays for the common
-// case of plain text.
-//
-// The link alternative leads the pattern so a label carrying quotes or
-// backticks is consumed as part of the link rather than chipped up
-// inside it.
-//
-// Fenced code never reaches here — renderHighlighted splits the blocks
-// out first — so a snippet's quotes and backticks stay the code they
-// are instead of being chipped up as markup.
+// One run of prose with its inline marks: `[label](url)` a link in a new
+// tab (one markdownLinkToken rejects stays text), `**bold**` and `_em_`
+// (between underscores touching no word outside, so snake_case stays;
+// inside, only an underscore within a word, so the scan stays linear), each
+// holding inline text of its own; `` `code` `` a chip without its backticks,
+// and a `"quote"` kept with its marks. The link leads the pattern so a label
+// holding quotes or backticks stays one link. Plain text comes back as the
+// string itself. Fenced code never reaches here (renderHighlighted).
 const INLINE_HL_RE = /\[[^\]\n]+\]\([^)\s]+\)|\*\*[^*\n]+\*\*|(?<![\p{L}\p{M}\p{N}_])_(?![\s_])(?:[^_\n]|(?<=[\p{L}\p{M}\p{N}])_(?=[\p{L}\p{M}\p{N}]))*?(?<!\s)_(?![\p{L}\p{M}\p{N}_])|"[^"\n]+"|`[^`\n]+`/gu
 function renderInline(text) {
   const parts = []
@@ -179,59 +118,26 @@ function renderInline(text) {
   return parts
 }
 
-// One fenced code block as a real `<pre>`. Everything about a snippet
-// that the prose treatment gets wrong is fixed here: the block keeps
-// its own line breaks and indentation, its long lines SCROLL instead
-// of folding (a wrapped line changes what the code says), and the
-// inline pass never sees it. The fence's language tag (```ts) rides in
-// as `data-lang` plus the small header above the code, so the block
-// says what it is — the same thing the tag is there to tell a reader.
+// One fenced code block as a `<pre>`, its lines scrolling rather than
+// folding, its language (```ts) its `data-lang` and header, and coloured
+// once prism answers (async: `highlightedCode` is null till then, and the
+// `codeBlockTick` read subscribes this card's autorun to it). Prism escapes
+// the source, so its HTML goes in via `appMarkup`.
 //
-// The tag also colours the block, for the languages
-// prism-highlight.js's allowlist names. Prism can only answer async
-// (its first call downloads the bundle), so the block paints plain on
-// the first pass and repaints coloured when the highlight settles:
-// `highlightedCode` returns null until then, and the `codeBlockTick`
-// read below is what subscribes this card's autorun to that settle.
-// Prism escapes the source, so its HTML goes in via `appMarkup`;
-// everything else — an unlisted language, an empty block, the first
-// pass — renders `code` as the text it is.
-//
-// The whole template is one line on purpose: `.desc` / `.section-body`
-// are `white-space: pre-wrap`, and in dev builds (which skip the
-// template minifier) an indented template's own newlines would print
-// as blank lines inside the block's chrome.
+// One line on purpose: `.desc` / `.section-body` are `pre-wrap`, and dev
+// builds skip the template minifier, so its own newlines would print.
 function codeBlockTemplate({ lang, code }) {
   void state.codeBlockTick
   const coloured = highlightedCode(code, lang)
   return html`<div class="code-block" data-lang=${lang || nothing}>${lang ? html`<div class="code-block-lang">${lang}</div>` : nothing}<pre><code>${coloured ? appMarkup(coloured) : code}</code></pre></div>`
 }
 
-// One run of prose, split at its blank lines into real paragraphs.
-//
-// The blank line a report writes between paragraphs used to render as
-// a literal empty line: the prose blocks are `white-space: pre-wrap`,
-// so the break came through as a full line of space — at these
-// line-heights that reads as a gap between SECTIONS, not between
-// paragraphs. And it can't be styled down, because an empty line is a
-// line box rather than an element: no selector reaches it. Real
-// elements can be spaced, so paragraphs become elements and the gap
-// becomes a margin (`.para`, half the line it replaces).
-//
-// A single-paragraph run — the common case — is returned as the bare
-// inline result, no wrapper. Runs of two or more blank lines collapse
-// to the one paragraph gap: the measure is the measure, however many
-// blank lines the report happened to leave in. Single newlines are
-// untouched, so the line breaks `flowText` deliberately kept (an
-// indented snippet, a table) still render through the pre-wrap.
-//
-// `wrap` keeps even a single paragraph in its element, for a body that
-// draws as several sibling blocks. A bare run is a TEXT NODE, which no
-// selector reaches: the gap between a lead-in line and the list under
-// it has to be a margin on something, and the something is this.
-//
-// A heading or a rule line (format.js lineBlockSegments) is a block of
-// its own between the paragraphs, however the blank lines fell around it.
+// One run of prose, split at its blank lines into `.para` elements: in a
+// `pre-wrap` block a blank line would print as a full line, which no
+// selector can space, where an element takes a margin. A single paragraph
+// comes back bare, unless `wrap` (a body of several sibling blocks, whose
+// gaps need an element to sit on). Single newlines stay, for pre-wrap; a
+// heading or rule line (format.js lineBlockSegments) is a block of its own.
 function proseTemplate(run, { wrap = false } = {}) {
   const paras = run.split(/\n{2,}/u).filter((p) => p.trim()).flatMap(lineBlockSegments)
   if (paras.length < 2 && typeof paras[0] !== 'object') {
@@ -240,34 +146,17 @@ function proseTemplate(run, { wrap = false } = {}) {
   return paras.map((p) => (typeof p === 'string' ? html`<div class="para">${renderInline(p)}</div>` : lineBlockTemplate(p)))
 }
 
-// A heading as an element that says so rather than as `<h2>`: the
-// surfaces this draws into have their own heading rules, and a
-// description's `##` is not their section.
+// A heading by its role, not `<h2>`: a description's `##` is not the
+// surface's own section.
 function lineBlockTemplate({ level, text, rule }) {
   return rule ? html`<hr class="md-rule">` : html`<div class="md-heading" role="heading" aria-level=${level}>${renderInline(text)}</div>`
 }
 
-// One markdown list as a real `<ol>` / `<ul>` (format.js listSegments
-// cut it out). Reproduction steps and affected-file rundowns used to
-// render as their own source text — the marker sitting in the prose,
-// every item flat against the left margin, a wrapped step running on
-// as if it were the next one. A list element gets the reader the
-// markers, the hanging indent, and the browser's own numbering.
-//
-// Each item's content is rendered by the pass that rendered the body
-// it came out of, which is what puts a nested list, a paragraph, or a
-// fenced snippet INSIDE its item. The recursion terminates because an
-// item is always shorter than the list it came from (its marker and
-// indentation are gone).
-//
-// `start` only when the list doesn't begin at 1: markdown numbers from
-// the first marker, so a rundown continuing at `10.` keeps its place.
-//
-// A task item (`- [x] Lint passes`, a pull request's test plan) shows
-// its box, ticked as the markdown says, where the bullet would be.
-//
-// `depth` is the blocks the list sits in (see markdownBody); its items'
-// content sits one deeper.
+// One markdown list (format.js listSegments) as an `<ol>` / `<ul>`, each
+// item's content rendered by markdownBody one `depth` deeper, so nested
+// lists and snippets land inside it (an item is always shorter than its
+// list, so this ends). `start` where it doesn't begin at 1; a task item
+// (`- [x] …`) shows its box where the bullet would be.
 const TASK_ITEM_RE = /^\[([ xX])\][ \t]+/u
 function listTemplate({ ordered, start, items }, depth) {
   const entries = items.map((item) => {
@@ -281,63 +170,34 @@ function listTemplate({ ordered, start, items }, depth) {
     : html`<ul class="md-list">${entries}</ul>`
 }
 
-// Render a description body: lists as lists, fenced code blocks as
-// blocks, everything between them as prose (see renderInline above for
-// the inline pass).
-//
-// Exported for the bundle views (render-bundle.js), whose finding
-// descriptions — source-viewer side panel, Issues tab rows, code-rail
-// issue results — get the same treatment. Those render in light DOM,
-// so report.css carries a copy of the .inline-* / .code-block /
-// .md-list rules that live in finding-card.css for this card's shadow
-// root (`<strong>` needs no rule — the UA styles it in both trees;
-// anchors take their accent color from theme.css in light DOM and from
-// finding-card.css in the shadow root).
-//
-// A body with no list, fence or quote in it takes the inline path
-// directly, so the common case costs three scans and nothing else.
-//
-// `paragraphs: false` renders a run as ONE flow, blank lines and all,
-// for the compact surfaces that want a finding's prose as a single
-// blob rather than a stack of paragraphs (see proseTemplate). Lists
-// stay out of that mode for the same reason paragraphs do: those
-// surfaces are a line or two of summary in a row or a side panel, and
-// a block element opening a list there would break the line they get.
-//
-// Quotes stay out of it too, a quote's block breaking that line as a
-// list's would (quoteTemplate below draws them everywhere else): their
-// `>`s, and an alert's `[!NOTE]` line, are shed and what they quote
-// stays in the flow as text (format.js unquotedText).
-//
-// CRLF line endings come in as `\n`, as in flowText, for the bodies that
-// reach here without it.
+// A description body: lists, fenced code and quotes as blocks, the prose
+// between them as paragraphs. Also drawn in light DOM by the bundle views
+// (render-bundle.js), so report.css copies finding-card.css's .inline-* /
+// .code-block / .md-list rules. `paragraphs: false` renders one inline flow,
+// for the compact surfaces a line or two of summary has: no paragraphs,
+// lists or quotes, a quote's `>`s and an alert's `[!NOTE]` shed
+// (format.js unquotedText). CRLF comes in as `\n`.
 export function renderHighlighted(raw, { paragraphs = true } = {}) {
   return markdownBody(raw, 0, { paragraphs, alerts: true })
 }
 
-// renderHighlighted's pass, which a list item's content and a quote's
-// come back through. `alerts` only at the top, where GitHub draws them
-// (format.js quoteSegments); `depth` is the quotes and list items the
-// body sits in, past NESTING_DEPTH of which a `>` or a `- ` stays the text
-// it was: a report's text is untrusted, and every level parses what it
-// holds again.
+// renderHighlighted's pass, which list items and quotes come back through.
+// `alerts` only at the top, where GitHub draws them; past NESTING_DEPTH
+// quotes and items (`depth`) a `>` or `- ` stays text: a report's text is
+// untrusted, and every level parses what it holds again.
 function markdownBody(raw, depth, { paragraphs = true, alerts = false } = {}) {
   if (!raw) return raw
   const crlf = raw.replaceAll('\r\n', '\n')
   const text = paragraphs ? crlf : unquotedText(crlf)
   const nests = paragraphs && depth < NESTING_DEPTH
   const blocks = nests ? listSegments(text) : [text]
-  // More than one block means the prose runs have LIST SIBLINGS, and
-  // the gap between them is a margin — which needs an element to sit
-  // on (see proseTemplate's `wrap`).
+  // Prose beside a list or a quote is wrapped, for a margin between them.
   const many = blocks.length > 1
   const flow = (run) => {
     const segments = codeBlockSegments(run)
     const parts = nests
       ? segments.flatMap((seg) => (typeof seg === 'string' ? quoteRuns(seg, alerts) : [seg]))
       : segments
-    // A quote is a block among the prose as a list is, its gap to the
-    // runs either side a margin too.
     const wrap = many || parts.some((part) => part.quote)
     const prose = (seg) => (paragraphs ? proseTemplate(seg, { wrap }) : renderInline(seg))
     if (parts.length === 1 && typeof parts[0] === 'string') return prose(parts[0])
@@ -348,12 +208,9 @@ function markdownBody(raw, depth, { paragraphs = true, alerts = false } = {}) {
   return blocks.map((b) => (typeof b === 'string' ? flow(b) : listTemplate(b, depth)))
 }
 
-// A run's quotes and the prose between them (format.js quoteSegments),
-// that prose without the newlines that put each quote on lines of its
-// own: the quote is a block with its own margins, and the run is
-// `pre-wrap`, where they'd print as blank lines either side (the same
-// reason codeBlockSegments drops them around a fence). A run of only
-// blank lines between two quotes is the gap that made them two.
+// A run's quotes and the prose between them (format.js quoteSegments), the
+// prose without the newlines around each quote, which `pre-wrap` would
+// print beside its margins; blank lines alone between two quotes dropped.
 function quoteRuns(run, alerts) {
   const segments = quoteSegments(run, { alerts })
   if (segments.length === 1) return segments
@@ -379,14 +236,9 @@ const ALERTS = {
   caution: ['Caution', ALERT_GLYPH(svg`<path d="M5.3 1.5h5.4l3.8 3.8v5.4l-3.8 3.8H5.3l-3.8-3.8V5.3Z"/><path d="M8 4.75v3.75M8 11.25v.01"/>`)],
 }
 
-// A `>` quote as a `<blockquote>`, and a GitHub alert as GitHub draws
-// one: a callout titled by its kind — Caution, Tip — whose bar and title
-// take the kind's colour (md-quote.css). What the quote says is a body
-// of its own, rendered by the same pass, so its paragraphs, lists,
-// fenced snippets and nested quotes all come out inside it.
-//
-// One line, as codeBlockTemplate's is: the prose around it is
-// `pre-wrap`, where a template's own newlines would print.
+// A `>` quote as a `<blockquote>`, a GitHub alert as GitHub draws one
+// (md-quote.css), its body rendered by the same pass. One line, as
+// codeBlockTemplate's is.
 function quoteTemplate({ alert, body }, depth) {
   const content = markdownBody(body, depth + 1)
   if (!alert) return html`<blockquote class="md-quote">${content}</blockquote>`
@@ -394,70 +246,21 @@ function quoteTemplate({ alert, body }, depth) {
   return html`<div class="md-alert md-alert-${alert}"><div class="md-alert-title">${icon}${title}</div>${content}</div>`
 }
 
-// The producer buckets behind a set of report names, first-seen order
-// and each one once — what decides how many stickers a duplicate
-// wears. Empty when the OPFS index hasn't placed the id yet, which is
-// how a duplicate with nowhere known to live ends up with no mark
-// rather than a guessed one.
-function distinctGroups(reports) {
-  const seen = new Set()
-  for (const r of reports) seen.add(groupOf(r))
-  return [...seen]
-}
-
-// That bucket in words, for the tooltip. Falls through to the bucket
-// key for anything PRODUCER_LABELS doesn't name — a report filed under
-// a marker added since, which should read as itself rather than blank.
-function producerLabel(reportName) {
-  const group = groupOf(reportName)
-  return PRODUCER_LABELS[group] ?? group
-}
-
-// "Duplicates:" — the findings a dropped links file says are THIS
-// finding, reported again somewhere else (client/linked-findings.js
-// for the file, `duplicatesOf` for the union across every links file
-// the user holds).
+// "Duplicates:" — the findings the links files the user holds say are this
+// one, reported elsewhere (`duplicatesOf`), between the report's account
+// and the reader's own comment and fix. Each a `#finding=…` link, as a
+// comment ref is, led by one brand sticker per producer of the reports
+// holding it (none where the index hasn't placed it yet), its tooltip the
+// full id and each report and producer by name.
 //
-// Under everything the REPORT said — the recommendation, the
-// revalidation, the severity correction — and above the reader's own
-// comment and fix, which are the last word on the card because they
-// are the reader's. In between is where "and it also appears over
-// here" belongs: a footnote to the report's account, and worth a click,
-// since the other copy may carry a different report's severity
-// correction, its own comment, or simply be the one your colleague
-// triaged.
-//
-// Each duplicate is a `#finding=…` anchor, the same in-place link a
-// comment ref uses (see `renderCommentText` above) — so following one
-// opens the report holding it, un-hides it, and rings it.
-//
-// Ahead of the id sits the brand sticker of whoever produced the
-// report the duplicate lives in — the same mark its sidebar row and
-// its report chip wear, so "the DeepSec copy" is one glance rather
-// than a hover. That is usually the point of a duplicate: the finding
-// is the same, the analyzer isn't, and which one said it is what
-// decides whether the other copy is worth opening. One mark per
-// distinct producer, so a duplicate carried by three reports from the
-// same tool shows one, not three.
-//
-// The tooltip spells the same thing out, since the sticker is a
-// picture and a picture reads to nobody who can't see it: the full id,
-// then each report by name with its producer in words. `data-tooltip`,
-// not `title` — the app has its own popup (view/tooltip.js), and the
-// card installs the shadow-scoped listener for it.
-//
-// Two ticks, both for the reason the "Code" button reads
-// `bundleHashTick`: `duplicatesOf` and `reportsForFindingId` are
-// plain module Maps this card's autorun can't see fill, and both
-// indexes fill in the background on every load — the links index
-// decides whether this row exists at all, the finding index what its
-// marks and names say.
+// The ticks subscribe the card's autorun to the links and finding indexes,
+// plain module Maps filling in the background on every load.
+const producerLabel = reportName => PRODUCER_LABELS[groupOf(reportName)] ?? groupOf(reportName)
 function duplicatesTemplate(f, tabIds) {
   void state.linksTick
   void state.findingIndexTick
   const id = tabKey(f)
-  // Already-visible row tabs are direct access to these findings.
-  // Keep only copies elsewhere (including members hidden by the tab lens).
+  // Only copies the row's own tabs don't already show.
   const ids = isLinkableFindingId(id) ? duplicatesOf(id).filter((other) => !tabIds.has(other)) : []
   if (ids.length === 0) return nothing
   return html`<div class="duplicates-block"><span class="duplicates-label">Duplicates:</span>${
@@ -474,29 +277,16 @@ function duplicatesTemplate(f, tabIds) {
         data-links-preview=${preview ? other : nothing} data-preview-report=${preview?.report ?? nothing}
         data-preview-row=${preview?.index ?? nothing} data-preview-managed-report=${preview?.managedReportId ?? nothing}
         data-tooltip=${`${displayId}${where}`}
-      >${distinctGroups(reports).map((g) => appMarkup(FILE_ICONS[g] ?? FILE_ICONS.default))}<span
+      >${[...new Set(reports.map(groupOf))].map((g) => appMarkup(FILE_ICONS[g] ?? FILE_ICONS.default))}<span
         class="duplicate-ref-id"
       >${shortFindingId(other) ?? displayId}</span></a>`
     })
   }</div>`
 }
 
-// The verdict stamp — `revalidate` itself (confirmed / refuted /
-// unknown), the one word that says which way the pass went.
-//
-// It rides the `.finding-left` rail rather than the verdict prose:
-// the rail is where this card states what the finding IS at a glance
-// (severity, confidence), which is the same question the stamp
-// answers, and inline it read as the first word of the verdict
-// sentence and left the following lines wrapping under it. Rail idiom
-// is value + caption, so it wears a `.value-label` like the two above
-// it — "REFUTED" alone under a confidence ring doesn't say refuted by
-// what.
-//
-// A row stamped `revalidation` gets nothing: that value names the pass
-// rather than a judgement on anything. A stamp shows whether or not
-// the row carries verdict PROSE — the one-word outcome stands on its
-// own, and a report is free to send it without the reasoning.
+// The revalidation stamp (confirmed / refuted / unknown) on the rail, with
+// its caption, as severity and confidence are; none for `revalidation`,
+// which names the pass rather than a verdict.
 function revalidateStampTemplate(f) {
   const stamp = revalidateStamp(f)
   if (!stamp) return nothing
@@ -504,44 +294,20 @@ function revalidateStampTemplate(f) {
     <div class="value-label">Revalidation</div>`
 }
 
-// The revalidation pass's reasoning, in the same muted italic under
-// the same dashed divider as the confidence rationale it sits below:
-// both are a remark ABOUT the finding rather than part of it, and a
-// second note that shouted would unbalance the pair. What the pass
-// concluded doesn't need weight here anyway — the one-word outcome is
-// up in the rail (revalidateStampTemplate above).
+// The revalidation pass's reasoning, under the confidence rationale, only
+// where its layer shows (format.js revalidationShown). One line, as every
+// `pre-wrap` block on this card is.
 function revalidateTemplate(f) {
-  // The pass's own words go with its layer (format.js
-  // revalidationShown): the card showing the code view must not still
-  // be explaining a re-rating that view doesn't apply.
   const verdict = revalidationShown() ? stripExportMarker(f.revalidateVerdict, f) : ''
   if (!verdict) return nothing
-  // One line, like every other `pre-wrap` block on this card: the
-  // template's own newlines would print as whitespace inside it.
   return html`<div class="revalidate-verdict">${renderHighlighted(flowText(verdict))}</div>`
 }
 
-// One labelled body section — a small-caps header over its text. Used
-// for every `**Label:**` paragraph the description carries (see
-// format.js descriptionSections) and for the finding's own
-// `recommendation` field, so a long section reads as its own block
-// rather than as one bold run the eye slides past. `cls` picks up the
-// per-section colouring (`.recommendation` is green).
-//
-// `collapsible` makes it a `<details>`, closed, with its header as the
-// `<summary>` — the same disclosure Evidence wears below, and for the
-// same reason. Reproduction and the two recommendations are what a
-// reader turns to AFTER deciding a finding is worth acting on: steps
-// to follow and a fix to weigh, each often longer than the finding
-// itself. Left open they push the next finding off the screen for
-// every reader still triaging. The native element carries the
-// keyboard and screen-reader behaviour and keeps the open state on
-// itself, so nothing here has to track it — and print forces them all
-// open (see the @media print block in finding-card.css), because paper
-// has no disclosure to click.
-//
-// A section with no body never collapses: a disclosure that opens onto
-// nothing is a trap, not a saving.
+// One labelled body section, a small-caps header over its text: each
+// `**Label:**` paragraph of the description (format.js descriptionSections)
+// and the finding's own fields; `cls` colours it. `collapsible` makes one
+// with a body a closed `<details>`, for what a reader turns to after
+// triage (print opens them, finding-card.css).
 function sectionTemplate(label, body, cls = 'section', { collapsible = false } = {}) {
   const inner = body ? html`<div class="section-body">${renderHighlighted(flowText(body))}</div>` : nothing
   if (!collapsible || !body) {
@@ -556,53 +322,16 @@ function sectionTemplate(label, body, cls = 'section', { collapsible = false } =
   </details>`
 }
 
-// The `## Evidence` list a claude-security import carries — one row per
-// cited site: a link to that site (its own URL from the report, or the
-// reconstruction for a row that named no link) plus the report's note
-// about it (`text` / `observation` — see evidenceNote). A real `<ol>`
-// rather than the body text's newlines, because a note is usually long
-// enough to wrap and only markup can keep the wrapped lines indented
-// under the reference instead of dropping them back to the margin.
-// Rows that named no line render the bare path.
-//
-// A `<details>`, closed: the list is a citation apparatus — where the
-// finding was seen, one line per site — and a reader opens a card for
-// the finding, not for its footnotes. Collapsed it costs one line and
-// says how many sites are under it; the disclosure is the native one,
-// so keyboard and screen readers get it for free and the open state
-// belongs to the element rather than to any state we have to carry.
-// Paper has no disclosure, so print forces it open (finding-card.css).
-// A row's reference, as a link into the CODE PANEL. Only the focus
-// view has a panel to load, and only a bundle can answer for the path
-// — everywhere else, and with no bundle attached, the reference is the
-// GitHub link it has always been.
-//
-// Presence follows the bundle's contents, exactly like the `</>` mark
-// beside it (bundleFilePath): a row the bundle carries is a link, a
-// row it doesn't is plain text. Which is the honest answer, and a
-// better one for the TEXT than the reconstruction it replaces — the
-// panel opens the file we are holding, so there is nothing to get
-// wrong about which revision of which repository it came from.
-//
-// The GitHub mark stays either way. What moves here is where the
-// reference itself takes you; going out to the repository is a
-// different errand, and the mark beside the row is how you still run
-// it.
+// In the focus view, an evidence row's reference as a link into the code
+// panel, where the attached bundle carries its file (as the `</>` mark
+// beside it), else plain text; the GitHub mark stays either way.
 function evidencePanelRef(bundle, row, label) {
   const file = bundle?.integrity && row?.file ? findingSourcePath(bundle, row.file) : null
   if (!file) return html`<span class="evidence-ref">${label}</span>`
-  // A span carrying `role="link"`, not a `<button>`: a button is
-  // inline-BLOCK and cannot be talked out of it — Chromium coerces
-  // `display: inline` straight back — so a path long enough to wrap
-  // made the button's box the whole line and pushed the `</>` beside
-  // it onto the next one. A span wraps as text does, and the marks
-  // stay on the last line of it where they belong.
-  //
-  // `role="link"` because that is what it does: it takes you to a
-  // place in the code, the same as the `<a>` the other views render,
-  // only the destination is the panel next to it rather than a URL.
-  // `tabindex` and the Enter handler in events.js are what a real
-  // anchor would have given for free.
+  // A span with `role="link"`, not a `<button>`: Chromium keeps a button
+  // inline-block, so a wrapping path pushed the marks beside it onto the
+  // next line. `tabindex` and events.js's Enter handler stand in for an
+  // anchor's.
   return html`<span
     class="evidence-ref"
     role="link"
@@ -613,24 +342,19 @@ function evidencePanelRef(bundle, row, label) {
   >${label}</span>`
 }
 
+// The `## Evidence` list, a closed `<details>` (print opens it): a row per
+// cited site, its link (the report's own URL, or one rebuilt, a
+// dependency's at the commit its bundle records) and the report's note,
+// in an `<ol>` so a wrapped note stays indented. Each row the attached
+// bundle carries gets a `</>`; in the focus view its reference opens the
+// code panel, the row it shows marked.
 function evidenceTemplate(f, context) {
   const rows = Array.isArray(f.evidence) ? f.evidence : []
   if (rows.length === 0) return nothing
   const repoFallback = findingRepoTarget(f)
-  // Every row cites a place in the code, so every row that the
-  // attached bundle can answer for gets a `</>` beside its link.
   const bundle = attachedBundle(f)
-  // …and in the focus view, where a code panel is on screen to load
-  // into, that same bundle decides where the REFERENCE goes. Only the
-  // reference: the GitHub mark after it is unaffected, and is what
-  // keeps the way out to the repository open.
   const toPanel = context === 'focus' && bundle !== null
-  // Which row the panel is showing, so the list can say so. Only
-  // meaningful with a panel open: everywhere else the rows point out
-  // of the app and none of them is "current".
   const shown = toPanel ? focusCodePosition(f) : null
-  // A row in a dependency nothing else links goes where the bundle
-  // records that package's repository, at its commit.
   const shipped = (row) => bundleDependencyRepo(f, row)
   return html`<details class="evidence">
     <summary class="section-label">Evidence<span class="evidence-count">(${rows.length})</span></summary>
@@ -662,20 +386,15 @@ function evidenceTemplate(f, context) {
   </details>`
 }
 
-// Combined `file:line` link for the table-view row's location cell —
-// the row has no file header above it (unlike the list / grouped
-// views) so file + line live together in one slot — and for the
-// card's `.line-row` location (tabBodyTemplate). Returns a
-// TemplateResult when we have a source URL, plain text otherwise.
+// A finding's `file:line`, linked where it has a source URL.
 function rowLocationTemplate(f, url) {
   const text = locationLabel(f)
   if (!url) return text
   return html`<a href=${url} target="_blank" rel="noopener">${text}</a>`
 }
 
-// Commit-hash link for the codex `commit_hash` reference. Short SHA
-// (first 7 chars) on display, full hash in the tooltip. Falls back to a
-// `<span>` (no link) when we don't have a repo to link against.
+// A `commit_hash` by its short SHA, the whole in its tooltip, linked where
+// the repository is known.
 function commitLinkTemplate(githubRepo, hash) {
   if (!hash) return nothing
   const short = hash.slice(0, 7)
@@ -684,27 +403,18 @@ function commitLinkTemplate(githubRepo, hash) {
   return html`<a href=${url} target="_blank" rel="noopener" data-tooltip=${hash}>${short}</a>`
 }
 
-// Speech-bubble glyph for the per-finding comment button. Outline
-// when there's no comment, filled when a comment exists — the
-// has-comment class flips `fill` via finding-card.css /
-// finding-row.css. Exported (like FLAG_ICON) for the kanban card's
-// compact comment shortcut in render.js.
+// The comment, fix-link and flag glyphs, outlined, filled by their
+// `has-*` / `flagged` classes (finding-card.css, finding-row.css); the
+// kanban card (render.js) and the toolbar filter use them too.
 export const COMMENT_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
   <path class="bubble" d="M2.5 3h11a.5.5 0 0 1 .5.5v6.5a.5.5 0 0 1-.5.5H8.4l-3 2.6V10.5H2.5a.5.5 0 0 1-.5-.5V3.5a.5.5 0 0 1 .5-.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
 </svg>`
 
-// Wrench glyph for the per-finding fix-link button. Same has-x /
-// outline-vs-fill pattern as the comment icon: empty button = no
-// fix recorded; filled accent = a URL is set. Exported (like
-// FLAG_ICON) for the kanban card's compact fix shortcut in render.js.
 export const FIX_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
   <path class="wrench" d="M10.4 2.6a3 3 0 0 0-3.6 4.5L2 12l2 2 4.9-4.8a3 3 0 0 0 4.5-3.6l-1.8 1.8-1.5-.4-.4-1.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
 </svg>`
 
-// Chain-link glyph for the `[link]` shortcut button — copies a
-// `#finding=…` deep link to this finding (see view/finding-link.js).
-// Same size + stroke weight as the copy / issue / claude icons so the
-// strip stays uniform.
+// The Link button's chain, sized as the strip's other icons.
 const LINK_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
   <g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
     <path d="M6.2 11.2H4.8a3.2 3.2 0 0 1 0-6.4h1.4"/>
@@ -713,11 +423,7 @@ const LINK_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidd
   </g>
 </svg>`
 
-// `</>` for the source-preview toggle beside a code link. It sits
-// INSIDE a line of text rather than in a row of buttons, so it reads
-// as a mark on that line and not as a control docked next to it — and
-// it says what it opens, which is the source, in the notation a reader
-// of code already knows.
+// `</>`, the source preview's toggle, a mark on the line it previews.
 const CODE_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
   <g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M4.4 4.6 1.3 8l3.1 3.4"/>
@@ -726,28 +432,10 @@ const CODE_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidd
   </g>
 </svg>`
 
-// GitHub mark, beside the `</>`. The location text is already a link;
-// this says WHERE it goes, which the text can't — `src/proxy.ts:42`
-// is the same string whichever repo it is in, and a card can carry
-// rows from several. The tooltip spells the target out.
+// The GitHub mark beside a location, saying where its link goes (the same
+// `src/a.ts:42` may be in any of a card's repositories), the target in the
+// shared tooltip (view/tooltip.js); none where the URL isn't a GitHub blob.
 const GITHUB_ICON = appMarkup(GITHUB_ICON_SVG)
-
-// Just the mark. The reference it spells out rides on `data-tooltip`
-// and is drawn by the shared tooltip (view/tooltip.js) — one fixed
-// element on `<body>`, anchored near the cursor and clamped to the
-// viewport.
-//
-// Which is what this needed all along. A tooltip of its own had to be
-// positioned against something, and every choice was wrong somewhere:
-// beside the mark ran off the end of the line, over the line was
-// longer than the path it replaced, under the mark landed where the
-// cursor was and vanished off the card whenever the mark wrapped to
-// the start of a line. None of that is this element's problem to
-// solve, and the app already had the answer its other views use.
-//
-// `nothing` when the URL isn't a GitHub blob — a report linking to
-// some other host, or to nothing at all. No mark, and the location
-// link stands as it always did.
 function githubRef(url) {
   const label = githubRefLabel(url)
   if (!label) return nothing
@@ -761,78 +449,37 @@ function githubRef(url) {
   >${GITHUB_ICON}</a>`
 }
 
-// ── Source preview ───────────────────────────────────────────────────
-// A finding's links to code point OUT — to GitHub, or to the bundle
-// viewer. When a bundle is attached we already hold the source, so the
-// `</>` beside each link opens the few lines around it in place:
-// enough to see whether a citation says what the prose claims, without
-// losing the prose to a tab switch.
-//
-// Offered per LINK, not per finding, so an evidence row citing another
-// file gets its own — resolved against the same bundle by path
-// (bundleFilePath, which answers synchronously off the hash index, so
-// deciding whether to draw a mark never costs a bundle parse). A path
-// the bundle doesn't carry simply gets no mark.
-//
-// Open state lives in `state.codePreviews` keyed by this, so it
-// survives the re-render each toggle triggers and several previews can
-// be open at once.
-//
-// Keyed by the SITE as well as the place, because the same place is
-// routinely cited twice on one card — an evidence row pointing at the
-// finding's own `file:line` is the normal shape of a report, not an
-// edge case. Keyed on the location alone, those two marks are one
-// control with two faces: clicking either opens both.
+// Source previews: with a bundle attached, the `</>` beside each link to
+// code opens the lines around it in place, a mark per link whose path the
+// bundle carries (bundleFilePath answers off the hash index, never a
+// parse). Open ones are kept in `state.codePreviews`, keyed by the site on
+// the card as well as the place: an evidence row citing the finding's own
+// `file:line` is usual, and must stay a control of its own.
 function codePreviewKey(f, site, path, range) {
   return `${tabKey(f)}\u0000${site}\u0000${path}\u0000${range ? `${range.start}-${range.end}` : ''}`
 }
 
-// Which mark the pointer is on, and the card that drew it.
-//
-// The hover snippet used to be rendered for EVERY mark whose file
-// happened to be loaded — the template can't know where the pointer
-// is, so it built one and let CSS reveal the right one. On a card
-// that is fine. On a list of two thousand it is thousands of
-// highlighted ten-line snippets in the DOM, all but one of them
-// hidden, and the cost lands the moment the first file loads rather
-// than when the list is built, so it reads as the list going bad on
-// its own.
-//
-// Deliberately NOT in `state`: a tracked read would put every card on
-// the page in the pointer's dependency set, and moving between two
-// marks would re-render all of them. A module variable plus a direct
-// `requestUpdate` on the one or two cards involved is the whole
-// mechanism.
+// The mark the pointer is on, and the card that drew it: its hover snippet
+// alone is built, not one per mark of a long list. Not in `state`, which
+// would make every card on the page depend on the pointer; the one or two
+// cards involved are asked to update instead.
 let hoveredPreview = { key: null, host: null }
 
 function hoverPreview(key, target) {
   if (hoveredPreview.key === key) return
   const previous = hoveredPreview.host
-  // `findingCardInnerTemplate` only ever renders inside
-  // `<finding-card>`'s shadow root, so the root's host is the card.
+  // The template renders only in `<finding-card>`'s shadow root.
   const host = key === null ? null : target?.getRootNode?.()?.host ?? null
   hoveredPreview = { key, host }
   previous?.requestUpdate?.()
   if (host !== previous) host?.requestUpdate?.()
 }
 
-// The lines themselves, once the bundle has loaded. Numbered from
-// wherever the window starts (format.js snippetWindow), with the cited
-// line marked — a snippet the reader can't place against the `file:42`
-// they opened it from is a snippet they have to trust.
-//
-// Highlighting goes through code-highlight.js, the same cache the
-// description's fenced blocks use: it takes the file's extension as
-// the language tag, keys by content, and re-renders once prism
-// settles. Highlighting the WINDOW rather than slicing the whole
-// file's HTML — tags span lines, so there is no safe cut.
+// The lines themselves (format.js snippetWindow), numbered, every cited
+// line marked, the window highlighted by its extension (code-highlight.js:
+// tags span lines, so the whole file's HTML can't be cut). The caller reads
+// `focusCodeTick` for the bundle; `codeBlockTick` here is prism's settle.
 function codeSnippetTemplate(content, range, path) {
-  // Two ticks, because two caches settle behind this: focus-code.js
-  // bumps `focusCodeTick` when the BUNDLE lands (read by the caller,
-  // which needs it before there is any content), and code-highlight.js
-  // bumps `codeBlockTick` when PRISM does. Both have to reach this
-  // card's autorun or the snippet paints as plain text and stays that
-  // way until something else re-renders it.
   void state.codeBlockTick
   const { text, lines, startLine } = snippetWindow(content, range)
   if (lines.length === 0) return nothing
@@ -842,8 +489,6 @@ function codeSnippetTemplate(content, range, path) {
   return html`<div class="code-preview" style=${styleMap({ '--lineno-width': `${String(lastNo).length}ch` })}>
     <aside class="code-preview-gutter" aria-hidden="true">${lines.map((_, i) => {
       const ln = startLine + i
-      // Every line of the range, not just the one it opens on — a span
-      // shown with only its first line marked hides what was cited.
       const cited = Boolean(range) && ln >= range.start && ln <= range.end
       return html`<div class=${classMap({ 'code-preview-lineno': true, cited })}>${ln}</div>`
     })}</aside>
@@ -851,74 +496,46 @@ function codeSnippetTemplate(content, range, path) {
   </div>`
 }
 
-// The mark and the snippet it opens, as two templates rather than one:
-// the finding's own link lives in a flex `.line-row`, where the
-// snippet has to land BELOW the row rather than beside its parts,
-// while an evidence row can carry both inside its `<li>`. Callers
-// place each where it belongs.
-//
-// `null` when there is no bundle, or none of it answers to this path —
-// the link then stands alone, exactly as it did before. `bundle` is
-// the finding's attached bundle; `path` is where the link points, in
-// the report's own terms; `site` says WHICH link on the card this is,
-// so two pointing at the same place stay two controls.
+// A link's `</>` mark (`mark`), its hover snippet (`tip`) and the snippet
+// it opens (`body`), apart for callers to place: the finding's own link is
+// in a flex `.line-row` the snippet must land below. `site` names the link
+// on the card; null where the bundle carries no file at `path`.
 function codePreview(f, site, bundle, path, line) {
-  // BEFORE the guards, because the guards are what this read is for:
-  // both the caller's `attachedBundle` and the lookup below answer off
-  // a plain module Map, which this card's autorun cannot see fill in.
-  // On a reload the index starts empty and the stored report paints
-  // straight away, so the first pass asks too early, gets nothing, and
-  // draws no marks — and a read placed after `return null` would never
-  // subscribe the card to hearing otherwise. Same tick and the same
-  // reason as the `Code →` branch below.
+  // Before the guards: the index they answer off is a plain module Map,
+  // empty as a stored report first paints, and this read is what subscribes
+  // the card to its filling.
   void state.bundleHashTick
   if (!bundle || !path) return null
   const file = findingSourcePath(bundle, path)
   if (!file) return null
-  // `line` arrives as the report wrote it, which may be a span
-  // (`20-30`); the preview shows all of it (format.js lineRange).
+  // A span (`20-30`) shows whole (format.js lineRange).
   const range = lineRange(line)
   const key = codePreviewKey(f, site, path, range)
   const open = state.codePreviews.has(key)
-  // Unconditional, not just while a preview is open: the tick is what
-  // subscribes this card's autorun to the loader's settle events, and
-  // a HOVER can start a load too (below). Without the read, the card
-  // that kicked one would never re-render to show what arrived.
+  // Always: a hover starts a load too, whose settle must reach this card.
   void state.focusCodeTick
+  const enter = (e) => { hoverPreview(key, e.currentTarget); bundleSource(bundle.integrity, file, { reportId: bundle.reportId }) }
+  const leave = (e) => { if (hoveredPreview.key === key) hoverPreview(null, e.currentTarget) }
   const mark = html`<button
     type="button"
     class=${classMap({ 'code-preview-btn': true, open })}
     data-code-preview=${key}
     aria-expanded=${String(open)}
     aria-label=${open ? `Hide the source at ${path}` : `Show the source at ${path}`}
-    @mouseenter=${(e) => { hoverPreview(key, e.currentTarget); bundleSource(bundle.integrity, file, { reportId: bundle.reportId }) }}
-    @mouseleave=${(e) => { if (hoveredPreview.key === key) hoverPreview(null, e.currentTarget) }}
-    @focus=${(e) => { hoverPreview(key, e.currentTarget); bundleSource(bundle.integrity, file, { reportId: bundle.reportId }) }}
-    @blur=${(e) => { if (hoveredPreview.key === key) hoverPreview(null, e.currentTarget) }}
+    @mouseenter=${enter}
+    @mouseleave=${leave}
+    @focus=${enter}
+    @blur=${leave}
   >${CODE_ICON}</button>`
   if (open) {
     const source = bundleSource(bundle.integrity, file, { reportId: bundle.reportId })
     const body = !source || source.loading
       ? html`<div class="code-preview code-preview-pending">${source ? 'Loading source…' : 'Source unavailable'}</div>`
       : codeSnippetTemplate(source.content, range, file)
-    // No tooltip while the preview is open — it would say the same
-    // thing twice, over the copy the reader asked to keep.
     return { mark, tip: nothing, body }
   }
-  // The hover tooltip: the same snippet, shown while the pointer is on
-  // the mark, for a look that doesn't cost a click and doesn't push the
-  // prose around.
-  //
-  // Built for THIS mark only while it is the one being pointed at
-  // (hoverPreview above) — one snippet in the document rather than one
-  // per mark on the page. The handlers on the button re-render this
-  // card when the pointer arrives and again when it leaves, so the
-  // snippet is in the DOM within a frame of the pointer landing.
-  //
-  // Read from what is ALREADY loaded — `kick: false` — so arriving on
-  // a mark shows what we have and asks for the rest; the POINTER does
-  // the kicking (`mouseenter` above) and the settle comes back through
-  // the tick.
+  // The hover tooltip, for the mark pointed at alone, from what is already
+  // loaded (`kick: false`): the pointer's `enter` asks for the rest.
   if (hoveredPreview.key !== key) return { mark, tip: nothing, body: nothing }
   const peek = bundleSource(bundle.integrity, file, { kick: false, reportId: bundle.reportId })
   const tip = peek && !peek.loading
@@ -927,37 +544,21 @@ function codePreview(f, site, bundle, path, line) {
   return { mark, tip, body: nothing }
 }
 
-// Claude mark for the `[hand off to Claude Code]` shortcut button.
-// Reuse the report sticker's mark at the existing action-icon size.
+// The Claude hand-off's mark (the report sticker's) and the issue's ring,
+// sized as the strip's other icons.
 const CLAUDE_ICON = html`<svg viewBox="4 5 8 8" width="11" height="11" fill="currentColor" aria-hidden="true">
   <path d="${CLAUDE_MARK_PATH}"/>
 </svg>`
-
-// GitHub "issue opened" glyph (circle + center dot) for the `[github
-// issue]` shortcut link. Same size + stroke weight as the other action
-// icons so the strip stays uniform.
 const ISSUE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
   <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.2"/>
   <circle cx="8" cy="8" r="1.7" fill="currentColor"/>
 </svg>`
-
-// Pennant flag for the per-finding attention flag (the comment/fix
-// action group, the kanban card indicator, and the toolbar filter). A
-// pole-less vertical pennant (swallowtail at the bottom) that fills the
-// icon height; outline by default, the `.flagged` button fills the cloth
-// + turns accent via CSS. Exported so the kanban card (render.js) and
-// the toolbar `<annotation-filter>` reuse the identical glyph.
 export const FLAG_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
   <path class="flag-cloth" d="M5 1.5h6v13l-3-2.7-3 2.7z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
 </svg>`
 
-// Attention-flag toggle — sits in the comment/fix action group of the
-// finding card/row (and gains a text label in the focus view, like its
-// siblings). Tri-state under the hood (see TriageEntry.flagged): the
-// events.js click handler walks unset/false → true → false, writing the
-// explicit `false` tombstone on un-flag (never undefined) so the removal
-// syncs. Keyed to the active tab's `key`, mirroring the per-tab color /
-// comment / fix marks beside it.
+// The attention flag's toggle, for the active tab (events.js walks unset →
+// true → false, `false` the tombstone that syncs a removal).
 function flagButtonTemplate(f, isFocus = false) {
   const flagged = triageEntry(f)?.flagged === true
   const title = flagged ? 'Remove flag' : 'Flag this finding'
@@ -971,34 +572,22 @@ function flagButtonTemplate(f, isFocus = false) {
   >${FLAG_ICON}${isFocus ? html`<span class="mark-btn-label">${flagged ? 'Flagged' : 'Flag'}</span>` : nothing}</button>`
 }
 
-// Issue title — the finding's title (the same one the table view
-// shows), capped so the pre-filled `?title=` stays a sane length;
-// falls back to the file path, then a generic label.
+// An issue's title: the finding's, else its file, capped for `?title=`.
 function issueTitle(f) {
   const base = findingTitle(f) || f.file || 'Security finding'
   return base.length > 120 ? `${base.slice(0, 119)}…` : base
 }
 
-// What an issue draft (issue-draft.js) takes from the view: the source
-// and Evidence links the card's links resolve to, and whether the
-// revalidation layer shows. Both ways of opening an issue build their
-// body from it, so an issue reads the same either way.
+// What an issue draft (issue-draft.js) takes from the view, the same for
+// both ways of opening one: the card's source and Evidence links, and
+// whether the revalidation layer shows.
 export function issueDraftOptions(f) {
   const repoFallback = findingRepoTarget(f)
   const shipped = (row) => bundleDependencyRepo(f, row)
   return { sourceUrl: findingUrl(f, repoFallback), evidence: evidenceMarkdown(f, { repoFallback, shipped }), showRevalidation: revalidationShown() }
 }
 
-// Issue body — the finding detail for the pre-filled `?body=`, every
-// section in, as the managed dialog creates it through the API.
-function issueBody(f) {
-  return createIssueDraft(f, { ...issueDraftOptions(f), allSections: true }).body
-}
-
-// Workspace-merged views show which report a finding came from.
-// The chip reuses the Links report button and opens the active finding
-// in its original report. It lives at the start of the action row. Single-file
-// loads omit it (the title bar already shows the filename).
+// A workspace's chip naming the report a finding came from, opening it there.
 function reportChipTemplate(finding) {
   if (!state.currentWorkspace) return nothing
   const reportName = finding._reportName
@@ -1016,18 +605,12 @@ function reportChipTemplate(finding) {
   >${label}</button>`
 }
 
-// Action buttons — workspace-only report chip + comment / fix /
-// copy / claude buttons + `<color-marker>` (the 4-dot color picker)
-// + triage menu. The dots live in their own component (see
-// view/color-marker.js) so finding-row / finding-card don't carry
-// duplicate `.mark-dot` styling. A dot click bubbles as a composed
-// `mark-color` event `{ detail: { color } }`; events.js's delegate
-// on `report` resolves the gid via the same `[data-gid]` walk used
-// for the other buttons.
+// The action row: a workspace's report chip, comment / fix / flag, copy /
+// link / issue / Claude (handlers in events.js, by the `[data-gid]` walk),
+// the `<color-marker>` dots (a composed `mark-color` event) and the triage
+// menu.
 function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = null) {
-  // Table rows stay compact; the report is already represented by the
-  // workspace's surrounding row context, so reserve the chip for the
-  // larger card/details surfaces.
+  // Not on a table row, whose workspace row says the report already.
   const reportChip = context === 'table' ? nothing : reportChipTemplate(activeTab)
   const activeEntry = triageEntry(activeTab)
   // Comments open the managed discussion, which reading alone allows; the
@@ -1039,65 +622,41 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const activeFix = activeEntry?.fix ?? ''
   const commentTitle = isManagedUiMode() ? 'View comments' : activeComment ? `Edit comment: ${activeComment}` : 'Add comment'
   const fixTitle = activeFix ? `Edit fix link: ${activeFix}` : 'Add fix link (PR URL, etc.)'
-  // Keep actions compact when the report chip shares their row.
+  // Labelled in the focus view, unless the report chip shares the row.
   const showActionLabels = context === 'focus' && reportChip === nothing
+  const label = text => showActionLabels ? html`<span class="mark-btn-label">${text}</span>` : nothing
   const commentLabel = isManagedUiMode() ? 'Comments' : activeComment ? 'Edit comment' : 'Comment'
   const fixLabel = activeFix ? 'Edit fix link' : 'Fix link'
-  const commentBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} data-tooltip=${activeComment && !isManagedUiMode() ? commentTitle : nothing} aria-label=${commentTitle}>${COMMENT_ICON}${showActionLabels ? html`<span class="mark-btn-label">${commentLabel}</span>` : nothing}</button>`
-  const fixBtn = html`<button type="button" ?disabled=${readOnly} class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} data-tooltip=${activeFix ? fixTitle : nothing} aria-label=${fixTitle}>${FIX_ICON}${showActionLabels ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
-  // Attention flag — third chip in the comment/fix group.
+  const commentBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} data-tooltip=${activeComment && !isManagedUiMode() ? commentTitle : nothing} aria-label=${commentTitle}>${COMMENT_ICON}${label(commentLabel)}</button>`
+  const fixBtn = html`<button type="button" ?disabled=${readOnly} class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} data-tooltip=${activeFix ? fixTitle : nothing} aria-label=${fixTitle}>${FIX_ICON}${label(fixLabel)}</button>`
   const flagBtn = flagButtonTemplate(activeTab, showActionLabels)
-  // Copy button — writes a labeled `File / Line / Description /
-  // Confidence` block for the active tab to the clipboard (handler
-  // in events.js, active tab resolved via the same gid lookup).
-  const copyBtn = html`<button type="button" class="mark-copy" aria-label="Copy finding details to clipboard">${COPY_ICON}${showActionLabels ? html`<span class="mark-btn-label">Copy</span>` : nothing}</button>`
-  // Link button — copies a `#finding=<id>` URL that reopens the app on
-  // THIS finding (handler in events.js; resolution in
-  // view/finding-link.js). Suppressed for a session-local numeric id:
-  // those are handed out by an in-memory counter and re-assigned on the
-  // next load. Managed reports also wait for a server-aware link resolver.
-  // Sits next to Copy, the other "take this with you" action.
+  const copyBtn = html`<button type="button" class="mark-copy" aria-label="Copy finding details to clipboard">${COPY_ICON}${label('Copy')}</button>`
+  // None for a session-local id, which the next load hands out again.
   const linkBtn = findingLinkFor(activeTab)
-    ? html`<button type="button" class="mark-link" aria-label="Copy a link to this finding">${LINK_ICON}${showActionLabels ? html`<span class="mark-btn-label">Link</span>` : nothing}</button>`
+    ? html`<button type="button" class="mark-link" aria-label="Copy a link to this finding">${LINK_ICON}${label('Link')}</button>`
     : nothing
-  // GitHub-issue action — managed users must check for an existing
-  // issue or reservation before reaching creation. Use a button so
-  // modified clicks and native new-tab actions cannot bypass that check.
-  // Other modes keep a plain anchor to GitHub's pre-filled form, with the finding
-  // detail (file:line linked to source, description, confidence) as the
-  // body. Only rendered when the finding resolves to a github.com repo
-  // (issues live on github.com; githubIssueUrl returns null for a
-  // gitlab / self-hosted / unknown base), so non-GitHub findings show
-  // the group without it. Third in the handoff group:
-  // copy | link | issue | claude.
-  // Match the server's finding/report target; local package-index inference
-  // is not authoritative for creating a permanent managed issue reference.
+  // An issue on GitHub, for a finding of a github.com repository: managed,
+  // a button, so no modified click skips the check for an existing issue or
+  // reservation, the dialog drafting the body; else a link to GitHub's
+  // pre-filled form. Managed, the server's finding/report target names the
+  // repository, not the local package index.
   const findingRepoId = isManagedUiMode()
     ? reportRepoGithub({ repo: { github: (ignoresOwnRepo(activeTab, activeTab._repoFallback) ? '' : activeTab.repo?.github) || activeTab._repoFallback } })
     : findingRepo(activeTab)
   const managedIssue = isManagedUiMode() && state.managedSession && !state.managedSession.publicShare && state.currentManagedTeam
-  // No button once the finding has its issue. The managed dialog drafts
-  // the body from the finding itself, so its form URL carries none.
+  // None once the finding has its issue.
   const issueHref = managedIssueFor(activeTab) ? null : githubIssueUrl(findingRepoId, { title: issueTitle(activeTab),
-    body: managedIssue ? '' : issueBody(activeTab), labels: newIssueLabels(activeTab.isSecurity === true, state.githubNewIssueLabels) })
-  const issueContent = html`${ISSUE_ICON}${showActionLabels ? html`<span class="mark-btn-label">Issue</span>` : nothing}`
+    body: managedIssue ? '' : createIssueDraft(activeTab, { ...issueDraftOptions(activeTab), allSections: true }).body,
+    labels: newIssueLabels(activeTab.isSecurity === true, state.githubNewIssueLabels) })
+  const issueContent = html`${ISSUE_ICON}${label('Issue')}`
   const issueBtn = issueHref
     ? managedIssue
       ? html`<button type="button" class="mark-issue" data-issue-form=${issueHref} data-tooltip=${showActionLabels ? nothing : 'Create a GitHub issue for this finding'} aria-label="Create a GitHub issue for this finding">${issueContent}</button>`
       : html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" data-tooltip=${showActionLabels ? nothing : 'Create a GitHub issue for this finding'} aria-label="Create a GitHub issue for this finding">${issueContent}</a>`
     : nothing
-  // Claude button — hands off the same finding block the copy
-  // button writes (prefixed with "Confirm and fix:") to Claude Code
-  // via the `claude://code/new?q=…` URL scheme.
-  const claudeBtn = html`<button type="button" class="mark-claude" data-tooltip=${showActionLabels ? nothing : 'Open in Claude Code (claude://) with a confirm-and-fix prompt'} aria-label="Open finding in Claude Code">${CLAUDE_ICON}${showActionLabels ? html`<span class="mark-btn-label">Claude</span>` : nothing}</button>`
+  // Hands the copy button's block, as "Confirm and fix:", to claude://.
+  const claudeBtn = html`<button type="button" class="mark-claude" data-tooltip=${showActionLabels ? nothing : 'Open in Claude Code (claude://) with a confirm-and-fix prompt'} aria-label="Open finding in Claude Code">${CLAUDE_ICON}${label('Claude')}</button>`
   const picker = html`<color-marker .selected=${activeColor} .disabled=${readOnly}></color-marker>`
-  // Triage menu — chevron button that opens a small popover with
-  // Fixed / Invalid / Delete actions. In any triage view (Fixed /
-  // Invalid / Deleted), the button's label switches to the current
-  // bucket name (e.g. "Deleted ▾") and the menu prepends a Restore
-  // option, so the user can flip a deleted finding to fixed without
-  // first restoring + re-triaging. In the live view the button is
-  // a chevron-only chip.
   // Conflict groups scope the action to the active tab.
   const mixedLevels = triageTabs(group) !== group
   const menuTitle = group.linkedTabs
@@ -1110,27 +669,10 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   return html`<div class="finding-actions">${reportChip}<div class="finding-action-controls"><span class="mark-action-group">${commentBtn}${fixBtn}${flagBtn}</span><span class="mark-action-group">${copyBtn}${linkBtn}${issueBtn}${claudeBtn}</span>${picker}${triageMenuTemplate(group, menuTitle, context, groupSt, activeTab)}</div></div>`
 }
 
-// Triage menu — chevron button toggling a popover with the Fixed /
-// Invalid / Delete actions (and a Restore entry in a non-live
-// triage view).
-//
-// Uses the native `popover="auto"` attribute, which lifts the menu
-// into the top layer so it escapes any `overflow: hidden` parents
-// (`.flat-group`, `.findings-table`) that would clip a dropdown
-// next to a row's right edge or the last row in a list. The browser
-// handles open/close (toggle via `popovertarget`, dismiss on
-// outside click / Escape); position comes from `positionTriagePopover`
-// below. The popover's data-gid (unique id derived from the group's
-// gid) lets the action handler resolve the target group once the
-// menu has moved to the top layer, out of the row's DOM scope.
-// Position a triage popover under its trigger button. `beforetoggle`
-// doesn't bubble, so this is bound directly on the popover via
-// Lit's `@beforetoggle=` rather than a document-level delegate.
-// Right-aligns the menu's right edge to the button's, dropping
-// below by default; flips above when the viewport's bottom would
-// clip. Reads from the popover's getRootNode() so the lookup
-// works inside whichever shadow root drew the menu (`<finding-row>`
-// or `<finding-card>`).
+// A triage popover placed under its button, right edges aligned, above it
+// where the viewport's bottom would clip. Bound on the popover itself, as
+// `beforetoggle` doesn't bubble; its button found in whichever shadow root
+// drew it.
 function positionTriagePopover(e) {
   if (e.newState !== 'open') return
   const popover = e.currentTarget
@@ -1138,9 +680,7 @@ function positionTriagePopover(e) {
   const btn = root.querySelector?.(`[popovertarget="${popover.id}"]`)
   if (!btn) return
   const btnRect = btn.getBoundingClientRect()
-  // offsetWidth / offsetHeight are 0 when the popover is still
-  // display:none (beforetoggle fires before the open paint), so
-  // fall back to typical menu dimensions for the first measurement.
+  // Still display:none before the open paint: a typical menu's size.
   const menuW = popover.offsetWidth || 110
   const menuH = popover.offsetHeight || 100
   const gap = 4
@@ -1155,88 +695,51 @@ function positionTriagePopover(e) {
   popover.style.left = `${left}px`
 }
 
-// `groupSt` / `activeTab` arrive precomputed from actionButtonsTemplate
-// (which got them from the row / card template) so a single row render
-// resolves them once rather than once per nested helper.
+const TRIAGE_STATES = { inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid', deleted: 'Deleted', ignored: 'Ignored' }
+const TRIAGE_ACTIONS = { inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid', deleted: 'Delete', ignored: 'Ignore' }
+
+// The triage menu: a chevron toggling a native `popover="auto"`, in the top
+// layer so no `overflow: hidden` row clips it, its `data-gid` naming the
+// group for the action handler once it has left the row's DOM. In a triage
+// view the button names the bucket shown, and the dropdown leads with
+// Restore in place of that bucket; the focus view's chips mark the current
+// one instead, a click toggling it off. `current` is what `scopedTriage`
+// says, as triageActionPlan decides set-vs-clear by.
 function triageMenuTemplate(group, title, context, groupSt, activeTab) {
   const gid = groupKey(group)
   const disabled = !canEditTriage(activeTab) || triageScope(group, groupSt).length === 0
-  // What the scope currently shows — the active tab's bucket on a
-  // conflicted group, the rollup's otherwise. `scopedTriage` is the
-  // one definition `triageActionPlan` also decides set-vs-clear from,
-  // so the item marked active here is exactly the one a click
-  // switches off.
   const current = disabled ? null : scopedTriage(group, groupSt, activeTab)
-  const STATE_LABELS = { inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid', deleted: 'Deleted', ignored: 'Ignored' }
-  const ACTION_LABELS = { inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid', deleted: 'Delete', ignored: 'Ignore' }
-  const inTriageView = Boolean(state.shownTriage)
-  const buttonLabel = inTriageView ? STATE_LABELS[state.shownTriage] : null
-  // Action order: triage states first (In progress / Fixed / Invalid
-  // / Delete), then Ignore.
-  //
-  // Focus-view variant shows all five states as toggleable chips
-  // with the active one marked `.active` (pressed); clicking it
-  // toggles off (the duplicate-click semantic events.js already
-  // implements), so no separate "Restore" entry is needed.
-  //
-  // List-view variant (the dropdown) prepends Restore in a triage
-  // view and excludes the current state — as a popover menu, showing
-  // the active bucket without a "press" affordance would confuse.
-  const ALL_ACTIONS = ['inprogress', 'fixed', 'invalid', 'deleted', 'ignored']
-  const isFocus = context === 'focus'
-  const actions = inTriageView && !isFocus
-    ? [
-      { key: 'restore', label: 'Restore' },
-      ...ALL_ACTIONS
-        .filter((s) => s !== state.shownTriage)
-        .map((s) => ({ key: s, label: ACTION_LABELS[s] })),
-    ]
-    : ALL_ACTIONS.map((s) => ({ key: s, label: ACTION_LABELS[s] }))
-  const btnClasses = ['mark-triage-menu']
-  if (inTriageView) btnClasses.push('with-label', `triage-state-${state.shownTriage}`)
-  // Stable popover id derived from gid — escape so
-  // `f.id`/`String(f._id)` shapes that include `.` / `:` produce a
-  // valid CSS-selectable id.
+  const shown = state.shownTriage
+  const listed = Object.entries(TRIAGE_ACTIONS)
+  const actions = shown && context !== 'focus' ? [['restore', 'Restore'], ...listed.filter(([key]) => key !== shown)] : listed
+  // A gid's `.` / `:` escaped, for a selectable id.
   const popId = `triage-menu-${gid.replaceAll(/[^A-Za-z0-9_-]/gu, '_')}`
   return html`<div class="triage-menu-wrap">
-    <button type="button" class=${btnClasses.join(' ')} popovertarget=${popId} popovertargetaction="toggle" aria-label=${title} ?disabled=${disabled}>
-      ${buttonLabel ? html`<span class="mark-triage-label">${buttonLabel}</span>` : nothing}
+    <button type="button" class=${shown ? `mark-triage-menu with-label triage-state-${shown}` : 'mark-triage-menu'} popovertarget=${popId} popovertargetaction="toggle" aria-label=${title} ?disabled=${disabled}>
+      ${shown && TRIAGE_STATES[shown] ? html`<span class="mark-triage-label">${TRIAGE_STATES[shown]}</span>` : nothing}
       <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">
         <path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </button>
     <div popover="auto" id=${popId} class="triage-menu" data-gid=${gid} role="menu" @beforetoggle=${positionTriagePopover}>
-      ${actions.map((a) => html`<button
+      ${actions.map(([key, label]) => html`<button
         type="button"
-        class=${classMap({ 'triage-menu-item': true, [`triage-menu-${a.key}`]: true, active: current === a.key })}
-        data-triage-action=${a.key}
+        class=${classMap({ 'triage-menu-item': true, [`triage-menu-${key}`]: true, active: current === key })}
+        data-triage-action=${key}
         ?disabled=${disabled}
         role="menuitem"
-      >${a.label}</button>`)}
+      >${label}</button>`)}
     </div>
   </div>`
 }
 
-// Read-only annotation marks for a group tab — the speech-bubble /
-// wrench / pennant glyphs (shared with the action row) shown at the
-// trailing edge of the tab (after the severity badge + confidence) when
-// that tab's finding carries a comment, fix link, and/or attention flag.
-// Lets triage annotations read off the collapsed tab strip without
-// activating each sibling. Inert <span>s (the tab is the button); always
-// in the filled/accent state since they only render when the annotation
-// is present. `nothing` when the tab is unannotated.
+// A tab's comment, fix and flag, as inert marks at its end, where it has
+// them.
 function tabMarksTemplate(entry, finding) {
-  const hasComment = Boolean(entry?.comment)
-  const hasFix = Boolean(entry?.fix || automaticFixFor(finding))
-  const flagged = entry?.flagged === true
-  if (!hasComment && !hasFix && !flagged) return nothing
-  return html`<span class="tab-marks">${
-    hasComment ? html`<span class="has-comment" role="img" aria-label="Has a comment">${COMMENT_ICON}</span>` : nothing
-  }${
-    hasFix ? html`<span class="has-fix" role="img" aria-label="Has a fix link">${FIX_ICON}</span>` : nothing
-  }${
-    flagged ? html`<span class="flagged" role="img" aria-label="Flagged">${FLAG_ICON}</span>` : nothing
-  }</span>`
+  const marks = [[entry?.comment, 'has-comment', 'Has a comment', COMMENT_ICON], [entry?.fix || automaticFixFor(finding), 'has-fix', 'Has a fix link', FIX_ICON],
+    [entry?.flagged === true, 'flagged', 'Flagged', FLAG_ICON]].filter(([shown]) => shown)
+  if (marks.length === 0) return nothing
+  return html`<span class="tab-marks">${marks.map(([, cls, label, glyph]) => html`<span class=${cls} role="img" aria-label=${label}>${glyph}</span>`)}</span>`
 }
 
 function tabsTemplate(tabs, activeKey, groupSt) {
@@ -1249,25 +752,12 @@ function tabsTemplate(tabs, activeKey, groupSt) {
   </div>`
 }
 
-
-// One tab button. Carries severity badge + analyzer mark (or DeepView confidence) +
-// annotation marks (comment / fix / flag, when present), plus the
-// per-tab color class and — when it still says something the group
-// doesn't — the per-tab state class behind that state's glyph (`◐` /
-// `✓` / `⊘` / `👁` / a struck-through label).
-//
-// A tab's state is worth showing exactly when the GROUP can't show it.
-// `commonTriage` is the group's own state, and it is null precisely
-// when the card has nothing to display: the tabs' buckets disagree, or
-// a color conflict has suppressed the rollup. With a common state the
-// card already says "in progress" / "fixed" / "deleted", so repeating
-// it once per tab reads as a per-tab annotation the user never made.
-//
-// Ignore is the exception, and `allIgnored` (not `commonTriage`) gates
-// it: the rollup calls a group ignored off one annotated tab, but
-// `syncGroupTriage` deliberately never levels a per-report ignore, so
-// the tab that actually carries it stays worth pointing at until every
-// tab does.
+// One tab: its severity, analyzer mark (or confidence) and marks, its color
+// class, and its own triage state's class only where the group can't say
+// it (`commonTriage` null: the tabs disagree, or a color conflict hides
+// the rollup). Ignore goes by `allIgnored` instead: syncGroupTriage never
+// levels a per-report ignore, so the tab carrying one is worth pointing at
+// till every tab does.
 function tabTemplate(f, isActive, groupSt) {
   const key = tabKey(f)
   const entry = triageEntry(f)
@@ -1276,13 +766,8 @@ function tabTemplate(f, isActive, groupSt) {
   const classes = ['tab', `tab-severity-${displayedSeverity(f, state.severityMode)}`]
   if (isActive) classes.push('active')
   if (color) classes.push(`tab-mark-${color}`)
-  if (triage === 'ignored' && !groupSt.allIgnored) {
-    // Per-tab by nature — each tab carries its own report — and
-    // mutually exclusive with the triage classes via the action
-    // handler. Falls through to a muted opacity hint via finding-row
-    // / finding-card CSS.
-    classes.push('tab-ignored')
-  } else if (triage && triage !== 'ignored' && groupSt.commonTriage === null) classes.push(`tab-${triage}`)
+  if (triage === 'ignored' && !groupSt.allIgnored) classes.push('tab-ignored')
+  else if (triage && triage !== 'ignored' && groupSt.commonTriage === null) classes.push(`tab-${triage}`)
   const analyzer = findingBrand(f)
   const logo = analyzer ? REPORT_LOGOS[analyzer] : null
   const hasConfidence = !logo && f.confidence != null
@@ -1294,16 +779,11 @@ function tabTemplate(f, isActive, groupSt) {
   return html`<button type="button" class=${classes.join(' ')} data-tid=${key} aria-pressed=${isActive} aria-description=${color ? `${color} color label` : nothing}><span class="tab-label"><span class="tab-severity">${severityBadge(f, { variant: 'tab' })}</span><span class="tab-indicators">${tabMarksTemplate(entry, f)}</span></span>${detail}</button>`
 }
 
-// Confidence display for the finding-left badge column. The table
-// view's side-details panel and the focus view's centered card
-// both render a conic-gradient ring colored by severity (matching
-// the design prototype); list / grouped modes keep the plain
-// "<n>/10" stack so the regular cards stay compact.
+// The rail's confidence: a ring in the severity's color in the table's
+// details and the focus view, else a compact "<n>/10".
 function confTemplate(f) {
   if (state.viewMode === 'table' || state.viewMode === 'focus') {
-    // Arc length in viewBox units. The circle's radius is 15.9155
-    // (circumference ≈ 100), so stroke-dasharray = "<conf*10> 100"
-    // draws an N% arc with the remainder invisible (no track ring).
+    // A radius of 15.9155 makes the circumference 100: the arc is percents.
     const arc = f.confidence * 10
     return html`<div class=${`conf-ring ${displayedSeverity(f, state.severityMode)}`}>
       <svg viewBox="0 0 36 36" aria-hidden="true">
@@ -1318,106 +798,60 @@ function confTemplate(f) {
     <div class="value-label">Confidence</div>`
 }
 
-// Permissive npm-package-name shape — lowercase / digits / `-_.`
-// with an optional `@scope/` prefix. Anything outside this set
-// (whitespace, `?`, `#`, `..`, multiple slashes, etc.) suppresses
-// the link rather than producing a URL that points at the wrong
-// npm page. Not an XSS guard — Lit auto-escapes the interpolated
-// href; this is purely about link correctness.
+// An npm package name, for a link to the right page (Lit escapes the href).
 const NPM_NAME_RE = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/iu
 
-// npm chip — small accent-tinted pill linking to npmjs.com. Returns
-// `nothing` when the stamp is absent or malformed. Version is
-// `encodeURIComponent`'d (semver tags are URL-safe but pre-release
-// builds can carry `+` which would otherwise read as a space).
+// The package the analyzer stamped, linking to npmjs.com (the version
+// encoded: a build's `+`); none for a malformed one or the placeholder
+// (`solidity-bundle@0.0.0`), which is no registry entry.
 function npmChipTemplate(npm) {
-  // The analyzer's "couldn't determine the package" placeholder
-  // (`solidity-bundle@0.0.0`) is not a real registry entry — suppress
-  // the chip rather than linking to a 404 npm page.
   if (isPlaceholderNpmPackage(npm)) return nothing
   const name = npm?.name
   if (typeof name !== 'string' || !NPM_NAME_RE.test(name)) return nothing
   const version = npm?.version
   const hasVersion = typeof version === 'string' && version.length > 0
-  const href = hasVersion
-    ? `https://www.npmjs.com/package/${name}/v/${encodeURIComponent(version)}`
-    : `https://www.npmjs.com/package/${name}`
-  const label = hasVersion ? `${name}@${version}` : name
   return html`<span class="line-num"><a
     class="npm-link"
-    href=${href}
+    href=${`https://www.npmjs.com/package/${name}${hasVersion ? `/v/${encodeURIComponent(version)}` : ''}`}
     target="_blank"
     rel="noopener noreferrer"
-  >npm: ${label}</a></span>`
+  >npm: ${hasVersion ? `${name}@${version}` : name}</a></span>`
 }
 
-// One tab body — finding-left (badge column) + the right-side stack
-// (line row, description, recommendation, conf reason). Only the
-// active body is `display: grid` on screen; print mode shows them
-// all stacked. `idx` / `total` feed the print-only "N of M" subhead;
-// suppressed for single-tab groups. `tabIds` excludes those same tabs
-// from the Duplicates section.
+// One tab's body: the rail, and the finding beside it. Only the active one
+// shows on screen, print stacks them all, each "N of M" (`idx`, `total`).
+// `tabIds`, the card's tabs, are left out of its Duplicates.
 function tabBodyTemplate(f, isActive, idx, total, context, tabIds) {
   const key = tabKey(f)
   const entry = triageEntry(f)
   const comment = entry?.comment ?? ''
   const fix = entry?.fix ?? ''
   const automaticFix = automaticFixFor(f), issue = managedIssueFor(f)
-  // Location is rendered as `file:line` (linkified when we have a
-  // repo URL). Standalone cards (the table view's detail panel) need
-  // the file here because there's no surrounding header above; list /
-  // grouped modes hide the `.line-row` via `:host([in-group])` since
-  // `.flat-group-loc` / `.file-header` already paint the same info
-  // above the card. exportName (or `exportName.methodName` when the
-  // finding carries both) joins with a comma when present.
+  // `file:line` (its export after a comma), linked where the repository is
+  // known; the list views hide the `.line-row`, their headers saying it.
   const url = findingUrl(f, findingRepoTarget(f))
   const locLink = rowLocationTemplate(f, url)
   const exportLabel = findingDisplayName(f)
-  // The finding's own location, previewable in place when a bundle
-  // carries it. Resolved once here and passed to the evidence rows
-  // too — one lookup per card, not one per link.
   const bundle = attachedBundle(f)
   const linePreview = codePreview(f, 'loc', bundle, f.file, f.line)
-  // The marks ride INSIDE `.line-num`, not beside it: `.line-row` is a
-  // `space-between` flex line, so a second item there would be spread
-  // to the middle of the row rather than left against the location it
-  // belongs to — and the run-meta on the far end would shift with it.
+  // The marks inside `.line-num`: `.line-row` is a `space-between` flex
+  // line, which would spread another item to its middle. The tooltip sits
+  // beside it, positioned against `.line-row`.
   const ghRef = githubRef(url)
   const lineRowMain = html`<span class="line-num">${
     exportLabel ? html`${locLink}, ${exportLabel}` : locLink
   }${linePreview?.mark ?? nothing}${ghRef}</span>`
-  // The tooltip is absolutely positioned against `.line-row`, so it
-  // sits beside `.line-num` rather than inside it — a snippet is flow
-  // content and that span is not a box to put one in.
   const meta = formatRunMeta(f)
-  // The file the analyzer was reading when it found this. A note worth
-  // making when it isn't the finding's own location — a bug in `a.js`
-  // spotted while reading `b.js` says something about how it surfaced
-  // — and pure noise when it's the same file, where the row already
-  // reads `src/a.js:42` and the note only adds "(found analyzing
-  // src/a.js)" after it.
+  // The file the analyzer was reading, where it isn't the finding's own.
   const foundIn = String(f.discoveredIn ?? '').trim()
   const discoveredIn = foundIn === String(f.file ?? '').trim() ? '' : foundIn
-  // npm chip in the focused finding view's line-row — surfaces the
-  // upstream package + version when the analyzer stamped
-  // `package: { npm: { name, version? } }` on the finding (links to
-  // npmjs.com; see npmChipTemplate for name validation). Focus-only:
-  // it has the horizontal room and is the workbench surface, so the
-  // chip reads as orientation rather than noise in the other views.
+  // The package the analyzer stamped, in the focus view, which has room.
   const npmChip = context === 'focus' ? npmChipTemplate(f.package?.npm) : nothing
-  // "Code →" shortcut — when this finding's `fileHash` is present
-  // in any bundle the analyzer was run against (per-finding
-  // `_bundleHashes`, stamped by ingest), the button points at the
-  // first matching bundle's Code view at that file. The
-  // bundle-hash index populates lazily — initially via the
-  // ingest-time prefetch, and live as new bundles drop. Findings
-  // without a hash, or hashes the analyzer didn't list any
-  // bundle for, never get a button.
+  // Code: the source in the bundle viewer, managed by the report's
+  // sources, else the first bundle the analyzer ran against (its
+  // `_bundleHashes`) holding the file's `fileHash`; none in the focus
+  // view, whose panel shows it already.
   let codeButton = nothing
-  // Focus view already renders the source inline next to the
-  // finding-card — surfacing a second "Code" button in the badge
-  // rail would be redundant. The list / grouped / table-details
-  // views keep it as their primary path into the bundle viewer.
   if (context !== 'focus' && isManagedUiMode() && linePreview) {
     codeButton = html`<button type="button" class="finding-code-btn"
       data-finding-code-report=${bundle.reportId}
@@ -1425,13 +859,7 @@ function tabBodyTemplate(f, isActive, idx, total, context, tabIds) {
       data-finding-code-line=${f.line ?? ''}
       aria-label=${`Open full source for ${f.file}`}>Code</button>`
   } else if (context !== 'focus' && !isManagedUiMode() && f.fileHash && Array.isArray(f._bundleHashes) && f._bundleHashes.length > 0) {
-    // The lookup below reads a plain module Map, which this card's
-    // autorun can't see change. `bundleHashTick` is the state read
-    // that subscribes it to the index filling in (or a bundle being
-    // deleted out of it) — without it a card rendered before the
-    // hashes landed keeps its "no bundle, no button" answer until
-    // something else happens to re-render it. Same shape as the
-    // `codeBlockTick` read in codeBlockTemplate.
+    // The index is a plain module Map: this read subscribes the card to it.
     void state.bundleHashTick
     const allowed = new Set(f._bundleHashes)
     const match = bundlesForFileHash(f.fileHash).find(({ integrity }) => allowed.has(integrity))
@@ -1447,19 +875,12 @@ function tabBodyTemplate(f, isActive, idx, total, context, tabIds) {
     }
   }
   const { title: descTitle, body: descBody } = splitDescription(f)
-  // The narrative first, then the evidence list, then the report's
-  // labelled sections — the order a claude-security report writes them
-  // in, and the one that reads right for the formats whose labels all
-  // trail their prose (parse-piolium). `lead` is the prose that opens
-  // the body; everything from the first label on keeps document order.
-  //
-  // The finding's own structured fields (`impact`, `reproduction`,
-  // `recommendation`) follow, in the order a reader needs them: what it
-  // means, how to trigger it, how to fix it. They wear the same header
-  // + body block as the labelled sections above, so a report that
-  // carries them as FIELDS and one that writes `**Impact:**` into its
-  // description read identically — which is what parse-md emits for the
-  // same two names.
+  // The prose leading the body, then the evidence, then the labelled
+  // sections in document order, as a claude-security report writes them;
+  // then the finding's own fields, in the same blocks, so a field and a
+  // `**Impact:**` paragraph read alike. In the grid's second column,
+  // `.finding-body` lets print move the evidence, open on paper, last
+  // (finding-card.css).
   const sections = descriptionSections(descBody)
   const firstLabel = sections.findIndex((s) => s.label !== null)
   const lead = firstLabel === -1 ? sections : sections.slice(0, firstLabel)
@@ -1485,12 +906,6 @@ function tabBodyTemplate(f, isActive, idx, total, context, tabIds) {
       ${revalidateStampTemplate(f)}
       ${codeButton}
     </div>
-    <!-- The finding itself, in the grid's second column. Named so the
-         print sheet can order its blocks: on paper every <details>
-         opens, and the evidence list — folded away on screen — would
-         otherwise sit in the middle of the finding, pushing impact and
-         recommendation past pages of citations (finding-card.css's
-         @media print block moves it last). -->
     <div class="finding-body">
       <div class="line-row">
         ${lineRowMain}
@@ -1531,25 +946,17 @@ function tabBodyTemplate(f, isActive, idx, total, context, tabIds) {
   </div>`
 }
 
-// State-derived host classes for a `<finding-card>`. The literal
-// `finding` class is included so external selectors like
-// `.flat-group .finding` still match the host element. `multi-case`
-// is a print-only hook (drives the `Multiple reports of one finding`
-// banner via :host(.multi-case) .card::before in finding-card.css).
+// A `<finding-card>` host's classes: `finding`, for `.flat-group .finding`,
+// and `multi-case`, print's "Multiple reports" banner (finding-card.css).
 export function findingCardClasses(g) {
   const classes = ['finding', ...tableRowClasses(g)]
   if (sortTabs(g).length > 1) classes.push('multi-case')
   return classes
 }
 
-// Inner template for a `.finding` card — every tab body (only active
-// shown on screen; print stacks them) plus the bottom marks row
-// (commit ref, multi-tab strip, action buttons). The host element IS
-// the card.
-//
-// Workspace mode lifts the "introduced in" line above the marks row:
-// its action row carries a wide report-name chip on the left that
-// would otherwise squeeze the commit-ref span and wrap the hash.
+// A card's inside: every tab body, and the marks row (commit, tabs,
+// actions). A workspace lifts "introduced in" above it, clear of the
+// report chip, which would wrap the hash.
 export function findingCardInnerTemplate(g, opts = {}) {
   const { context = null } = opts
   const groupSt = groupState(g)
@@ -1574,9 +981,12 @@ export function findingCardInnerTemplate(g, opts = {}) {
   `
 }
 
-// State-derived class list for a row's host element. Omits the
-// `selected` class — that's owned by the host's `selected` property
-// since the parent <finding-table> tracks selection there.
+// Every class tableRowClasses can give a host, for the hosts to toggle off
+// one that no longer applies.
+export const ROW_HOST_CLASSES = ['is-critical', 'mark-red', 'mark-blue', 'mark-green', 'mark-gray', 'has-conflict',
+  'triage-inprogress', 'triage-fixed', 'triage-invalid', 'triage-deleted', 'triage-ignored']
+
+// A row host's classes, but `selected`, which its `selected` property owns.
 export function tableRowClasses(g) {
   const groupSt = groupState(g)
   const isCritical = g.some((f) => f.critical || displayedSeverity(f, state.severityMode) === 'critical')
@@ -1588,26 +998,14 @@ export function tableRowClasses(g) {
   return classes
 }
 
-// Compact block per finding for the table view. Layout:
-//   ┌──────────┬──────────────────────────────────────┐
-//   │  badge   │  title (first line, ellipsis)  type  │
-//   │  conf?   │  file:line               actions     │
-//   │          │  tab strip (multi-tab only)          │
-//   └──────────┴──────────────────────────────────────┘
-// The left column is fixed-width so badges line up across rows; the
-// badge centers vertically against the title + meta rows (not the
-// optional tab strip below) — see finding-row.css.
-//
-// Inner template for a row — score column on the left, body column
-// (title / meta / optional tab strip) on the right. The <finding-row>
-// host element is the wrapper; layout/grid is in finding-row.css.
+// A table row's inside (finding-row.css lays it out): the badge and
+// confidence, then the title and type, `file:line` and the actions, and
+// the tabs of a multi-tab group.
 export function tableRowInnerTemplate(g) {
   const groupSt = groupState(g)
   const sortedTabs = sortTabs(g)
-  const active = activeTabFor(g)
-  const activeKey = tabKey(active)
-  const f = active
-
+  const f = activeTabFor(g)
+  const activeKey = tabKey(f)
   const title = findingTitle(f)
   const typeLabel = formatRunMeta(f)
   const exportLabel = findingDisplayName(f)
@@ -1628,7 +1026,7 @@ export function tableRowInnerTemplate(g) {
         <span class="row-loc">${rowLocationTemplate(f, url)}${exportPart}</span>
         ${githubRef(url)}
         <div class="marks">
-          ${actionButtonsTemplate(g, sortedTabs, groupSt, active, 'table')}
+          ${actionButtonsTemplate(g, sortedTabs, groupSt, f, 'table')}
         </div>
       </div>
       ${sortedTabs.length > 1 ? html`<div class="tabs-row">${tabsTemplate(sortedTabs, activeKey, groupSt)}</div>` : nothing}

@@ -1,30 +1,14 @@
-// Brotli decompressor — native first, with a lazy-loaded JS
-// fallback for browsers that don't ship brotli on the streams API.
-//
-//   1. `DecompressionStream('br')` / `'brotli'` — modern Chromium
-//      (138+) ships brotli natively. No extra cost on those
-//      browsers, and the decode runs inside the browser's stream
-//      implementation, off the main thread already.
-//   2. `brotli-fallback.js` — a separate esbuild entry point that
-//      bundles the foliojs `brotli` decoder (~200KB after minify).
-//      That decoder is synchronous and runs for seconds on a
-//      multi-MB bundle, so it is spawned as a dedicated worker and
-//      the main thread only waits on a message: the tab keeps
-//      painting and answering input while a bundle decodes.
-//      The worker starts only when the page actually hits a brotli
-//      payload AND native detection failed. Its URL is built from a
-//      runtime string so esbuild doesn't statically resolve the
-//      chunk into the main bundle, and is resolved against
-//      `import.meta.url` so a subdirectory deploy still finds the
-//      sibling chunk.
-//   3. `await import('./brotli-fallback.js')` on the main thread —
-//      last resort for when no worker can be spawned at all (a CSP
-//      without `worker-src`, a browser that can't run module
-//      workers) or the worker died. Blocks the tab for the decode,
-//      which still beats refusing to open the bundle.
-//
-// `unregisterSW()` runs on every init to clean up any leftover
-// `/brotli-sw.js` from a prior SW-based fallback revision.
+// Brotli decompressor, in order of preference:
+//   1. native `DecompressionStream('br' | 'brotli')` (Chromium 138+);
+//   2. `brotli-fallback.js`, a separate esbuild entry bundling the foliojs
+//      decoder (~200KB), run in a dedicated worker: it is synchronous and
+//      takes seconds on a multi-MB bundle, so the tab keeps painting. Only
+//      started when a brotli payload arrives and native detection failed;
+//      its URL is built at runtime (so esbuild doesn't bundle the chunk)
+//      against `import.meta.url` (so a subdirectory deploy finds it);
+//   3. the same chunk imported on the main thread, when no worker can run
+//      it (CSP without `worker-src`, no module workers, worker died).
+// Init also drops any `/brotli-sw.js` left by an earlier SW-based fallback.
 
 import { trustedScriptURL } from './trusted-types.js'
 
@@ -47,9 +31,6 @@ async function decompressNative(format, bytes) {
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
-// Drop any leftover `/brotli-sw.js` registration. Idempotent — does
-// nothing when no such SW is registered. Always awaited from init
-// so callers don't observe the SW lingering in DevTools.
 async function unregisterSW() {
   if (!('serviceWorker' in navigator)) return
   try {
@@ -61,44 +42,29 @@ async function unregisterSW() {
   } catch {}
 }
 
-// The chunk that carries the JS decoder, used both as the worker
-// script and — when no worker can run it — as a plain module import.
+// The worker script, and the module imported when no worker can run it.
 const FALLBACK_PATH = './brotli-fallback.js'
 
-// Resolution value for "the worker didn't take this job" (never
-// spawned, spawn refused, or it died before answering). Distinct
-// from a rejection, which means the decoder itself threw: that is
-// the payload's fault and re-running it on the main thread would
-// only throw the same thing, slower.
+// "The worker didn't take this job" (never spawned, refused, or died) —
+// unlike a rejection, which is the decoder throwing on the payload, and
+// would only throw again on the main thread.
 const WORKER_UNAVAILABLE = Symbol('brotli worker unavailable')
 
-// One worker per session, spawned on the first fallback decode and
-// kept alive afterwards so the 200KB chunk is downloaded + parsed
-// once and back-to-back bundle opens reuse it.
+// One worker per session, kept alive so the chunk loads once.
 let worker = null
 let workerUnusable = false
 let nextJobId = 0
 const jobs = new Map()
 
 function loadFallback() {
-  if (fallbackPromise) return fallbackPromise
-  fallbackPromise = (async () => {
-    // The path is held in a variable so esbuild can't statically
-    // resolve it — that keeps `brotli-fallback.js` (and the
-    // foliojs/brotli decoder it pulls in) out of the main view.js
-    // bundle. The browser resolves the URL relative to the page,
-    // so it works at any deploy path (root or subdirectory).
-    const path = FALLBACK_PATH
-    return await import(path)
-  })()
-  return fallbackPromise
+  // Through a variable, so esbuild can't resolve it into view.js.
+  const path = FALLBACK_PATH
+  return (fallbackPromise ??= import(path))
 }
 
-// Give up on the worker for the rest of the session and hand every
-// job it still owes back to the main-thread decoder. Called when the
-// script fails to load or run (older browsers ignore `type:
-// 'module'` and choke on the chunk's `export`), when a message can't
-// be cloned, and when posting throws.
+// Give up on the worker for the session (the script failed to load or run
+// — older browsers ignore `type: 'module'` and choke on its `export` — or
+// a message couldn't be cloned or posted) and hand its jobs back.
 function retireWorker() {
   workerUnusable = true
   if (worker) {
@@ -123,12 +89,9 @@ function spawnWorker() {
   if (worker) return worker
   if (workerUnusable || typeof Worker === 'undefined') return null
   try {
-    // `type: 'module'` matches the ESM esbuild writes for the entry
-    // point (see build.js). A browser that ignores the option loads
-    // the chunk as a classic script, fails on its `export`, and
-    // fires `error` below — which retires the worker and sends the
-    // decode back to the main thread. The URL goes through the app's
-    // Trusted Types policy: index.html's CSP refuses a plain one.
+    // A module worker, as esbuild writes the entry (build.js). The URL goes
+    // through the app's Trusted Types policy: index.html's CSP refuses a
+    // plain one.
     worker = new Worker(trustedScriptURL(new URL(FALLBACK_PATH, import.meta.url)), { type: 'module' })
   } catch {
     workerUnusable = true
@@ -140,8 +103,6 @@ function spawnWorker() {
   return worker
 }
 
-// Decode off-thread. Resolves with `WORKER_UNAVAILABLE` when no
-// worker ran the job; rejects only when the decoder itself threw.
 function decompressInWorker(bytes) {
   const active = spawnWorker()
   if (!active) return Promise.resolve(WORKER_UNAVAILABLE)
@@ -149,10 +110,8 @@ function decompressInWorker(bytes) {
     const id = ++nextJobId
     jobs.set(id, { resolve, reject })
     try {
-      // `bytes` is copied, not transferred: the caller still reads
-      // `bytes.byteLength` after this resolves (bundle-load.js
-      // reports it as the bundle's on-disk size) and transferring
-      // would detach the buffer out from under it.
+      // Copied, not transferred: the caller still reads `bytes.byteLength`
+      // after (bundle-load.js reports it as the on-disk size).
       // eslint-disable-next-line unicorn/require-post-message-target-origin
       active.postMessage({ id, bytes })
     } catch {
@@ -163,43 +122,23 @@ function decompressInWorker(bytes) {
   })
 }
 
-async function init() {
-  // Always cleanup leftover SW first so a non-functional registration
-  // from an earlier deploy is dropped regardless of which mode this
-  // load picks. Cheap when there's nothing to unregister.
-  await unregisterSW()
-  const format = nativeAvailable()
-  if (format) return { kind: 'native', format }
-  return { kind: 'fallback' }
-}
-
+// The native format, or null for the fallback.
 function ensure() {
-  if (initPromise) return initPromise
-  initPromise = init()
-  return initPromise
+  return (initPromise ??= unregisterSW().then(nativeAvailable))
 }
 
 export async function brotliDecompress(bytes, isCurrent = () => true) {
   const check = () => { if (!isCurrent()) throw new DOMException('Bundle decode cancelled', 'AbortError') }
   check()
-  const m = await ensure()
+  const format = await ensure()
   check()
-  if (m.kind === 'native') return decompressNative(m.format, bytes)
-  // Fallback path: run the JS decoder in the worker, which also
-  // lazy-loads the bundle on first use — subsequent calls reuse the
-  // same worker, so the chunk downloads + parses once per session.
+  if (format) return decompressNative(format, bytes)
   const decoded = await decompressInWorker(bytes)
   check()
   if (decoded !== WORKER_UNAVAILABLE) return decoded
-  // No worker took it. Decode here and block, sharing one import so
-  // the chunk still only downloads once.
   const fallback = await loadFallback()
   return fallback.brotliDecompress(bytes)
 }
 
-// Eager init at module-load — runs the SW cleanup + native
-// detection without waiting for the first stasis bundle open. Does
-// NOT start the worker or pre-load the fallback bundle: that only
-// happens on demand when a brotli payload actually needs
-// decompressing.
+// Eager detection at load; the worker and the fallback chunk stay on demand.
 ensure().catch(() => {})

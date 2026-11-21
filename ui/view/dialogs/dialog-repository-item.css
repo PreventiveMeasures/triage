@@ -28,26 +28,20 @@ header button {
 .repo-item-meta { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .9rem; color: var(--muted); }
 .repo-item-meta strong { color: var(--text); font-weight: 500; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; color: var(--text); }
-.repo-item-badge {
+:is(.repo-item-badge, .repo-item-state) {
   --state: var(--issue-open);
-  padding: .1rem .55rem; border-radius: 999px; background: var(--state); color: var(--surface); font-weight: 500;
   &.is-merged, &.is-completed { --state: var(--issue-merged); }
   &.is-closed { --state: var(--issue-closed); }
   &.is-draft, &.is-not-planned { --state: var(--issue-quiet); }
 }
+.repo-item-badge { padding: .1rem .55rem; border-radius: 999px; background: var(--state); color: var(--surface); font-weight: 500; }
 svg {
   flex: none; width: 14px; height: 14px;
   fill: none; stroke: currentcolor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
 }
 svg .fill { fill: currentcolor; stroke: none; }
 svg .dotted { stroke-dasharray: 1 2.2; }
-.repo-item-state {
-  --state: var(--issue-open);
-  display: inline-flex; align-self: center; color: var(--state);
-  &.is-merged, &.is-completed { --state: var(--issue-merged); }
-  &.is-closed { --state: var(--issue-closed); }
-  &.is-draft, &.is-not-planned { --state: var(--issue-quiet); }
-}
+.repo-item-state { display: inline-flex; align-self: center; color: var(--state); }
 .repo-item-mark {
   display: inline-flex; align-items: center; gap: .25rem;
   & svg { width: 12px; height: 12px; }

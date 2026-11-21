@@ -1,27 +1,23 @@
 // The issues and pull requests the code viewer has read, the latest read of
-// each: the Issues and Pull requests tabs' lists read them a page at a time
-// (repository-issues.js), an item's popup one at a time
-// (dialogs/repository-item-dialog.js), and each shows them as the latest
-// read of them does, so that a pull request its popup read as merged shows
-// merged on its tile too. The latest is the one the server read from GitHub
-// last (`readAt`, which it answers with; one it kept is as old as it was
-// kept), else the one answered last. Kept, as the lists are, for the session
-// that read them, in a store (client/state.ts's library), so that what shows
-// them is drawn again as they change.
+// each, by the Issues and Pull requests lists (repository-issues.js) or an
+// item's popup (dialogs/repository-item-dialog.js): each shows them as the
+// latest read does, so one its popup read as merged shows merged on its tile
+// too. The latest is the one the server read from GitHub last (`readAt`),
+// else the one answered last. Kept for the session that read them, in a
+// store (client/state.ts's library), so what shows them draws again as they
+// change.
 import { store } from '@rray/frontend/state-management'
-import { state } from '#client/index.js'
+import { sessionKept, sessionOf } from './activity-reads.js'
 
-// By the session, the repository and the number, which an issue and a pull
-// request of one repository never share: `{ item, readAt, moved }`, the item
-// with its `kind`, 'issues' or 'pulls', and, where a read before knew it in
-// the other of open and closed, which (`from`) and when the latest read that
-// knew it so was (`before`): it moved after then (`moved`, else null); and how many times they changed, which what
-// reads them all observes, the store telling those that iterate them of none
-// replaced.
+// By the session, repository and number (an issue and a pull request never
+// share one): `{ item, readAt, moved }`, the item with its `kind`, and where
+// a read before knew it in the other of open and closed, which (`from`) and
+// when that read was (`before`), else null; and how many times they changed,
+// which what reads them all observes, as the store tells those iterating
+// them of none replaced.
 const known = store({ items: new Map(), changes: 0 })
-let keptFor = null
+const sessionItems = sessionKept(known.items)
 
-const sessionOf = () => state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
 const keyOf = (session, repoId, number) => `${session}\0${repoId}\0${number}`
 
 // When an answer was read from GitHub, as the server says, else now.
@@ -31,18 +27,15 @@ export const readAtOf = answer => Number.isSafeInteger(answer?.readAt) && answer
 // it names none: each where none read later is known. Another session's
 // forgotten.
 export function knowItems(repoId, items, readAt, kind = null) {
+  sessionItems()
   const session = sessionOf()
-  if (session !== keptFor) {
-    known.items.clear()
-    keptFor = session
-  }
   let changed = false
   for (const item of items) {
     const key = keyOf(session, repoId, item.number)
     const held = known.items.get(key)
     if (held && held.readAt > readAt) continue
-    const from = held && (held.item.state === 'open' ? 'open' : 'closed')
-    const moved = !from || from === (item.state === 'open' ? 'open' : 'closed') ? held?.moved ?? null : { from, before: held.readAt }
+    const from = held && groupOf(held.item)
+    const moved = !from || from === groupOf(item) ? held?.moved ?? null : { from, before: held.readAt }
     known.items.set(key, { item: { ...item, kind: item.kind ?? kind ?? held?.item.kind ?? null }, readAt, moved })
     changed = true
   }

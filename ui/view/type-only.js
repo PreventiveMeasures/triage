@@ -1,31 +1,27 @@
 // Which of a comparison's files changed in types alone, as the server proves
-// them (server-managed/type-only.ts: @preventive/compare's compareTrees
-// stamps `typeOnly`, which needs Node and so can't be proven here), and which
-// in types alone but for what runs, with the lines holding it: asked for
-// once per comparison of two managed bundles or two versions of a package,
-// the first time one of its TypeScript files is drawn, whether or not those
-// changes are hidden, as Compare offers to hide them only where there are
-// any; each taken where it names the files the view shows, by their hashes.
-// Kept for the last few comparisons, for the session.
+// (server-managed/type-only.ts: @preventive/compare's compareTrees stamps
+// `typeOnly`, which needs Node), and which but for what runs, with the lines
+// holding it: asked for once per comparison of two managed bundles or two
+// versions of a package, the first time one of its TypeScript files is
+// drawn, hidden or not, as Compare offers to hide them only where there are
+// any; each taken where it names the files shown, by their hashes. The last
+// few comparisons' are kept.
 import { computeFileHash } from '@preventive/report'
 import { prettyExtension } from '../../common/pretty-print.js'
-import { bundleFilesAsMap } from './bundle-sources.js'
+import { bundleFilesAsMap } from '../../common/bundle-sources.js'
 import { fetchBundleTypeOnly, fetchNpmTypeOnly } from './client-managed.js'
 import { renameDiffable } from './rename-diff.js'
+import { aborted, evict, retrier, retryable, touch } from './server-asks.js'
 import { weakNotify } from './weak-notify.js'
 
 // Comparisons whose proofs are kept, the one read last last.
 const KEPT_COMPARISONS = 2
-// A failure that may pass is asked again this long after it came, twice as
-// long each time it fails again, its view painted again then.
-const RETRY_MS = 5_000
-const RETRY_MAX_MS = 5 * 60_000
 // TypeScript files, as the server reads them by extension: none other is proven.
 const TYPESCRIPT = new Set(['ts', 'mts', 'cts'])
 
 // A failure that may pass: not a refusal, nor a server whose Node proves
 // nothing (501 proof-unsupported, server-managed/type-only.ts), as it won't.
-const retryable = status => status !== 501 && !(status >= 400 && status < 500 && status !== 429)
+const provingMayPass = status => status !== 501 && retryable(status)
 // Review's base where it has none (npm-review.js EMPTY_REVIEW_BASE): a version
 // is proven against no files, each of its own added, as against an empty one.
 const emptyBase = details => details?.integrity === '(empty)'
@@ -37,18 +33,10 @@ const pairOf = (path, otherPath) => `${path ?? ''}\0${otherPath ?? ''}`
 
 // Comparisons by both sides' integrity: `files`, the pairs proven, as pairOf
 // names them, each `true` or the lines holding what runs; `notify`, the view
-// that last asked; `ended` once its request ended. Failures in a row, by
-// comparison.
+// that last asked; `ended` once its request ended. A failure that may pass is
+// asked again a while after (server-asks.js retrier), its view painted then.
 const comparisons = new Map()
-const failures = new Map()
-
-// Past KEPT_COMPARISONS, the least recent whose request ended.
-function evict() {
-  for (const [key, comparison] of comparisons) {
-    if (comparisons.size <= KEPT_COMPARISONS) break
-    if (comparison.ended) comparisons.delete(key)
-  }
-}
+const retried = retrier()
 
 // Whether a side is as a line names it: its file of that hash, or none there.
 async function named(details, path, hash) {
@@ -80,25 +68,16 @@ async function load(key, comparison, base, other, scope) {
       : emptyBase(base) ? fetchNpmTypeOnly(other.npm.name, other.npm.version, '(empty)', line)
       : fetchBundleTypeOnly(base.managedId, other.managedId, line, { scope }))
   } catch (err) {
-    // A session that changed asks again under the new one, on its render.
-    if (err?.name === 'AbortError') {
+    if (aborted(err)) {
       if (comparisons.get(key) === comparison) comparisons.delete(key)
       return
     }
-    failed = retryable(err?.status)
+    failed = provingMayPass(err?.status)
   }
   Object.assign(comparison, { files, ended: true })
-  if (failed) {
-    const tries = failures.get(key) ?? 0
-    failures.set(key, tries + 1)
-    setTimeout(() => {
-      if (comparisons.get(key) !== comparison) return
-      comparisons.delete(key)
-      comparison.notify?.()
-    }, Math.min(RETRY_MS * 2 ** tries, RETRY_MAX_MS))?.unref?.()
-  } else failures.delete(key)
+  retried(key, failed, () => comparisons.get(key) === comparison && comparisons.delete(key), () => comparison.notify)
   comparison.notify?.()
-  evict()
+  evict(comparisons, KEPT_COMPARISONS, ended => ended.ended)
 }
 
 // What the server proved of a file of a comparison, `entry` as Compare lists
@@ -117,14 +96,11 @@ export function typeProof(base, other, path, { kind, basePath = path }, { before
   if (!sides.every(file => file === null || TYPESCRIPT.has(prettyExtension(file)))) return undefined
   if ((sides[0] !== null && before !== bundleFilesAsMap(base).get(basePath)) || (sides[1] !== null && after !== bundleFilesAsMap(other).get(path))) return undefined
   const key = `${base.integrity}\0${other.integrity}\0${scope}`
-  let comparison = comparisons.get(key)
-  comparisons.delete(key)
-  if (!comparison) {
-    comparison = { files: new Map(), notify: null, ended: false }
-    load(key, comparison, base, other, scope)
-  }
-  comparisons.set(key, comparison)
-  evict()
+  const comparison = touch(comparisons, key, KEPT_COMPARISONS, ended => ended.ended, () => {
+    const made = { files: new Map(), notify: null, ended: false }
+    load(key, made, base, other, scope)
+    return made
+  })
   comparison.notify = weakNotify(notify)
   return comparison.files.get(pairOf(...sides))
 }

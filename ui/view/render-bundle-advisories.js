@@ -8,7 +8,7 @@ import { store } from '@rray/frontend/state-management'
 import { state } from '#client/index.js'
 import { fetchBundleAdvisories } from './client-managed.js'
 import { bundleKind } from './ingest.js'
-import { bundlePackageVersions } from './bundle-sources.js'
+import { bundlePackageVersions } from '../../common/bundle-sources.js'
 import { bundleScopes, scopeOptions } from '../../common/bundle-reasons.js'
 import { isDirectoryEcosystem, malformedDirectoryPackage } from '../../common/managed/directory-packages.ts'
 import { SCAN_ICON_SVG } from './icons.js'
@@ -51,30 +51,21 @@ export function grantAdvisoriesProxyConsent() {
   try { localStorage.setItem(CONSENT_KEY, '1') } catch {}
 }
 
-// True when the parsed bundle has at least one stasis module that
-// carries both a name AND a concrete version string under a
-// `node_modules/...` path. Sourcemaps (no module metadata) and v0
-// stasis bundles (modules merged into the map but with `version:
-// null`) both miss out. Early-exit on the first qualifying entry
-// so a large bundle (hundreds of modules) doesn't pay an O(n) scan.
-//
-// Module-private — callers go through `showAdvisoriesTab` below
-// which adds the parse-window optimistic-show layer for
-// stasis-by-filename bundles.
-//
-// Keeps its own copy of the `bundlePackageVersions` filter (node_modules
-// dir + name + concrete version) rather than calling it: this is a
-// first-match predicate, so it returns on the first qualifying module
-// instead of building the whole Map. If that filter rule changes, update
-// it here too.
-function bundleHasAdvisoryCandidates(details) {
+// Whether a parsed Stasis bundle (sourcemaps have no modules) has a module
+// `test(dir, info)` takes: a first-match test, so a large bundle isn't
+// walked whole.
+function someModule(details, test) {
   if (!details || details.kind !== 'stasis' || !details.bundle) return false
   for (const [dir, info] of details.bundle.modules) {
-    if (!dir.includes('node_modules')) continue
-    if (info?.name && typeof info.version === 'string' && info.version) return true
+    if (test(dir, info)) return true
   }
   return false
 }
+
+// A module under node_modules with a name and a version (v0 bundles' are
+// null): `bundlePackageVersions`'s filter, change both together.
+const bundleHasAdvisoryCandidates = details => someModule(details, (dir, info) =>
+  dir.includes('node_modules') && info?.name && typeof info.version === 'string' && info.version)
 
 // A dependency package as the managed audit inventories one
 // (server-managed/bundle-advisory-inventory.ts), short of its evidence-file
@@ -82,15 +73,9 @@ function bundleHasAdvisoryCandidates(details) {
 // ecosystem (recorded, or npm under node_modules), a name and a version; but
 // one installed from a directory, the repository's own code, its record as
 // Stasis records one (a malformed one is listed as not audited).
-function bundleHasDependencyPackages(details) {
-  if (!details || details.kind !== 'stasis' || !details.bundle) return false
-  for (const [dir, info] of details.bundle.modules) {
-    if (dir === '.' || typeof info?.name !== 'string' || !info.name || typeof info.version !== 'string' || !info.version) continue
-    if (isDirectoryEcosystem(info.ecosystem) && !malformedDirectoryPackage(info)) continue
-    if (info.ecosystem || /(?:^|\/)node_modules\//u.test(dir)) return true
-  }
-  return false
-}
+const bundleHasDependencyPackages = details => someModule(details, (dir, info) =>
+  dir !== '.' && typeof info?.name === 'string' && info.name && typeof info.version === 'string' && info.version
+    && !(isDirectoryEcosystem(info.ecosystem) && !malformedDirectoryPackage(info)) && (info.ecosystem || /(?:^|\/)node_modules\//u.test(dir)))
 
 // A managed bundle offers no recheck or scan without dependency packages: by
 // its modules, or once its unscoped audit answers, by the server's inventory.
@@ -100,32 +85,18 @@ function managedBundleHasNoDependencies(details) {
   return audit?.state === 'ok' && audit.query.size === 0 && audit.skipped.length === 0
 }
 
-// Managed Stasis bundles require security access. A bundle known to have no
-// package versions to audit never shows it, even as the open tab: a Stasis
-// bundle before format version 1, by its parsed bundle or its catalogue
-// summary, or one whose summary counts no versioned packages (the server's
-// count of what its audit covers, audited or skipped). A managed bundle's
-// summary says so before it opens. Otherwise visibility is tri-state:
-//   * non-stasis filename → hide immediately (no parse needed; we
-//     already know there'll be no version metadata).
-//   * stasis filename, no matching parsed details yet → keep visible
-//     optimistically. This is the window where the user has just
-//     selected a stasis bundle and the parser is still running, OR
-//     they switched between two stasis bundles and `bundleDetails`
-//     still points at the previous one (different integrity). Without
-//     the optimistic show, the tab flickers away mid-switch and the
-//     `state.bundleDetailsTab === 'advisories'` coercion in
-//     renderBundleSlide drops the user back to Overview before the
-//     new bundle's modules land — visible as a tab strip jump + a
-//     content swap on every navigation between stasis bundles.
-//   * stasis filename, matching parsed details → defer to
-//     `bundleHasAdvisoryCandidates`, or for a managed bundle with module
-//     metadata `bundleHasDependencyPackages` (so v0 stasis, and bundles
-//     without dependency packages, hide). The server audits a managed
-//     bundle without the viewer's metadata, so none keeps it.
-// While it is the `selected` tab, any bundle the viewer may audit keeps it,
-// sourcemaps included: switching bundles, or a link, keeps Advisories open
-// rather than falling back to Overview, and its body says why it is empty.
+// Whether the Advisories tab shows. Managed bundles need security access.
+// Never for a bundle known to have no package versions: a Stasis bundle
+// before format version 1 (by its parse or its catalogue summary), or one
+// whose summary counts no versioned packages (what the server's audit
+// covers), which a managed bundle's says before it opens. While it is the
+// `selected` tab, for any other bundle, sourcemaps too, so a switch or a
+// link keeps it open, its body saying why it is empty. Else for a Stasis
+// filename: while its details aren't parsed yet (or still the previous
+// bundle's), so switching between Stasis bundles doesn't flicker the tab
+// away and drop the user on Overview; once parsed, where it has advisory
+// candidates, or a managed one dependency packages (none parsed keeps it:
+// the server audits without the viewer's metadata).
 export function showAdvisoriesTab(entry, details, selected = false) {
   if (!entry || (entry.managedId && !canReadManagedAdvisories(entry))) return false
   if (stasisVersion(entry, details) < 1 || entry.summary?.versionedPackages === 0) return false
@@ -199,15 +170,10 @@ async function fetchLocalAdvisories(query) {
   return res.json()
 }
 
-export function ensureBundleAdvisories(details, renderFn) {
-  return loadBundleAdvisories(details, renderFn)
-}
-
-export function recheckBundleAdvisories(details, renderFn) {
-  return loadBundleAdvisories(details, renderFn, true)
-}
-
-async function loadBundleAdvisories(details, renderFn, repoAdvisories = false) {
+// The bundle's advisories in its scope, asked for once; `repoAdvisories`
+// (recheckBundleAdvisories) asks again, against its repositories too, the
+// results meanwhile kept.
+export async function ensureBundleAdvisories(details, renderFn, repoAdvisories = false) {
   if (!details?.integrity || (!details.managedId && !hasConsent())) return
   const cache = advisoryCache(details), key = cacheKey(details)
   const previous = cache.get(key)
@@ -243,13 +209,11 @@ async function loadBundleAdvisories(details, renderFn, repoAdvisories = false) {
   renderFn()
 }
 
-// Drop a sticky error entry and re-issue the lookup. Wired to the
-// error state's Retry button (events.js `data-advisories-retry`
-// delegate) so a transient failure — relay restarting, offline
-// moment — doesn't wedge the tab for the rest of the session.
-// No-op unless the cached entry is actually an error: `loading`
-// must not be re-entered (double fetch) and `ok` is the result we
-// wanted anyway.
+export const recheckBundleAdvisories = (details, renderFn) => ensureBundleAdvisories(details, renderFn, true)
+
+// The error state's Retry (events.js `data-advisories-retry`): a failed
+// lookup asked again, so a passing failure doesn't wedge the tab; nothing
+// for one loading or loaded.
 export async function retryBundleAdvisories(details, renderFn) {
   if (!details?.integrity) return
   const cache = advisoryCache(details), key = cacheKey(details)
@@ -258,26 +222,14 @@ export async function retryBundleAdvisories(details, renderFn) {
   await ensureBundleAdvisories(details, renderFn)
 }
 
-// Severity ordering. The npm advisories endpoint emits
-// `critical | high | moderate | low | info`. Anything else (an
-// unknown future-only value) sorts to the end via the fallback
-// 999, keeping the rest deterministic.
+// The npm advisories endpoint's severities, worst first; any other last.
 const SEVERITY_RANK = { critical: 0, high: 1, moderate: 2, low: 3, info: 4 }
+const severityRank = s => SEVERITY_RANK[s] ?? 999
 
-function severityRank(s) {
-  return SEVERITY_RANK[s] ?? 999
-}
-
-// First-time consent UI for the Advisories tab: explains what gets
-// sent (package names + versions, via the same-origin relay) before
-// the first request. The preference persists — no per-bundle re-prompt
-// after the first Confirm.
+// What a first lookup sends (package names and versions, through the
+// same-origin relay), asked once for every bundle. The host, not the origin,
+// as `registry.npmjs.org` beside it is.
 function renderConsentPrompt() {
-  // `window.location.host` (vs `.origin`) mirrors the bare
-  // `registry.npmjs.org` shape on the right side of the arrow —
-  // host:port pair without the scheme noise. Browser-side render
-  // only; the relay's `/api/npm-advisories` resolves under this
-  // host via fetch's default origin handling.
   const proxyHost = typeof window === 'undefined' ? '' : window.location.host
   return html`<div class="bundle-advisories-consent">
     <div class="bundle-advisories-consent-card">
@@ -298,29 +250,23 @@ function renderConsentPrompt() {
   </div>`
 }
 
-// Render the Advisories tab body. Four branches:
-//   * Consent  — first local/e2e visit; explains the outbound query (see
-//                renderConsentPrompt) before anything is fetched
-//   * Loading  — kicked the fetch, no data yet
-//   * Error    — the relay or upstream rejected
-//   * Data     — render one section per package with at least
-//                one advisory, sorted by severity desc then by
-//                package name (or a one-line summary when none)
-//
-// `onScan`, when the viewer may scan the bundle, opens its Dependency
-// alerts scan from a Validate button right of the managed recheck button and
-// the scope selector.
-// Neither button shows for a bundle without dependency packages.
+// The Advisories tab: consent first for a local or e2e bundle, then the
+// lookup's state, and a section for each package with advisories, worst
+// first. A managed bundle with dependency packages has its repository
+// recheck, and `onScan`, where the viewer may scan it, a Validate button
+// opening its Dependency alerts scan.
 export function renderBundleAdvisoriesTab(details, renderFn = () => {}, onScan = null) {
   const scope = details ? advisoryScope(details) : null
   const reasons = scope ? scopeOptions(scope.reasons) : []
-  const summary = renderAdvisoriesSummary(details)
+  // The lookup in the scope shown.
+  const entry = details ? advisoryCache(details).get(cacheKey(details)) : undefined
+  const summary = renderAdvisoriesSummary(details, entry)
   const actions = Boolean(details?.managedId) && !managedBundleHasNoDependencies(details)
   return html`<div class="bundle-advisories-panel">
     ${summary !== nothing || reasons.length > 0 || actions ? html`<div class="bundle-advisories-toolbar">
     ${summary}
     ${reasons.length > 0 || actions ? html`<div class="bundle-advisories-scopes">
-    ${actions ? renderRepositoryRecheck(details, renderFn) : nothing}
+    ${actions ? renderRepositoryRecheck(details, entry, renderFn) : nothing}
     ${reasons.length > 0 ? html`<bundle-scope-selector
       .reasons=${reasons} .value=${scope.selected} label="Choose advisory scope"
       @scope-change=${event => {
@@ -334,13 +280,11 @@ export function renderBundleAdvisoriesTab(details, renderFn = () => {}, onScan =
     </button>` : nothing}
     </div>` : nothing}
     </div>` : nothing}
-    ${renderAdvisoriesBody(details)}
+    ${renderAdvisoriesBody(details, entry)}
   </div>`
 }
 
-function renderRepositoryRecheck(details, renderFn) {
-  if (!details?.managedId) return nothing
-  const entry = advisoryCache(details).get(cacheKey(details))
+function renderRepositoryRecheck(details, entry, renderFn) {
   const busy = Boolean(entry?.recheckingRepositories)
   return html`<button type="button" class="bundle-advisories-retry bundle-advisories-recheck"
     ?disabled=${!canRecheckRepositories(details, entry)}
@@ -349,10 +293,8 @@ function renderRepositoryRecheck(details, renderFn) {
   </button>`
 }
 
-function renderAdvisoriesSummary(details) {
-  if (!details || (!details.managedId && !hasConsent())) return nothing
-  const entry = advisoryCache(details).get(cacheKey(details))
-  if (entry?.state !== 'ok') return nothing
+function renderAdvisoriesSummary(details, entry) {
+  if (!details || (!details.managedId && !hasConsent()) || entry?.state !== 'ok') return nothing
   const totalPackagesQueried = entry.query.size
   const packagesWithAdvisories = entry.byPackage.size
   if (packagesWithAdvisories === 0) return nothing
@@ -369,13 +311,12 @@ function renderNoAdvisories(details, entry) {
   return html`No advisories for the ${count} ${entry.skipped.length > 0 ? 'audited ' : ''}${count === 1 ? 'package' : 'packages'} in ${advisoryScope(details).selected ? 'this scope' : 'this bundle'}.`
 }
 
-function renderAdvisoriesBody(details) {
+function renderAdvisoriesBody(details, entry) {
   if (!details) return html`<div class="bundle-advisories-empty">Bundle not loaded yet.</div>`
   if (details.kind !== 'stasis' || (!details.managedId && !details.bundle)) {
     return html`<div class="bundle-advisories-empty">Advisories are only available for stasis bundles.</div>`
   }
   if (!details.managedId && !hasConsent()) return renderConsentPrompt()
-  const entry = advisoryCache(details).get(cacheKey(details))
   if (!entry || entry.state === 'loading') {
     return html`<div class="bundle-advisories-empty">Loading advisories…</div>`
   }
@@ -388,15 +329,8 @@ function renderAdvisoriesBody(details) {
   const empty = entry.byPackage.size === 0
     ? html`<div class="bundle-advisories-empty"><span>${renderNoAdvisories(details, entry)}</span></div>` : nothing
   if (entry.byPackage.size === 0 && entry.skipped.length === 0 && !entry.repositoryError) return empty
-  // Sort sections by the worst severity inside the section, then
-  // by name — surfaces the most urgent stuff at the top while
-  // keeping the rest deterministic across re-renders.
-  const sections = [...entry.byPackage.entries()].toSorted(([na, la], [nb, lb]) => {
-    const wa = Math.min(...la.map((a) => severityRank(a.severity)))
-    const wb = Math.min(...lb.map((a) => severityRank(a.severity)))
-    if (wa !== wb) return wa - wb
-    return na.localeCompare(nb)
-  })
+  const worst = list => Math.min(...list.map((a) => severityRank(a.severity)))
+  const sections = [...entry.byPackage.entries()].toSorted(([na, la], [nb, lb]) => worst(la) - worst(lb) || na.localeCompare(nb))
   return html`${empty}<div class="bundle-advisories">
     ${entry.repositoryError ? html`<div class="bundle-advisories-empty is-error" role="alert">
       Repository recheck failed: ${entry.repositoryError}. Previous results are shown.
@@ -412,11 +346,7 @@ function renderAdvisoriesBody(details) {
 }
 
 function renderAdvisorySection(details, pkg, advisories, queriedVersions, isCurrent) {
-  const sorted = [...advisories].toSorted((a, b) => {
-    const r = severityRank(a.severity) - severityRank(b.severity)
-    if (r !== 0) return r
-    return (a.title ?? '').localeCompare(b.title ?? '')
-  })
+  const sorted = advisories.toSorted((a, b) => severityRank(a.severity) - severityRank(b.severity) || (a.title ?? '').localeCompare(b.title ?? ''))
   const versions = queriedVersions ? [...queriedVersions].toSorted() : []
   return html`<li class="bundle-advisories-section">
     <div class="bundle-advisories-package">

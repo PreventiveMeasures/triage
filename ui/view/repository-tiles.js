@@ -1,8 +1,6 @@
-// What the code viewer's Issues, Pull requests and Agents tabs
-// (repository-issues.js, repository-agents.js) and the popup of one of their
-// tiles (dialogs/repository-item-dialog.js) draw alike: an issue's or pull
-// request's state, review and checks, by their icons, as GitHub draws them;
-// the agents' marks; and where a session opens.
+// What the Issues, Pull requests and Agents tabs and their tiles' popup
+// (dialogs/repository-item-dialog.js) draw alike: states, reviews and checks
+// by GitHub's icons, the agents' marks, and where a session opens.
 import { html, nothing, svg } from 'lit'
 import { providerIcon } from './provider-icons.js'
 
@@ -78,10 +76,6 @@ export function agentIcon(agent) {
   const avatar = appAgents.get(agent)?.avatar
   return avatar ? html`<img class="agent-avatar" src=${`/api/avatar/${avatar}`} alt="" width="14" height="14" loading="lazy" decoding="async">` : nothing
 }
-
-// A click to open a tile's popup: the main button's, none held with it, which
-// would open its link in a new tab or window instead.
-export const plainClick = event => event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
 
 // Where a session ran: its Claude Code session or Codex task; null for one
 // that names neither.
