@@ -148,10 +148,10 @@ import { pipeline } from 'node:stream/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { type KeptStore, REPOSITORY_READ_KEPT_MS, authoredCommitStore, branchTipStore, bundleValidationStore, codeHeadStore, codeTreeStore, commitPullStore, githubTagStore, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore,
   issueListStore, lockfileReadStore,
-  npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, patchStore, pullDependencyStore, pullListStore, repositoryReadStore, reviewBaselineStore, riskLineStore,
+  npmDeltaStore, npmPublishTimeStore, npmVersionDeltaStore, npmVersionStore, ownKeptPrunes, patchStore, pullDependencyStore, pullListStore, repositoryReadStore, reviewBaselineStore, riskLineStore,
   scanReadStore, stasisDependencyStore } from './npm-kept.ts'
 import { plainObject } from './npm-manifest.ts'
-import { type NpmDelta, deltaKey, keptNpmDeltas, npmDelta } from './npm-delta.ts'
+import { type NpmDelta, deltaKey, keptNpmDeltas, keptVersionDeltas, npmDelta, versionDeltaKey } from './npm-delta.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedKeys, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -2562,7 +2562,9 @@ function itemNumber(text: string | null): number | null {
 // Up to MAX_ASKED_PULLS pull requests asked together (`numbers=1,2,3`) are
 // answered together, as many read at once as PULLS_AT_ONCE, `{ pulls }`,
 // each's answer, else `{ number, error }` where GitHub fails it, with one
-// check of its access before and one after, but where each was kept.
+// check of its access before and one after, but where each was kept. With
+// `review=1`, the lines its versions wanting reviews change, where they are
+// counted already (`deltas`, teamDeltas), as a team's Dependencies tells them.
 const MAX_ASKED_PULLS = 20
 const PULLS_AT_ONCE = 3
 async function handleRepositoryPullDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
@@ -2578,9 +2580,12 @@ async function handleRepositoryPullDependencies(res: ServerResponse, deps: Manag
     || !['1', null].includes(query.get('review')) || !['1', null].includes(query.get('listed'))) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token, user) => {
     const commits = tiles ? await keptPullCommits(deps, repoId, numbers as number[]) : new Map<number, PullCommits>()
-    if (listed === null) return pullDependencyAnswer(deps, fullName, token, user, repoId, numbers[0]!, review, commits.get(numbers[0]!))
+    if (listed === null) {
+      const answer = await pullDependencyAnswer(deps, fullName, token, user, repoId, numbers[0]!, review, commits.get(numbers[0]!))
+      return review ? { ...answer, value: { ...answer.value, ...await withDeltas(deps, [answer.value]) } } : answer
+    }
     const answers = await pullDependencyAnswers(deps, fullName, token, user, repoId, numbers as number[], review, commits)
-    return { value: { pulls: answers.value }, kept: answers.kept }
+    return { value: { pulls: answers.value, ...review ? await withDeltas(deps, answers.value) : {} }, kept: answers.kept }
   })
 }
 
@@ -3020,9 +3025,11 @@ async function keptPullCommits(deps: ManagedHttpDeps, repoId: number, numbers: n
 
 // The lines the versions wanting reviews of `answers` change, as their rows
 // show them (npm-delta.js reviewBase), a patched one's none, where they are
-// counted already: of public versions alone, those npm answered for in a day
-// (npmVersionStore), their integrities those npmDelta keys them by. `[name,
-// version, base, delta]` each, none counted here.
+// counted already: of public versions alone, kept by their names
+// (npmVersionDeltaStore), else, those npm answered for in a day
+// (npmVersionStore), by their integrities, as npmDelta keys them, then kept
+// by their names too. `[name, version, base, delta]` each, none counted here,
+// nor npm asked.
 async function teamDeltas(deps: ManagedHttpDeps, answers: object[]) {
   const asked = new Map<string, [string, string, string]>()
   for (const answer of answers as { lockfiles?: { added?: unknown; unreviewed?: unknown }[]; review?: { required?: number; reviewedBases?: true } }[]) {
@@ -3041,6 +3048,14 @@ async function teamDeltas(deps: ManagedHttpDeps, answers: object[]) {
     }
   }
   if (asked.size === 0) return []
+  const byVersions = npmVersionDeltaStore<NpmDelta>(deps.db, deps.config.debug)
+  const named = await keptVersionDeltas([...asked.values()].map(([name, version, base]) => versionDeltaKey(name, version, name, base)), byVersions)
+  const told = [...asked.values()].flatMap(([name, version, base]) => {
+    const delta = named.get(versionDeltaKey(name, version, name, base))
+    return delta ? [[name, version, base, delta] as const] : []
+  })
+  for (const [key, [name, version, base]] of [...asked]) if (named.has(versionDeltaKey(name, version, name, base))) asked.delete(key)
+  if (asked.size === 0) return told
   const versions = [...asked.values()].flatMap(([name, version, base]) => [{ name, version }, ...base === '(empty)' || !isExactVersion(base) ? [] : [{ name, version: base }]])
   const kept = await npmVersionStore(deps.db, deps.config.debug).readMany!(versions)
   const integrity = (name: string, version: string) => {
@@ -3052,12 +3067,15 @@ async function teamDeltas(deps: ManagedHttpDeps, answers: object[]) {
     const against = base === '(empty)' ? null : integrity(name, base), other = integrity(name, version)
     return other && (base === '(empty)' || against) ? [{ name, version, base, key: [against, other] as [string | null, string] }] : []
   })
-  if (sides.length === 0) return []
+  if (sides.length === 0) return told
   const counted = await keptNpmDeltas(sides.map(({ key }) => key), npmDeltaStore<NpmDelta>(deps.db, deps.config.debug))
-  return sides.flatMap(({ name, version, base, key: [against, other] }) => {
+  const byIntegrity = sides.flatMap(({ name, version, base, key: [against, other] }) => {
     const delta = counted.get(deltaKey(against, other))
-    return delta ? [[name, version, base, delta]] : []
+    return delta ? [[name, version, base, delta] as const] : []
   })
+  // Kept by their names too, as those npm told of are public, for a later read past the day.
+  await Promise.all(byIntegrity.map(([name, version, base, delta]) => byVersions.write(versionDeltaKey(name, version, name, base), delta, Date.now())))
+  return [...told, ...byIntegrity]
 }
 
 // The app's users `accounts` are, by their logins in lower case, of those
@@ -5165,7 +5183,9 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
 // DELTAS_AT_ONCE at a time. Each read as GET delta reads it, with the
 // reader's access to each package, which is checked again once it is
 // counted: a private one's told only to a reader who may still read it,
-// none told to one whose session is gone.
+// none told to one whose session is gone. Each of two public versions,
+// unpatched, kept by their names too (npmVersionDeltaStore), for a team's
+// Dependencies to tell it without asking npm of them (teamDeltas).
 const MAX_ASKED_DELTAS = 50
 const DELTAS_AT_ONCE = 2
 // A version as npmDelta takes it: its integrity, and its files, loaded as
@@ -5193,6 +5213,7 @@ async function handleNpmDeltas(req: IncomingMessage, res: ServerResponse, deps: 
   res.once('close', () => { if (!res.writableEnded) controller.abort() })
   dropIdle(res)
   const kept = npmDeltaStore<NpmDelta>(deps.db, deps.config.debug), keptVersions = npmVersionStore(deps.db, deps.config.debug)
+  const byVersions = npmVersionDeltaStore<NpmDelta>(deps.db, deps.config.debug)
   const out = openLines(res)
   let stopped = false
   await eachOf(versions, DELTAS_AT_ONCE, async ([name, version, otherVersion, patch, otherName]) => {
@@ -5208,8 +5229,13 @@ async function handleNpmDeltas(req: IncomingMessage, res: ServerResponse, deps: 
       oldPrivate = old?.private === true
       const patched = patch && await (patches.get(patch.hash) ?? patches.set(patch.hash, npmPatchOf(deps, cookie, patch)).get(patch.hash)!)
       const side = deltaSide(doc)
-      line = patched && 'error' in patched ? { ...asOne, error: patched.error, status: patched.status } : { ...asOne, ...await npmDelta(old ? deltaSide(old) : null,
-        patched ? { integrity: `${side.integrity} patch:${patch.hash}`, files: async () => patchedFiles(await side.files(), patched.files) } : side, kept) }
+      if (patched && 'error' in patched) line = { ...asOne, error: patched.error, status: patched.status }
+      else {
+        const delta = await npmDelta(old ? deltaSide(old) : null,
+          patched ? { integrity: `${side.integrity} patch:${patch.hash}`, files: async () => patchedFiles(await side.files(), patched.files) } : side, kept)
+        if (!patched && !doc.private && !old?.private) await byVersions.write(versionDeltaKey(doc.name, doc.version, old?.name ?? name, old?.version ?? '(empty)'), delta, Date.now())
+        line = { ...asOne, ...delta }
+      }
     } catch (err) {
       if (controller.signal.aborted) return
       if (!(err instanceof NpmPackageError)) console.warn('managed: a package delta failed:', err)

@@ -12,6 +12,8 @@ const asked = []
 const pending = []
 mock.module('../client/index.js', { exports: { state } })
 mock.module('../ui/view/client-managed.js', { exports: {
+  // The lines a version changes, asked by rows not drawn here.
+  fetchNpmDeltas: () => new Promise(() => {}),
   fetchPullDependencies(repoId, number) {
     asked.push(number)
     return new Promise((resolve, reject) => { pending.push({ resolve, reject }) })

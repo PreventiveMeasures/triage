@@ -223,7 +223,7 @@ Each pull request's dependencies are found by the base and head commits that the
 The list of lockfiles at the default branch's head and at the baseline commit, and each lockfile's versions by its contents, are kept in the database for a month.
 Another server instance then reads none of them from GitHub again, and after a push that changes no lockfile only the list is read again.
 A pull request's popup, and its repository's tiles, reuse what the tab read.
-The line counts on its rows come with the tab's answer where they are already counted, and the rest are asked for 50 at a time.
+The line counts on its rows come with the tab's answer, and with a pull request's own read, where they are already counted; public versions' are kept by their names and versions for a month. The rest are asked for 50 at a time.
 
 ## A bundle's dependencies
 

@@ -1580,3 +1580,41 @@ test('a team\'s Dependencies read no draft\'s dependencies but where asked for d
   assert.deepEqual((await told('/api/teams/one/dependencies?branches=all')).read, [5], 'no draft\'s for every branch alone')
   assert.deepEqual((await told('/api/teams/one/dependencies?branches=all&drafts=all')).read, [5, 6, 7])
 })
+
+test('a team\'s Dependencies tell the lines its versions change kept by their names and versions, npm\'s documents of them gone; those told by their integrities kept so too', async t => {
+  const { db, read } = await teamFixture(t)
+  const { npmVersionDeltaStore } = await import('../server-managed/npm-kept.ts')
+  const { versionDeltaKey } = await import('../server-managed/npm-delta.ts')
+  const delta = { additions: 2, deletions: 0, typeless: null, binary: false }
+  const deltasOf = async () => (await read()).lines.filter(line => line.repoId === 1).map(line => line.deltas ?? null)
+  const { VERSION_DELTA_KEPT_MS } = await import('../server-managed/npm-kept.ts')
+  await npmVersionDeltaStore(db).write(versionDeltaKey('kept', '1.0.0', 'kept', '(empty)'), delta, Date.now() - VERSION_DELTA_KEPT_MS)
+  assert.deepEqual(await deltasOf(), [null, null], 'none kept past a month, pruned or not')
+  // Kept by their names alone: told, npm's documents of them never read.
+  await npmVersionDeltaStore(db).write(versionDeltaKey('kept', '1.0.0', 'kept', '(empty)'), delta, Date.now())
+  assert.deepEqual(await deltasOf(), [[['kept', '1.0.0', '(empty)', delta]], [['kept', '1.0.0', '(empty)', delta]]])
+
+  // Told by their integrities, npm's document kept within the day: kept by their names too, so told once that document is gone.
+  const other = await teamFixture(t)
+  const counted = { additions: 3, deletions: 1, typeless: null, binary: false }
+  await npmVersionStore(other.db).write('kept', '1.0.0', { name: 'kept', version: '1.0.0', dist: { integrity: 'sha512-kept-by-names' } })
+  await npmDeltaStore(other.db).write('(empty)\0sha512-kept-by-names', counted, Date.now())
+  assert.deepEqual((await other.read()).lines.filter(line => line.repoId === 1).map(line => line.deltas ?? null)[0], [['kept', '1.0.0', '(empty)', counted]])
+  await other.db.deleteUpstreamCacheEntries('npm/version-documents/', Number.MAX_SAFE_INTEGER)
+  assert.deepEqual((await other.read()).lines.filter(line => line.repoId === 1).map(line => line.deltas ?? null)[0], [['kept', '1.0.0', '(empty)', counted]],
+    'told once npm\'s document of it is gone')
+})
+
+test('a pull request\'s dependencies read alone tell the lines its versions wanting reviews change, counted already, as a team\'s Dependencies does; one asked together with others too', async t => {
+  const { db, send } = await teamFixture(t)
+  const { npmVersionDeltaStore } = await import('../server-managed/npm-kept.ts')
+  const { versionDeltaKey } = await import('../server-managed/npm-delta.ts')
+  const delta = { additions: 7, deletions: 1, typeless: null, binary: false }
+  await npmVersionDeltaStore(db).write(versionDeltaKey('kept', '1.0.0', 'kept', '(empty)'), delta, Date.now())
+  const ask = query => send(`/api/admin/repositories/pull-dependencies?${query}`, { who: 'alice' })
+  const alone = (await ask('repoId=1&number=5&review=1')).body
+  assert.deepEqual(alone.deltas, [['kept', '1.0.0', '(empty)', delta]], 'of the version it locks wanting reviews')
+  assert.equal(alone.number, 5)
+  assert.deepEqual((await ask('repoId=1&numbers=5&review=1')).body.deltas, [['kept', '1.0.0', '(empty)', delta]], 'asked together')
+  assert.equal(Object.hasOwn((await ask('repoId=1&number=5')).body, 'deltas'), false, 'none without its review, which tells what wants reviews')
+})

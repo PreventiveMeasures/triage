@@ -12,6 +12,8 @@ const dependencyOptions = []
 let dependencies = () => new Promise(() => {})
 mock.module('../client/index.js', { exports: { state } })
 mock.module('../ui/view/client-managed.js', { exports: {
+  // The lines a version changes, asked by rows not drawn here.
+  fetchNpmDeltas: () => new Promise(() => {}),
   fetchRepositoryIssues(repoId, kind, options) { requests.push([repoId, kind, options]); return answer(repoId, kind, options) },
   fetchRepositoryHistory: () => new Promise(() => {}),
   fetchPullDependencies(repoId, number, options) { dependencyRequests.push([repoId, number]); dependencyOptions.push(options); return dependencies(repoId, number) },

@@ -17,7 +17,7 @@
 // it (`kept`), what a version holds never changing. Access is the caller's
 // to check.
 import { createHash } from 'node:crypto'
-import type { KeptStore } from './npm-kept.ts'
+import { type KeptStore, VERSION_DELTA_KEPT_MS } from './npm-kept.ts'
 import { type Lru, lru } from './lru.ts'
 import { NpmPackageError, type NpmPackageFile, npmFileText } from './npm-packages.ts'
 import { workerTurns } from './worker-turns.ts'
@@ -104,6 +104,21 @@ type Side = { integrity: string; files: () => Promise<NpmPackageFile[]> }
 // A delta's key: the integrities of the version it is against, or none, and
 // of the version.
 export const deltaKey = (base: string | null, other: string) => `${base ?? '(empty)'}\0${other}`
+// The same of two public versions by their names and versions (`(empty)`
+// for none), as npm never gives one other files: its key in
+// npmVersionDeltaStore.
+export const versionDeltaKey = (name: string, version: string, otherName: string, otherVersion: string) =>
+  `${name}@${version}\0${otherVersion === '(empty)' ? '(empty)' : `${otherName}@${otherVersion}`}`
+// Those of `keys` (versionDeltaKey) kept, by key, as of `now`: one kept past
+// VERSION_DELTA_KEPT_MS not, though no write has pruned it yet.
+export async function keptVersionDeltas(keys: string[], kept: KeptStore<NpmDelta>, now = Date.now()): Promise<Map<string, NpmDelta>> {
+  const found = new Map<string, NpmDelta>()
+  for (const [key, row] of keys.length > 0 ? await kept.readMany([...new Set(keys)]) : []) {
+    const known = now - row.at < VERSION_DELTA_KEPT_MS ? deltaOf(row.value) : null
+    if (known) found.set(key, known)
+  }
+  return found
+}
 
 // The delta of `other` (its integrity, and how to read its files) against
 // `base`, or none, as held, else shared with one asked before it, else
