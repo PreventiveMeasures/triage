@@ -352,16 +352,12 @@ class SizeFlow extends LitElement {
   }
 
   renderVersions(node) {
-    // A dependency's file, named by its package: its version, and where it is installed.
-    if (!node.instances) {
-      return node.path && node.label !== node.files[0]
-        ? html`<div class="flow-versions"><div>${node.version || 'Unknown version'}</div><small>${node.path}</small></div>` : null
-    }
-    if (node.instances.length === 0) return null
-    if (node.instances.length === 1) {
-      const instance = node.instances[0]
-      return html`<div class="flow-versions"><div>${instance.version || 'Unknown version'}</div><small>${instance.directory}</small></div>`
-    }
+    // A dependency's file, named by its package, or a package installed
+    // once: its version, and where it is installed.
+    const single = node.instances ? (node.instances.length === 1 ? node.instances[0] : null)
+      : node.path && node.label !== node.files[0] ? { version: node.version, directory: node.path } : null
+    if (single) return html`<div class="flow-versions"><div>${single.version || 'Unknown version'}</div><small>${single.directory}</small></div>`
+    if (!node.instances || node.instances.length === 0) return null
     const counts = this.counts
     const list = html`<ul class="flow-versions">${node.instances.map(instance => html`<li>
       <div><span>${instance.version || 'Unknown version'}</span>${counts ? null : html`<span>${formatBytes(instance.size)}${instance.missing ? '+' : ''}</span>`}</div>
