@@ -1,5 +1,4 @@
-/* The scan's progress: a metric each, its label and count on a line, its bar
-   beneath, then its state at the line's end, all centered on a line,
+/* The scan's progress: a metric each, then its state at the line's end,
    wrapping where they don't fit. */
 .risk-progress {
   display: flex;
@@ -140,7 +139,7 @@ a:hover { text-decoration: underline; }
    what width the other columns leave and cut short, its tooltip telling it
    whole. */
 th:last-child, td:last-child { text-align: left; }
-td { padding-top: .35rem; padding-bottom: .35rem; vertical-align: top; }
+td { padding-block: .35rem; vertical-align: top; }
 .risk-used-column { width: 100%; }
 .risk-clip { display: block; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; }
 .risk-used-in { max-width: 14rem; }
@@ -159,27 +158,16 @@ td { padding-top: .35rem; padding-bottom: .35rem; vertical-align: top; }
 }
 .risk-dependabot-failed { color: var(--high); }
 .risk-error { color: var(--critical); }
-.risk-chip {
+.risk-chip, .risk-score {
   display: inline-block;
-  padding: 0 .45rem;
   border-radius: 999px;
   font-weight: 600;
-  white-space: nowrap;
   color: var(--sev);
   background: color-mix(in srgb, var(--sev) 14%, transparent);
 }
+.risk-chip { padding: 0 .45rem; white-space: nowrap; }
 /* A package's risk score, in its level's color; plain where low. */
-.risk-score {
-  display: inline-block;
-  min-width: 2.25rem;
-  padding: 0 .4rem;
-  border-radius: 999px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-  color: var(--sev);
-  background: color-mix(in srgb, var(--sev) 14%, transparent);
-}
+.risk-score { min-width: 2.25rem; padding: 0 .4rem; font-variant-numeric: tabular-nums; text-align: center; }
 .risk-score.risk-low { color: var(--muted); background: none; font-weight: 400; }
 /* A risk told as kept and since gone stale (a scan assesses it again once
    those with none kept are): dimmed, and said so; and a package only
@@ -267,7 +255,7 @@ td { padding-top: .35rem; padding-bottom: .35rem; vertical-align: top; }
 }
 .risk-scope button[aria-pressed=true] .n, .risk-tabs button[aria-selected=true] .n { color: inherit; }
 /* A few teams, chosen as the scope is: wrapping where they don't fit. */
-.risk-scope { flex-wrap: wrap; max-width: 100%; box-sizing: border-box; }
+.risk-scope { flex-wrap: wrap; max-width: 100%; }
 .risk-scope-bar select { min-width: 14rem; }
 .risk-scope-bar repository-selector { flex: 0 1 20rem; min-width: 14rem; }
 .risk-tabs { width: fit-content; margin-bottom: .5rem; }

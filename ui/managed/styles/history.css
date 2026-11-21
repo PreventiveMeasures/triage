@@ -138,20 +138,13 @@
   font-size: .65rem;
   text-transform: capitalize;
 }
-.kind.triage {
-  color: var(--accent);
-  border-color: rgb(from var(--accent) r g b / .25);
-  background: rgb(from var(--accent) r g b / .06);
-}
-.kind.upload {
-  color: var(--green);
-  border-color: rgb(from var(--green) r g b / .25);
-  background: rgb(from var(--green) r g b / .06);
-}
-.kind.visibility {
-  color: var(--yellow);
-  border-color: rgb(from var(--yellow) r g b / .25);
-  background: rgb(from var(--yellow) r g b / .06);
+.kind.triage { --kind: var(--accent); }
+.kind.upload { --kind: var(--green); }
+.kind.visibility { --kind: var(--yellow); }
+.kind:is(.triage, .upload, .visibility) {
+  color: var(--kind);
+  border-color: rgb(from var(--kind) r g b / .25);
+  background: rgb(from var(--kind) r g b / .06);
 }
 .activity {
   display: flex;
@@ -170,13 +163,6 @@
   border-radius: 50%;
   font-size: .6rem;
   font-weight: 600;
-}
-.activity .avatar img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
 }
 .activity .avatar img[hidden] {
   display: none;

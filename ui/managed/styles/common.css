@@ -260,14 +260,41 @@ input[type=checkbox] {
   width: 1rem;
   height: 1rem;
 }
+/* Users' and teams' row actions. */
 .icon-btn {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
   width: 2rem;
   height: 2rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius, 5px);
+  color: var(--muted);
+  background: transparent;
+}
+.icon-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-active);
+}
+.icon-btn.danger:hover:not(:disabled) {
+  color: var(--critical);
+  background: rgb(from var(--critical) r g b / .1);
 }
 .avatar {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, var(--bg));
   border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border));
+}
+.avatar img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.avatar img.broken {
+  display: none;
 }
 .breadcrumb {
   display: flex;
@@ -331,19 +358,12 @@ input[type=checkbox] {
   .drop-copy > span {
     display: none;
   }
-  .manage-nav {
-    gap: 1.2rem;
-    margin-bottom: 1.75rem;
-  }
   .manage-nav button {
     min-height: 3.25rem;
   }
   h1,
   .head h1 {
     font-size: 1.65rem;
-  }
-  .intro {
-    margin-bottom: 1.5rem;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -419,12 +439,11 @@ input[type=checkbox] {
 }
 /* stylelint-enable media-feature-name-value-no-unknown, length-zero-no-unit */
 .intro {
-  margin: 0 0 1.8rem;
+  margin: 0 0 1.25rem;
   max-width: 46rem;
   color: var(--muted);
   font-size: .875rem;
   line-height: 1.65;
-  margin-bottom: 1.25rem;
 }
 .collection-toolbar {
   display: flex;

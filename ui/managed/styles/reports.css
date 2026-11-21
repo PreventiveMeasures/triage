@@ -1,33 +1,9 @@
-.report-logo.brand-deepview {
-  --brand-bg:#2563eb;
-  --brand-fg:#fff;
-  background: var(--brand-bg);
-}
-.report-logo.brand-claude {
-  --brand-bg:#d97757;
-  --brand-fg:#fff;
-  background: var(--brand-bg);
-}
-.report-logo.brand-codex {
-  --brand-bg:#fff;
-  --brand-fg:#000;
-  background: var(--brand-bg);
-}
-.report-logo.brand-vercel {
-  --brand-bg:#000;
-  --brand-fg:#fff;
-  background: var(--brand-bg);
-}
-.report-logo.brand-markdown {
-  --brand-bg:#374151;
-  --brand-fg:#fff;
-  background: var(--brand-bg);
-}
-.report-logo.brand-piolium {
-  --brand-bg:#fbb829;
-  --brand-fg:#1c1b19;
-  background: var(--brand-bg);
-}
+.report-logo.brand-deepview { --brand-bg: #2563eb; --brand-fg: #fff; }
+.report-logo.brand-claude { --brand-bg: #d97757; --brand-fg: #fff; }
+.report-logo.brand-codex { --brand-bg: #fff; --brand-fg: #000; }
+.report-logo.brand-vercel { --brand-bg: #000; --brand-fg: #fff; }
+.report-logo.brand-markdown { --brand-bg: #374151; --brand-fg: #fff; }
+.report-logo.brand-piolium { --brand-bg: #fbb829; --brand-fg: #1c1b19; }
 .report-logo .fg {
   fill: var(--brand-fg);
 }
@@ -105,6 +81,7 @@
   height: 1.5rem;
   border-radius: 5px;
   overflow: hidden;
+  background: var(--brand-bg);
 }
 .report-logo svg {
   width: 1.1rem;

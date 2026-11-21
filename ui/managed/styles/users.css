@@ -1,38 +1,3 @@
-.icon-btn {
-  display: inline-grid;
-  place-items: center;
-  flex: 0 0 auto;
-  width: 1.8rem;
-  height: 1.8rem;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--ui-radius, 5px);
-  color: var(--muted);
-  background: transparent;
-}
-.icon-btn:hover:not(:disabled) {
-  color: var(--text);
-  background: var(--surface-active);
-}
-.icon-btn.danger:hover:not(:disabled) {
-  color: var(--critical, #e5534b);
-  background: rgb(from var(--critical, #e5534b) r g b / .1);
-}
-.icon-btn svg,
-.btn svg {
-  width: .9rem;
-  height: .9rem;
-}
-.avatar img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.avatar img.broken {
-  display: none;
-}
 .list-head {
   color: var(--muted);
   font-size: .7rem;
@@ -136,9 +101,8 @@
 .directory {
   border: 1px solid var(--border);
   border-radius: var(--ui-radius, 11px);
-  overflow: hidden;
+  overflow: auto hidden;
   background: var(--panel);
-  overflow-x: auto;
 }
 .list-head,
 .users {
