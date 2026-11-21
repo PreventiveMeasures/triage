@@ -726,9 +726,11 @@ function renderBundleSourceCodeWrap(path, details, { content, fileFindings, line
 // The source viewer modal, over any view (render.js mounts it in
 // `#bundle-source-overlay-slot`: a finding card's Code opens it from the
 // findings), but the Code and Search tabs, which show the file in place.
+export const bundleSourceModalShown = () => !!state.bundleSourceFile && state.bundleDetailsTab !== 'code' && state.bundleDetailsTab !== 'search'
+
 export function renderBundleSourceModal() {
+  if (!bundleSourceModalShown()) return nothing
   const path = state.bundleSourceFile
-  if (!path || state.bundleDetailsTab === 'code' || state.bundleDetailsTab === 'search') return nothing
   const details = state.bundleDetails
   const error = details?.sourceError || details?.error
   // A cold open has no details yet; a metadata-only open is still fetching

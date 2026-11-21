@@ -8,9 +8,14 @@
 // every open shadow root (recursively). Import-free on purpose — no Lit,
 // no CSS — so node tests can exercise it with a stub DOM.
 export function hasOpenModal(root = document) {
-  if (root.querySelector(':modal')) return true
+  return hasOpen(':modal', root)
+}
+
+// Does anything on the page match `selector`, inside open shadow roots too?
+export function hasOpen(selector, root = document) {
+  if (root.querySelector(selector)) return true
   for (const el of root.querySelectorAll('*')) {
-    if (el.shadowRoot && hasOpenModal(el.shadowRoot)) return true
+    if (el.shadowRoot && hasOpen(selector, el.shadowRoot)) return true
   }
   return false
 }

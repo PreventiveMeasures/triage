@@ -17,7 +17,7 @@ import { pushed, stepped } from './focus-code-history.js'
 import { bundleFileHistory, stepBundleFile, visitBundleFile } from './bundle-code-history.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { startViewTransition } from './render-transition.js'
-import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
+import { bundleSourceModalShown, refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
 import { keepSourceLine } from './source-wrap.js'
 import { togglePrettySource } from './pretty-source.js'
 import { toggleLockfileView } from './lockfile-view.js'
@@ -26,6 +26,7 @@ import { openCommentDialog, openDownloadBundleDialog, openExportConfirmDialog, o
 import { findingLinkFor } from './finding-link.js'
 import { revealFindingInReport } from './finding-link-nav.js'
 import { closeLinksPreview, getLinksPreview, openLinksPreview } from './links-preview.js'
+import { findingsEscapeLayer, focusNavBlocked, nativeLayerOpen } from './key-layers.js'
 import { FOCUS_SPLIT_STEP, nudgeFocusSplit, resetFocusSplit, startFocusSplitDrag } from './focus-splitter.js'
 import { downloadReportsAsMarkdown, reportsToMarkdown } from './markdown-export.js'
 import { bundleToCycloneDx, bundleToSpdx, sbomBaseName } from './sbom.js'
@@ -1346,25 +1347,26 @@ report.addEventListener('change', (e) => {
   if (gid) setKanbanPopoverGid(gid)
 })
 
-// Esc unwinds one layer per press: the links preview or the kanban modal
-// (not `<dialog>`s, so view transitions stay in charge), then a fullscreen
-// column.
+// Esc unwinds one layer per press, the topmost (key-layers.js): a dialog or
+// popover over it all closes itself, the source viewer has its own listener,
+// then the links preview or the kanban modal (not `<dialog>`s, so view
+// transitions stay in charge), then a fullscreen column.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return
-  if (getLinksPreview()) {
-    // The shared hover tooltip is a popover too — never one to defer to.
-    if (!e.defaultPrevented && !focusNavBlocked(e) && !document.querySelector(':popover-open:not(#styled-tooltip)')) dismissLinksPreview()
-    return
+  const layer = findingsEscapeLayer(e, {
+    sourceViewer: bundleSourceModalShown(),
+    linksPreview: !!getLinksPreview(),
+    kanbanModal: !!state.kanbanPopoverGid,
+    // The expansion outlives a trip to another view, where Esc belongs to
+    // whatever is on screen.
+    kanbanColumn: state.viewMode === 'kanban' && state.kanbanExpandedColumn !== null,
+  })
+  if (layer === 'links-preview') dismissLinksPreview()
+  else if (layer === 'kanban-modal') setKanbanPopoverGid(null)
+  else if (layer === 'kanban-column') {
+    state.kanbanExpandedColumn = null
+    render()
   }
-  if (state.kanbanPopoverGid) {
-    setKanbanPopoverGid(null)
-    return
-  }
-  // The expansion outlives a trip to another view, where Esc belongs to
-  // whatever is on screen.
-  if (state.viewMode !== 'kanban' || state.kanbanExpandedColumn === null) return
-  state.kanbanExpandedColumn = null
-  render()
 })
 
 // Move the focus view's Code panel to `pos`, from a link followed in
@@ -1463,23 +1465,6 @@ report.addEventListener('dblclick', (e) => {
   const handle = e.target.closest?.('[data-focus-splitter]')
   if (handle) resetFocusSplit(handle)
 })
-
-// Whether a key belongs to something else: an open modal dialog, or a field
-// being typed in. Walks the composed path, as an input inside a shadow root
-// retargets `e.target` to its host. App dialogs render their `<dialog>` in a
-// Lit shadow root, out of the querySelector's sight, but showModal() traps
-// focus inside, so it is on the path whichever control holds focus.
-function focusNavBlocked(e) {
-  if (document.querySelector('dialog[open]')) return true
-  for (const el of e.composedPath()) {
-    if (!el || el.nodeType !== 1) continue
-    const tag = el.tagName
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
-    if (tag === 'DIALOG' && el.open) return true
-    if (el.isContentEditable) return true
-  }
-  return false
-}
 
 // ← / → step between findings, from anywhere: in the focus view through the
 // queue, in the kanban with its modal open through the open card's column.
@@ -1915,15 +1900,18 @@ report.addEventListener('repo-cancel', (e) => { setRepoUrl(e, true) })
 // Escape closes the bundle source viewer's side panel, then the viewer —
 // except in the Code slide, where the open file is the tree's selection (no
 // overlay, no close affordance), and deselecting it would strand the reader
-// on the "pick a file" placeholder.
+// on the "pick a file" placeholder. A dialog or popover over them closes
+// first, on its own (key-layers.js).
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return
-  if (state.bundleSourceFindingIdx != null) {
+  const panel = state.bundleSourceFindingIdx != null
+  if (!panel && (!state.bundleSourceFile || (state.currentView === 'bundles' && state.bundleDetailsTab === 'code'))) return
+  if (nativeLayerOpen()) return
+  if (panel) {
     state.bundleSourceFindingIdx = null
     renderPreservingSourceScroll()
     return
   }
-  if (!state.bundleSourceFile || (state.currentView === 'bundles' && state.bundleDetailsTab === 'code')) return
   selectBundleTab(state.bundleDetailsTab)
   render()
 })
