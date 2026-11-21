@@ -39,7 +39,8 @@ mock.module('../ui/view/client-managed.js', { exports: {
 const prettyJson = await import('../common/pretty-json.js')
 let jsonCopies = 0
 mock.module('../common/pretty-json.js', { exports: { ...prettyJson, prettyJsonText: (...args) => { jsonCopies++; return prettyJson.prettyJsonText(...args) } } })
-const { comparedCopy, comparedPrintable, prettyCopy: copyOf, prettyPrintable, prettySettled, prettyTooltip, togglePrettySource } = await import('../ui/view/pretty-source.js')
+const { comparedCopy, comparedListingRefusal, comparedPrintable, prettyCopy: copyOf, prettyPrintable, prettySettled, prettyTooltip, togglePrettySource } = await import('../ui/view/pretty-source.js')
+const { changeBlocks, textLines } = await import('../common/line-diff.js')
 const { renameDiffable } = await import('../ui/view/rename-diff.js')
 // Each copy asked for here notes its path once it comes, as a view repaints,
 // in the list of the test that asked: one that comes after its test ended
@@ -278,6 +279,50 @@ test('a comparison\'s JSON is pretty-printed here, in any comparison, once the t
   assert.equal(comparedPrintable(base, other, 'other', 'a.json', '{"v":2}\n'), true)
   assert.equal(comparedPrintable(base, other, 'other', 'a.json', 'v = 2'), false, 'a text that isn\'t JSON')
   assert.equal(comparedPrintable(base, other, 'other', 'a.min.js', minified), false, 'other code only between managed bundles')
+  assert.deepEqual(requests, [])
+  assert.equal(changeRequests.length, 0)
+})
+
+// A source map and the file it is of, which names it, as a build writes them.
+const mapFiles = value => ({ 'lib/index.js': `function f() { return ${value} }\n//# sourceMappingURL=index.js.map\n`,
+  'lib/index.js.map': JSON.stringify({ version: 3, file: 'index.js', sources: ['../src/index.ts'], sourcesContent: [`export function f() { return ${value} }\n`], names: [], mappings: 'AAAA' }) })
+
+test('a source map is listed here, in any bundle, once the toggle is on, glossed with the file beside it that names it, nothing asked of the server', () => {
+  const files = { ...mapFiles(1), 'lib/spaced.js.map': JSON.stringify(JSON.parse(mapFiles(1)['lib/index.js.map']), null, 2), 'lib/data.map': '{"a":1}' }
+  const details = bundleOf(files), map = files['lib/index.js.map']
+  assert.equal(prettyPrintable(details, {}, 'lib/index.js.map', map), true, 'a local bundle\'s too')
+  assert.equal(prettyPrintable(details, managed, 'lib/index.js.map', map), true)
+  assert.equal(prettyPrintable(details, {}, 'lib/data.map', files['lib/data.map']), false, 'JSON that is no source map')
+  assert.equal(prettyPrintable(details, {}, 'lib/spaced.js.map', files['lib/spaced.js.map']), true, 'offered, to say why it can\'t be')
+  assert.equal(prettyCopy(details, {}, 'lib/index.js.map', map), null, 'none while the toggle is off')
+  state.bundleSourcePretty = 'indented'
+  const copy = prettyCopy(details, {}, 'lib/index.js.map', map)
+  assert.equal(copy.status, 'ready')
+  assert.match(copy.text, /^# Glossed \(@ ‹\) with lib\/index\.js, whose sourceMappingURL names this map\.$/mu)
+  assert.match(copy.text, /^@ function f\(\) \{ return 1 \}$/mu)
+  assert.equal(prettyCopy(details, {}, 'lib/index.js.map', map), copy, 'kept')
+  const spaced = prettyCopy(details, {}, 'lib/spaced.js.map', files['lib/spaced.js.map'])
+  assert.equal(spaced.status, 'error')
+  assert.match(prettyTooltip(spaced), /^Couldn't pretty-print: Its text isn't written as JSON\.stringify writes its JSON/u)
+  assert.deepEqual(requests, [])
+  assert.equal(renders.length, 0)
+})
+
+test('a comparison\'s source map is listed here once the toggle is on, each side glossed with its own file, its diff held to reading back to the new map', () => {
+  const [baseFiles, otherFiles] = [mapFiles(1), mapFiles(2)]
+  const base = { ...bundleOf(baseFiles), managedId: 'bundle-1' }, other = { ...bundleOf(otherFiles), managedId: 'bundle-2' }
+  const copy = (side, content) => comparedCopy(base, other, side, 'lib/index.js.map', content, () => {})
+  assert.deepEqual(copy('base', baseFiles['lib/index.js.map']), { status: 'off' })
+  assert.equal(comparedPrintable(base, other, 'other', 'lib/index.js.map', otherFiles['lib/index.js.map']), true, 'in any comparison')
+  state.bundleSourcePretty = 'indented'
+  const [a, b] = [copy('base', baseFiles['lib/index.js.map']), copy('other', otherFiles['lib/index.js.map'])]
+  assert.match(a.text, /^@ function f\(\) \{ return 1 \}$/mu)
+  assert.match(b.text, /^@ function f\(\) \{ return 2 \}$/mu, 'the other side glossed with its own file')
+  const contents = { before: baseFiles['lib/index.js.map'], after: otherFiles['lib/index.js.map'] }
+  const drawn = { a: textLines(a.text), b: textLines(b.text), blocks: changeBlocks(a.text, b.text) }
+  assert.equal(comparedListingRefusal(base, other, 'lib/index.js.map', 'lib/index.js.map', contents, drawn), null)
+  assert.match(comparedListingRefusal(base, other, 'lib/index.js.map', 'lib/index.js.map', contents, { ...drawn, blocks: [] }), /^the changes drawn don't take the old map's listing to the new side drawn\.$/u, 'no change drawn')
+  assert.match(comparedListingRefusal(base, other, 'lib/index.js.map', 'lib/index.js.map', { ...contents, after: contents.before }, drawn), /^the new side drawn isn't the new map's listing\.$/u, 'held to the very map on the new side')
   assert.deepEqual(requests, [])
   assert.equal(changeRequests.length, 0)
 })

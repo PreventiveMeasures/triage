@@ -72,9 +72,10 @@ export function prettyJSON(data, { width = 120, limit = Infinity } = {}) {
   return lines.join('\n')
 }
 
-// The most characters a text's copy (prettyJsonText) runs to: four times the
-// largest file formatted, far past what a file not nested hundreds deep needs.
-const COPY_LIMIT = 16 * 1024 * 1024
+// The most characters a text's copy (prettyJsonText, and a source map's
+// listing: sourcemap-listing.js) runs to: four times the largest file
+// formatted, far past what a file not nested hundreds deep needs.
+export const COPY_LIMIT = 16 * 1024 * 1024
 
 // A JSON text without the blanks between its tokens.
 const blankless = text => text.replaceAll(/("(?:[^"\\]+|\\.)*")|[\t\n\r ]+/gu, '$1')

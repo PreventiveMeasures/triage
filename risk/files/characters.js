@@ -14,6 +14,17 @@
 export const CONTROLS = /(?![\t\n\r])\p{Cc}|[\u202A-\u202E\u2066-\u2069]/gu
 const NON_ASCII = /\P{ASCII}/u
 
+// What shows as nothing, or as another character, where a viewer draws it as
+// text: the controls but tab and line feed (C0, DEL, C1), the format
+// characters (Cf: zero-width ones, the bidi controls, tags), lone surrogates
+// (Cs; `u` reads a pair as the one character it spells), private use (Co) and
+// unassigned (Cn) code points, the line and paragraph separators, spaces other
+// than a space, the default-ignorable characters and the Braille blank. A code
+// viewer boxes each (ui/view/control-chars.js), and a source map's listing
+// writes a line holding one as JSON (common/sourcemap-listing.js).
+// eslint-disable-next-line no-control-regex
+export const UNSEEN = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u2800\u3000\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}]/u
+
 // A file's text: `kind` 'ascii' or 'utf8', by whether it holds anything past
 // ASCII, else 'binary' (which the server tells by its bytes, sending no
 // text); `controls` the control and invisible characters a text holds, how

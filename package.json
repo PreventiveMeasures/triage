@@ -341,6 +341,7 @@
     "risk/files/readability.js",
     "risk/files/runs-code.js",
     "risk/files/script.js",
+    "risk/files/source-map-link.js",
     "risk/files/stamps.js",
     "risk/npm/assess.js",
     "risk/npm/combined.js",

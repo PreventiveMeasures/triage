@@ -13,6 +13,7 @@ import { npmHostFinding } from './held.js'
 import { HOST_TAGS, npmHostSeverity, npmHostsTagged } from '../files/hosts.js'
 import { npmBecameUnreadable, npmBinaryCode, npmLargeCode, npmUnreadable } from '../files/readability.js'
 import { npmIsScript } from '../files/script.js'
+import { besideFile, isSourceMap, mapNamed } from '../files/source-map-link.js'
 import { SEVERITIES } from '../files/stamps.js'
 import { CREDENTIAL_TAGS, npmFoundAdded, npmRunsCodeFlags, npmRunsCodeTagged, npmRunsCodeWithout } from '../files/runs-code.js'
 import { npmDependencySpecs } from './dependencies.js'
@@ -126,39 +127,16 @@ function npmMajorRelease(was, now) {
 // Whether the open version's file at `path` (`basePath` in the one compared
 // with) had its source map rebuilt with it: its last line, a
 // `sourceMappingURL` comment and no more, names a map file of the package by
-// a plain path from the file's own (MAP_NAME), a source map
+// a plain path from the file's own (source-map-link.js mapNamed), a source map
 // (its `mappings`, or each of an indexed map's `sections`, told), new or
 // changed from the one at its path, or beside the file's own before it was
 // renamed, as a build writes them together. An attack editing a built file
 // leaves its map as it was.
-const SOURCE_MAP_FILE = /^\s*(?:\/\/[#@] sourceMappingURL=(\S+)|\/\*[#@] sourceMappingURL=(\S+?)\s*\*\/)\s*$/u
-// A map name a build writes (`a.js.map`, `../maps/a.map`): segments of
-// letters, digits and `._~@+-`, as a browser reads them alike. One at a URL,
-// from a site's root, or with an escape or a backslash names none.
-const MAP_NAME = /^(?:[\w.~@+-]+\/)*[\w.~@+-]+\.map$/u
-function besideFile(file, name) {
-  const parts = file.split('/').slice(0, -1)
-  for (const part of name.split('/')) {
-    if (part === '..' && parts.length === 0) return null
-    if (part === '..') parts.pop()
-    else if (part !== '.') parts.push(part)
-  }
-  return parts.join('/')
-}
 function rebuiltWithMap(base, other, path, basePath) {
-  const text = bundleFilesAsMap(other).get(path)
-  const directive = typeof text === 'string' ? SOURCE_MAP_FILE.exec(text.trimEnd().split('\n').at(-1)) : null
-  const name = directive?.[1] ?? directive?.[2]
-  if (!name || !MAP_NAME.test(name)) return false
+  const name = mapNamed(bundleFilesAsMap(other).get(path))
+  if (!name) return false
   const [map, was] = [bundleFilesAsMap(other).get(besideFile(path, name)), bundleFilesAsMap(base)]
   return isSourceMap(map) && map !== was.get(besideFile(path, name)) && map !== was.get(besideFile(basePath, name))
-}
-const isSourceMap = text => {
-  try {
-    const json = JSON.parse(text)
-    return typeof json?.mappings === 'string'
-      || (Array.isArray(json?.sections) && json.sections.length > 0 && json.sections.every(section => typeof section?.map?.mappings === 'string'))
-  } catch { return false }
 }
 
 // The files become unreadable as a finding says them: red, but orange in a
