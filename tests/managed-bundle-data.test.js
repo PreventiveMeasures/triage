@@ -170,6 +170,7 @@ test('npm reads name a registry answer that could not be read apart from an unre
     [502, 'upstream-too-large', "The npm registry's answer for this package is too large to read here."],
     [502, 'upstream-unavailable', "The npm registry couldn't be reached."],
     [422, 'bad-tarball', "This package's tarball couldn't be read."],
+    [422, 'tarball-installs-differ', "This package's tarball installs differently with npm and pnpm, so it isn't shown: it holds a file outside its package directory, or a hard link."],
   ]) {
     t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ error }, { status })))
     for (const read of [() => fetchNpmRisk('temp', '0.4.0'), () => fetchNpmPackage('temp', '0.4.0')]) {

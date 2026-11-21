@@ -81,10 +81,12 @@ Chips at the end of the picker row flag what calls for a look:
 Compare's Overview lists the dependencies only one version has and the ranges that changed.
 A new dependency is tagged with its package's download tier, and with its age or `published later` where its package did not exist when the older version was published.
 Compare's Files section lists every changed file; files that are not text compare by digest.
+In Code, a JavaScript or TypeScript file that is not text (not UTF-8, or holding a NUL) is told as code node runs all the same, not as a binary file, though no text diff of it is shown.
 
 In Code, the pretty-print toggle is offered wherever formatting changes the diff, and on any JSON file, with its three states, as in Review.
 For JavaScript minified on both sides, lines that differ only in names the minifier renamed are drawn faint and counted apart.
-**Hide renamed names** gives the old side the new side's names; where either side reads names (`.name`, `.toString`, `.stack`), a note warns that values may change.
+**Hide renamed names** gives the old side the new side's names; where either side reads names (`.name`, `.toString`, `.stack`), or a script's top-level names were renamed as its own (globals where it runs as a classic script), a note warns that values may change.
+The viewer draws the server's diff only where its blocks take the old side to the new one as shown.
 **Hide type-only changes** hides a declaration file's change where the server proves it touches types alone.
 Where the file's imports, or anything else it leaves to run, changed too (a zod schema's declarations added, an import added beside changed types), only those lines show, with a row where its types stand between them, as a file changed in types alone is told.
 A last line naming the file's own source map, as tsc writes one (`//# sourceMappingURL=user.d.ts.map` ending `user.d.ts`, a newline after it or none), counts among its types; any other source map comment shows.
@@ -168,5 +170,6 @@ A package is refused before download when the registry's declared unpacked size 
 | Package loads, registry reads or risk assessments at once | Server capacity | 429 `npm-busy` |
 | Compare's line counts waiting | Server capacity | 429 `delta-busy`, or 504 `delta-timeout` after a minute |
 | A malformed tarball, one with a path or symlink leaving it, or one naming a path twice | | 422 `bad-tarball` |
+| A tarball installers lay out differently: a file outside its package directory, which pnpm installs and npm does not, or a hard link, which pnpm 10 and 11 install as an empty file | | 422 `tarball-installs-differ` |
 
-Directories and links in a tarball are never extracted.
+Directories and symlinks in a tarball are never extracted, as no installer extracts them.

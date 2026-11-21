@@ -127,9 +127,10 @@ const npmRenameDiff = (name, version, otherVersion, params) => `/api/npm/rename-
 async function renamedBuilds() {
   const before = (await formatted(built)).replace('add(a, b)', 'add(c, d)').replace('a + b', 'c + d')
   const after = await formatted(rebuilt)
-  // No name read; the function's first two lines differ in its renamed names alone.
+  // No name read, none taken for a script's own (a module's names are); the function's first two lines
+  // differ in its renamed names alone.
   const marks = [{ a0: 0, a1: 2, b0: 0, b1: 2 }]
-  return { before, blocks: changeBlocks(before, after), reason: null, reads: [], marks, ignoringWhitespace: { blocks: changeBlocks(before, after, true), marks },
+  return { before, blocks: changeBlocks(before, after), reason: null, reads: [], assumed: [], marks, ignoringWhitespace: { blocks: changeBlocks(before, after, true), marks },
     hash: fileHash(built), otherHash: fileHash(rebuilt), prettyHash: fileHash(await formatted(built)), otherPrettyHash: fileHash(after) }
 }
 // A minifier's two builds of a module: a function's names renamed, a number changed.

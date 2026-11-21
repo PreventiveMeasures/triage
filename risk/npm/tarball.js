@@ -19,10 +19,14 @@ export const MAX_TAR_BYTES = 96 * 1024 * 1024
 
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
-// The files of a tar archive, by path: their bytes. A file at its top is not
-// extracted, and one under another top directory at the same path replaces
-// an earlier one, as extraction would. Past MAX_TAR_ENTRIES it is given up on
-// as `package-too-large`, before any more of it is read.
+// The files of a tar archive, by path: their bytes. One under another top
+// directory at the same path replaces an earlier one, as extraction would. A
+// file at its top, under no directory, and a hard link are refused
+// (`tarball-installs-differ`), as installers lay them out apart (npm-packages.ts
+// readNpmTar): npm extracts neither, pnpm installs a file at the top at the
+// package's top, and pnpm 10 and 11 write a hard link as an empty file. Past
+// MAX_TAR_ENTRIES it is given up on as `package-too-large`, before any more of
+// it is read.
 function npmTarFiles(tar) {
   let entries
   try {
@@ -34,8 +38,9 @@ function npmTarFiles(tar) {
   const files = new Map()
   let total = 0
   for (const { name, type, data } of entries) {
-    const slash = name.indexOf('/')
-    if ((type !== 'file' && type !== 'contiguous-file') || slash === -1) continue
+    const file = type === 'file' || type === 'contiguous-file', slash = name.indexOf('/')
+    if (type === 'hardlink' || (file && slash === -1)) throw new Error('tarball-installs-differ')
+    if (!file) continue
     const path = name.slice(slash + 1)
     total += data.length - (files.get(path)?.length ?? 0)
     files.set(path, data)

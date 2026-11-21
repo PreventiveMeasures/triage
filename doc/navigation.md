@@ -126,5 +126,6 @@ The first picker chooses what to compare with, the second the side that is open,
 Its Overview counts files, size and lines of code on each side, and its Code view shows the diffs beside a tree of changed files.
 Each file is flagged where it is hard to review or risky: unusual characters, large or obfuscated content, entry points and licenses, install scripts, code capabilities (`eval`, `child_process`, `credentials`, `whole env`, `publish`, `shell`, `persistence`) and hosts known from malicious packages, each marked when new.
 Between stasis bundles it also compares each file's recorded format, execute bit and entry-point status.
-Whitespace changes can be hidden, as `diff -b` does, in languages where whitespace has no meaning outside strings.
+Whitespace changes can be hidden, as `diff -b` does, in languages where whitespace has no meaning outside strings, but not where that would hide blanks of more than one kind changing, or blanks within a string, a template or a regular expression: the file's whitespace changes then show, with a note why.
+A changed line too long for a word diff, a minified one's, has what changed in it marked between what its two sides share at either end.
 For repository directories, see [code-viewer.md](./code-viewer.md).
