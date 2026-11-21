@@ -574,9 +574,16 @@ test('a Stasis lockfile’s dependencies are its npm versions with an evidence f
     ['node_modules/git', { name: 'git', version: '1.0.0', repo: { github: 'org/git', commit: 'c'.repeat(40) }, files: { 'index.js': 'x' } }],
     ['node_modules/nameless', { files: { 'index.js': 'x' } }],
     ['vendor/crate', { ecosystem: 'cargo', name: 'crate', version: '1.0.0', files: { 'src/lib.rs': 'x' } }],
+    ['node_modules/.pnpm/vendored@file+vendor+lib/node_modules/vendored', { name: 'vendored', version: '1.0.0', ecosystem: 'npm:directory', directory: 'vendor/lib',
+      files: { 'index.js': 'x' } }],
   ])
   assert.deepEqual(lockfileDependencies({ modules }), [{ name: 'a', version: '1.0.0', integrity }, { name: 'b', version: '2.0.0', integrity, patch: 'ab'.repeat(32) },
-    { name: 'git', version: '1.0.0' }], 'the project’s own, a package of its manifest alone and another ecosystem’s left out; one from git with no integrity')
+    { name: 'git', version: '1.0.0' }], 'the project’s own, one installed from its directory, a package of its manifest alone and another ecosystem’s left out; one from git with no integrity')
+  const directory = { name: 'vendored', version: '1.0.0', ecosystem: 'npm:directory', directory: 'vendor/lib', files: { 'index.js': 'x' } }
+  for (const malformed of [{ ...directory, integrity }, { ...directory, directory: undefined }, { ...directory, directory: '' }]) {
+    assert.throws(() => lockfileDependencies({ modules: new Map([['node_modules/vendored', malformed]]) }), { code: 'directory-package-malformed' },
+      'one installed from a directory names it and no integrity')
+  }
 })
 
 test('a lockfile’s build, behind no request, gives its slot up to a build asked for, and is refused while one holds it', async () => {

@@ -48,6 +48,9 @@ A version can be reviewed only where it is locked from npm's registry, by name o
 These versions fail the pull request's review even where its lockfiles locked them before: one from git, a tarball another host serves (a mirror's too) or a tarball link with a query, and one locked with no integrity.
 The review also fails for a changed lockfile that couldn't be read, a Bun lockfile, lockfiles left unread because the pull request changes too many files or directories, or a directory that locks more versions than are checked (see [Limits](#limits)).
 A file of the project's own is not reviewed.
+Neither is a package installed from a directory (a `file:` dependency, which pnpm and yarn copy into `node_modules`): it is the repository's own code, wherever the directory is, not any registry's package of its name.
+Stasis tags one `npm:directory` (an ecosystem's `:directory`), naming the directory it was copied from and no integrity, as no archive was installed; triage reviews none, asks the [host](#host-reviewed-dependencies) of none, and audits none for advisories.
+A record so tagged with an integrity, or naming no directory, fails its [Stasis build](#stasis-entries) and its [bundle's review](#a-bundles-dependencies), and its bundle's advisories list it as not audited.
 
 ## Patched versions
 
@@ -110,7 +113,7 @@ Under **Only those selected**, the settings also list the `stasis.config.json` f
 A selected one holds the review to the npm versions its entries reach: what ships, without the devDependencies and unused packages a lockfile also locks.
 It can't be named under **All but those selected** (`400`).
 
-What it reaches is what Stasis builds in its directory, as `stasis github-bundle --lockfile-only` does; nothing of the repository runs, and only the versions are kept, each with the integrity it was installed by and the hash of the patch pnpm applied to it.
+What it reaches is what Stasis builds in its directory, as `stasis github-bundle --lockfile-only` does; nothing of the repository runs, and only the versions are kept, each with the integrity it was installed by and the hash of the patch pnpm applied to it, but [one installed from a directory](#what-cant-be-reviewed), the repository's own.
 Each version is then reviewed as the lockfiles in that directory or above it lock it at the commit, the nearest that locks it as it was installed first, so a [patched version](#patched-versions) is reviewed as patched.
 A version none of them locks can't be reviewed (**can't review**).
 
@@ -220,7 +223,7 @@ The line counts on its rows come with the tab's answer where they are already co
 ## A bundle's dependencies
 
 A Stasis bundle attached to a repository whose review is in effect for the reader shows a **Dependency review** line among its Overview's facts.
-It checks the npm package versions the bundle holds, those it has code of as `stasis audit` counts them, as they are locked at the commit its stamp names.
+It checks the npm package versions the bundle holds, those it has code of as `stasis audit` counts them, as they are locked at the commit its stamp names; not [one installed from a directory](#what-cant-be-reviewed), the repository's own.
 They are read from the lockfiles in the bundle's directory and the directories above it, as an install there reads a workspace's root lockfile; a sibling directory's are not.
 Each version is checked as the nearest of those directories that locks it locks it, every integrity and patch it locks it with.
 

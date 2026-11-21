@@ -10,6 +10,7 @@ import { brotliOptions } from '@exodus/stasis-core/brotli'
 import { LOCK_FILE, dependencyEcosystem, integrityHex } from '@exodus/stasis-core/util'
 import { HttpError, createClient } from '@preventive/upstream/github.js'
 import { githubBundleFilename } from './bundle-build.ts'
+import { isDirectoryPackage } from '../common/managed/directory-packages.ts'
 import { bundleBuildDiagnostic } from './bundle-build-diagnostics.js'
 import { MAX_STASIS_CONFIG_BYTES, STASIS_CONFIG, namesLockfiles, parseStasisConfig } from './stasis-config.ts'
 
@@ -189,12 +190,14 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
 // The npm package versions a Stasis lockfile holds code of (an evidence
 // file, by Stasis's audit rule), each once as it was installed: with its
 // tarball's integrity and, patched, pnpm's hash of its patch (a sha256 in
-// hex, as pnpm's lockfile names it), where the lockfile attests them.
+// hex, as pnpm's lockfile names it), where the lockfile attests them. One
+// installed from a directory, the repository's own code, is none of them;
+// one whose record tells it malformed fails the build (isDirectoryPackage).
 export function lockfileDependencies(lockfile) {
   const found = new Map()
   for (const [dir, info] of lockfile.modules) {
     const { name, version } = info
-    if (dir === '.' || dependencyEcosystem(dir, info.ecosystem) !== 'npm' || typeof name !== 'string' || !name || typeof version !== 'string' || !version) continue
+    if (dir === '.' || isDirectoryPackage(info) || dependencyEcosystem(dir, info.ecosystem) !== 'npm' || typeof name !== 'string' || !name || typeof version !== 'string' || !version) continue
     if (!Object.keys(info.files).some(file => isEvidenceFile(name, version, file, 'npm'))) continue
     const patch = typeof info.patch?.integrity === 'string' ? integrityHex(info.patch.integrity) : undefined
     const one = { name, version, ...(typeof info.integrity === 'string' && { integrity: info.integrity }), ...(patch && { patch }) }
