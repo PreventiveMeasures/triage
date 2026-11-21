@@ -1,32 +1,18 @@
-// Lazy loader for prismjs syntax highlighting. Mirrors the brotli
-// pattern: a runtime-string dynamic import keeps `prism.js` (and the
-// grammar packs) out of the main view.js bundle. First call kicks
-// the import; subsequent calls share the promise so prism downloads
-// + parses once per session.
-//
-// Languages are detected from Stasis format with file extension fallback (`langForPath`, for the
-// source viewers) or from a fence's info string (`langForTag`, for the
-// code blocks in finding descriptions). Unknown ones resolve to null
-// so the caller falls back to plain text without paying the import
-// cost.
+// Lazy prismjs highlighting: `prism.js` and its grammars load on first use,
+// through a runtime import that keeps them out of the main view.js bundle.
+// Languages come from a path (`langForPath`, the source viewers) or a fence
+// tag (`langForTag`, description code blocks); unknown ones resolve to null,
+// plain text without the download.
+export { langForPath } from '../../common/code-language.js'
+import { utf8ByteLength } from '../../common/utf8.js'
 
 let loadPromise = null
 
 function loadPrism() {
-  if (loadPromise) return loadPromise
-  loadPromise = (async () => {
-    // Path held in a variable so esbuild can't statically resolve
-    // it — keeps prismjs out of the main bundle. The browser
-    // resolves the URL relative to the page; works at any deploy
-    // path (root or subdirectory).
-    const path = './prism.js'
-    return await import(path)
-  })()
-  return loadPromise
+  // Through a variable, so esbuild can't resolve it into the main bundle.
+  const path = './prism.js'
+  return (loadPromise ??= import(path))
 }
-
-export { langForPath } from '../../common/code-language.js'
-import { utf8ByteLength } from '../../common/utf8.js'
 
 // Sources over 1 MiB stay plain text. Prism tokenizes on the main thread,
 // at about a second per MiB, into markup several times the source's size,
@@ -37,26 +23,12 @@ export function highlightable(code) {
   return code.length <= HIGHLIGHT_MAX_BYTES && utf8ByteLength(code) <= HIGHLIGHT_MAX_BYTES
 }
 
-// Fence info string → prism language, for the ```ts blocks a finding
-// description carries (format.js codeBlockSegments reads the tag off
-// the fence; render-finding.js asks for a colour by it).
-//
-// A HARD allowlist, not a lookup that falls through to the tag itself.
-// It names exactly the grammars `ui/prism.js` bundles, so an unlisted
-// tag renders as plain monospace rather than paying a ~50KB download
-// to find out Prism can't colour it either — and a report can't get
-// the app to try loading a grammar by writing a tag. Adding a language
-// means adding BOTH its `prismjs/components/…` import over there and
-// its tags here; the two lists are meant to be read together.
-//
-// Aliases are the ones a report actually writes: the extensions (a
-// `ts` / `sh` fence), the full names (```typescript), and the shell
-// synonyms. Null-prototype so a tag like `constructor` can't alias an
-// inherited key.
-//
-// C is in the list because cpp and objectivec are: both grammars
-// extend it, so `ui/prism.js` has to import it either way and
-// answering a plain C fence with it costs nothing further.
+// Fence tag → prism language: a HARD allowlist of exactly the grammars
+// `ui/prism.js` bundles (adding a language means both lists), so an unlisted
+// tag costs no ~50KB download and a report can't make the app fetch a
+// grammar. Aliases are the ones reports write; null-prototype, so
+// `constructor` aliases nothing. C is there because cpp and objectivec
+// extend it anyway.
 const TAG_TO_LANG = {
   __proto__: null,
   js: 'javascript', javascript: 'javascript', mjs: 'javascript', cjs: 'javascript', node: 'javascript',
@@ -85,10 +57,8 @@ export function langForTag(tag) {
   return TAG_TO_LANG[tag.toLowerCase()] ?? null
 }
 
-// Returns highlighted HTML string when prismjs supports the
-// language and the source is not too large to highlight; null
-// otherwise (caller renders plain text). Async
-// because the first call may need to download the prism bundle.
+// Highlighted HTML, or null (plain text) for an unsupported language or an
+// oversized source; async for the first call's download.
 export async function highlight(code, lang, resolveString = null) {
   if (!lang || !highlightable(code)) return null
   try {
@@ -99,23 +69,12 @@ export async function highlight(code, lang, resolveString = null) {
   }
 }
 
-// Split highlighted markup into one HTML string per source line.
-//
-// A grammar's tokens don't respect line boundaries — a fenced block in
-// markdown is a single token with newlines inside it — so a per-line
-// gutter can't just chop the string at each `\n`: a cut mid-token
-// leaves one line with an unclosed `<span>` and the next with a stray
-// closer, and the browser's parser then re-nests everything after it.
-// This closes every tag that is open at a newline and reopens the same
-// stack on the next line, so each line stands alone.
-//
-// String surgery rather than a DOM walk because the input is Prism's
-// own output and our source-link buttons: no self-closing tags, no
-// comments, and every `<`, `>` and `&` in the source text already
-// escaped — so the only `<` that begins a tag is one Prism wrote.
-// Returns the same number of entries `code.split('\n')` would, which
-// is what lets the caller pair them with line numbers (and fall back to
-// plain text if they ever disagree).
+// Highlighted markup as one HTML string per source line. A token can span
+// lines (a markdown fence is one), so every tag open at a newline is closed
+// there and reopened on the next line. String surgery suffices: the input
+// is Prism's (and our source-link buttons') — no self-closing tags or
+// comments, every `<` `>` `&` of the text escaped. As many entries as
+// `code.split('\n')`, so callers can pair them with line numbers.
 export function splitHighlightedLines(html) {
   const lines = []
   const open = []
@@ -135,8 +94,7 @@ export function splitHighlightedLines(html) {
     }
     if (lt === -1) break
     const gt = html.indexOf('>', lt)
-    // An unterminated tag can only mean the input isn't what this
-    // expects; keep the remainder verbatim rather than dropping it.
+    // Unexpected input: keep the rest verbatim.
     if (gt === -1) { current += html.slice(lt); break }
     const tag = html.slice(lt, gt + 1)
     if (tag.startsWith('</')) open.pop()

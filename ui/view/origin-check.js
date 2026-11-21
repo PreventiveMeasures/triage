@@ -1,121 +1,62 @@
-// One-shot origin check for the legacy view hosts. The production
-// view now lives on triage.space; users landing on
-// deepaudit.dev/view.html or chalker.github.io/deepview/view.html
-// with no local data are bounced over silently, those with local
-// data get a styled modal to either migrate or keep editing in
-// place while they export.
-//
-// What each transfer mechanism carries (so the prompt doesn't lie
-// about the migration paths):
-//
-//   triage-sync (deepaudit.dev only)
-//     Per-workspace TRIAGE STATE — markers, triage buckets,
-//     comments, fixes, per-report ignores. NOT the workspace record
-//     (private key + report list) or report content; both need a
-//     manual re-import on the new origin before the synced triage
-//     can reattach.
-//
-//   <workspace-export> (sidebar button on each workspace)
-//     One workspace + its reports + their triage in one .gz drop —
-//     the right move for a non-synced workspace migration.
-//
-//   DeepView.export() / <triage-export-dialog>
-//     Flat persisted-id triage table + saved repo URLs, keyed by
-//     finding id. No reports/workspaces. For triage on loose
-//     (unattached) reports, or as a top-up after a workspace
-//     re-import.
-//
-// Modal: native <dialog> for focus-trap + Esc-to-cancel, light-DOM
-// render so `.origin-migration-dialog` rules in styles/dialogs.css apply.
+// One-shot check for the legacy view hosts (deepaudit.dev,
+// chalker.github.io/deepview): the view lives on triage.space now. A visitor
+// with no local data is redirected silently; one with data gets a modal to
+// migrate or keep editing while they export. What carries over, so the
+// prompt doesn't lie about it:
+//   triage-sync (deepaudit.dev only): per-workspace triage state, not the
+//     workspace record or reports, which need re-importing first;
+//   <workspace-export>: a workspace, its reports and their triage, one .gz;
+//   DeepView.export(): the flat triage table and saved repo URLs only.
+// Light DOM, so styles/dialogs.css `.origin-migration-dialog` applies.
 
 import { LitElement, html } from 'lit'
 import { hasAnyBundles, listFiles, listWorkspaces } from '#client/index.js'
 
 const TARGET_URL = 'https://triage.space/'
 
-// Hosts that should redirect / prompt. `pathPrefix` gates GitHub
-// Pages (where chalker.github.io serves multiple projects under
-// their own path) so other repos under the same hostname aren't
-// caught by this check. `supportsSync` tailors the prompt: the
-// github.io static build has no sync layer, so we don't claim any
-// workspace will persist on its own there.
+// `pathPrefix` keeps other GitHub Pages projects on the same host out;
+// `supportsSync` tailors the prompt (the github.io build has no sync).
 const LEGACY_HOSTS = [
   { hostname: 'deepaudit.dev', pathPrefix: '/', supportsSync: true },
   { hostname: 'chalker.github.io', pathPrefix: '/deepview/', supportsSync: false },
 ]
 
 function matchedHost() {
-  for (const host of LEGACY_HOSTS) {
-    if (location.hostname === host.hostname && location.pathname.startsWith(host.pathPrefix)) {
-      return host
-    }
-  }
-  return null
+  return LEGACY_HOSTS.find((host) => location.hostname === host.hostname && location.pathname.startsWith(host.pathPrefix)) ?? null
 }
 
-// localStorage keys holding user data outside the report/workspace
-// stores. Hard-coded rather than imported because `client/triage.js`
-// keeps its key names private; canonical defs live there
-// (`TRIAGE_KEY`, `TRIAGE_PENDING_KEY`) and in `client/state.ts`
-// (`REPO_URLS_KEY`). Keep this list in sync whenever those move.
-//
-//   deepview.triage          compressed triage blob — present only
-//                            when ≥1 entry exists (saveTriage removes
-//                            the key on an empty payload).
-//   deepview.triage.pending  uncompressed pre-compress snapshot — same
-//                            "present ⇒ non-empty" invariant.
-//   deepview.repoUrls        per-report repo URL map; written even
-//                            when empty, so parse to confirm entries.
+// User data in localStorage beside the report / workspace stores, under
+// the names client/triage.js (`TRIAGE_KEY`, `TRIAGE_PENDING_KEY`) and
+// client/state.ts (`REPO_URLS_KEY`) keep private — keep in sync. The triage
+// keys exist only when non-empty; the repo URL map is written even empty.
 const TRIAGE_KEYS = ['deepview.triage', 'deepview.triage.pending']
 const REPO_URLS_KEY = 'deepview.repoUrls'
 
+// A failed probe (or corrupt JSON) counts as data throughout: a false
+// positive costs a dialog, a false negative navigates away from data the
+// user can't see yet.
 function hasPersistedTriage() {
   try {
-    for (const key of TRIAGE_KEYS) {
-      if (localStorage.getItem(key)) return true
-    }
-  } catch { return true }
-  try {
+    if (TRIAGE_KEYS.some((key) => localStorage.getItem(key))) return true
     const raw = localStorage.getItem(REPO_URLS_KEY)
-    if (raw) {
-      const parsed = JSON.parse(raw)
-      if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
-        return true
-      }
-    }
+    if (!raw) return false
+    const parsed = JSON.parse(raw)
+    return Boolean(parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0)
   } catch {
-    // Corrupt JSON or quota probe failure — treat as data so the
-    // user gets the prompt instead of a silent redirect.
     return true
   }
-  return false
 }
 
+// Triage on a report since deleted lingers under its finding id, so it
+// counts; so do OPFS bundles, which have no automatic carry-across.
 async function hasLocalData() {
-  // Default to "has data" on probe failure — a false positive only
-  // costs a confirm dialog, while a false negative would silently
-  // navigate the user away from data they can't yet see. Triage
-  // entries / saved repo URLs count too, because a user can have
-  // triage attached to a report they later deleted from OPFS — the
-  // entries linger under their finding id and need a DeepView.export()
-  // before this tab unloads.
   if (hasPersistedTriage()) return true
   let files = []
   try { files = await listFiles() } catch { return true }
   if (files.length > 0) return true
   try { if (listWorkspaces().length > 0) return true } catch { return true }
-  // OPFS-stored sourcemap / stasis bundles also count — they're
-  // origin-scoped and have no automatic carry-across (the user has
-  // to re-drop the originals on the new origin), so a silent
-  // redirect would strip them off the legacy origin with no chance
-  // to fish out the integrity hashes / filenames first.
-  //
-  // Use `hasAnyBundles()` (directory-entry probe) instead of
-  // `listBundles()` here — this code path runs BEFORE the boot
-  // unlock gate, and `listBundles` reads the encrypted
-  // `_meta.json`, which returns `[]` under a locked vault.
-  // Probing directory entries doesn't touch the envelope and
-  // surfaces encrypted bundles correctly.
+  // Directory entries, not `listBundles()`: this runs before the boot unlock
+  // gate, and the encrypted `_meta.json` reads as `[]` while locked.
   try { return await hasAnyBundles() } catch { return true }
 }
 
@@ -124,8 +65,6 @@ class OriginMigrationDialog extends LitElement {
     supportsSync: { attribute: false },
   }
 
-  // Light DOM — `.origin-migration-dialog` rules live in styles/dialogs.css
-  // next to the lock overlay's. A shadow root would hide them.
   createRenderRoot() { return this }
 
   constructor() {
@@ -134,41 +73,27 @@ class OriginMigrationDialog extends LitElement {
   }
 
   firstUpdated() {
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.showModal()
-    // Default focus on "Keep editing" so an accidental Enter doesn't
-    // navigate the user away from their data. Migration is the
-    // explicit-click path.
-    const stay = this.querySelector('button.om-stay')
-    if (stay) stay.focus()
+    this.querySelector('dialog')?.showModal()
+    // "Keep editing" takes the focus, so a stray Enter doesn't navigate
+    // away from the user's data.
+    this.querySelector('button.om-stay')?.focus()
   }
 
   _finish(result) {
     if (this._settled) return
     this._settled = true
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.close()
+    this.querySelector('dialog')?.close()
     this.dispatchEvent(new CustomEvent('resolve', { detail: result }))
   }
 
-  // Native <dialog> fires `close` for Esc and backdrop — same as
-  // cancel ("keep editing"). The explicit Cancel button reuses the
-  // path via _onStay.
-  _onClose = () => this._finish(false)
-
+  // Also the dialog's `close` (Esc, backdrop).
   _onStay = () => this._finish(false)
   _onMigrate = () => this._finish(true)
 
   render() {
-    // Destination is rendered as an explicit anchor with
-    // target="_blank" so a curious user can pop the new page open
-    // without losing their current edits — matches the link
-    // conventions elsewhere in ui/view (rel="noopener noreferrer"
-    // for external destinations, see fix-link-dialog /
-    // triage-conflict-dialog). The current-origin label stays a
-    // plain <code> chip since it's just descriptive.
+    // A new-tab link, so the new page opens without losing current edits.
     const target = () => html`<a class="om-link" href=${TARGET_URL} target="_blank" rel="noopener noreferrer">${TARGET_URL}</a>`
-    return html`<dialog class="origin-migration-dialog" @close=${this._onClose}>
+    return html`<dialog class="origin-migration-dialog" @close=${this._onStay}>
       <header class="om-head">
         <h3>This deepview build has moved</h3>
         <p>
