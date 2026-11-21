@@ -90,13 +90,8 @@ class ExportConfirmDialog extends AppDialog {
   async _onDropFilter(key) {
     const at = this.filters.findIndex((f) => f.key === key)
     if (at === -1) return
-    const summary = exportSelectionSummary(this.mode, { ...this.fields, ...this.filters[at].clear })
-    this._relaxed = true
-    this.fields = summary.fields
-    this.filters = summary.filters
-    this.included = summary.included
-    this.excluded = summary.excluded
-    this.total = summary.total
+    const { fields, filters, included, excluded, total } = exportSelectionSummary(this.mode, { ...this.fields, ...this.filters[at].clear })
+    Object.assign(this, { _relaxed: true, fields, filters, included, excluded, total })
     await this.updateComplete
     const buttons = [...this.renderRoot.querySelectorAll('button[data-drop]')]
     const next = buttons[Math.min(at, buttons.length - 1)]
@@ -197,18 +192,11 @@ customElements.define('export-confirm-dialog', ExportConfirmDialog)
 // `{ confirmed, view, fields, mode, oneSamplePerGroup }`; one that can't show
 // is a cancel.
 export function openExportConfirmDialog(mode = 'download') {
-  const summary = exportSelectionSummary(mode)
+  const { included, excluded, total, filters, fields, bucketLabel, ...summary } = exportSelectionSummary(mode)
   // The one thing the two bases disagree on, and the reader may flip to Print
   // later: take it on the print basis now rather than recount per tab click.
   const focusedOnly = mode === 'print' ? summary.focusedOnly : exportSelectionSummary('print').focusedOnly
-  return openAppDialog('export-confirm-dialog', {
-    mode,
-    included: summary.included,
-    excluded: summary.excluded,
-    total: summary.total,
-    filters: summary.filters,
-    fields: summary.fields,
-    bucketLabel: summary.bucketLabel,
-    focusedOnly,
-  }, { conflict: () => ({ confirmed: false, view: false, fields: null, mode }) })
+  return openAppDialog('export-confirm-dialog', { mode, included, excluded, total, filters, fields, bucketLabel, focusedOnly }, {
+    conflict: () => ({ confirmed: false, view: false, fields: null, mode }),
+  })
 }
