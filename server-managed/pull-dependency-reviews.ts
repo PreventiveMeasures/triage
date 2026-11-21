@@ -151,7 +151,7 @@ function shown<T extends LockedPackage>(pkg: T): Omit<T, 'integrity' | 'shasum' 
 // A version as the registered reviewed dependencies are asked of it, by
 // what it is asked.
 export function askedOf(pkg: LockedPackage): [string, ReviewedDependency] {
-  const dependency: ReviewedDependency = { ecosystem: 'npm', lockfile: pkg.lockfile ?? 'npm', name: pkg.name, version: pkg.version ?? '', integrity: pkg.integrity ?? '',
+  const dependency: ReviewedDependency = { ecosystem: 'npm', lockfile: pkg.lockfile ?? 'npm', name: pkg.name, version: pkg.version ?? '', ...pkg.integrity ? { integrity: pkg.integrity } : {},
     ...pkg.shasum ? { shasum: pkg.shasum } : {}, ...pkg.patchHash ? { patchHash: pkg.patchHash } : {} }
   return [JSON.stringify(dependency), dependency]
 }
@@ -162,10 +162,13 @@ type Review = { unsupported: Unsupported } | { baseline: true } | { reviewed: tr
   | Record<string, never>
 interface Judged { review: Review; wants: boolean }
 type Judge = (pkg: LockedPackage, bases: string[] | 'any') => Judged
-interface Context { state: RepoReviewState; reviews: ReviewsOf; baseline: Set<string> | null }
-function judge(pkg: LockedPackage, bases: string[] | 'any', { state, reviews, baseline }: Context): Judged {
+// One of npm's registry locked with no integrity passes where the host's
+// `lookup` passed it as it is (`vouched`, by what it was asked).
+interface Context { state: RepoReviewState; reviews: ReviewsOf; baseline: Set<string> | null; vouched?: Set<string> }
+function judge(pkg: LockedPackage, bases: string[] | 'any', { state, reviews, baseline, vouched }: Context): Judged {
   const as = reviewedAs(pkg)
   if (as === 'skip') return { review: {}, wants: false }
+  if (as === 'integrity' && vouched?.has(askedOf(pkg)[0])) return { review: { reviewed: true }, wants: false }
   if (as !== 'version') return { review: { unsupported: as }, wants: false }
   if (baselineKeys(pkg).some(key => baseline?.has(key))) return { review: { baseline: true }, wants: false }
   const { passing, rejected, commented, reviewers } = stancesOf(pkg, reviews, bases)
@@ -184,7 +187,7 @@ function judge(pkg: LockedPackage, bases: string[] | 'any', { state, reviews, ba
 // aren't checked; without `review`, what it adds alone. Read without its
 // base (`baseless`), it tells only those it adds that pass none, or pass by
 // its comments alone, which the host doesn't take in till it is merged.
-function reviewedDirectory(dir: DirectoryDependencies, review: Judge | null, baseless = false) {
+function reviewedDirectory(dir: DirectoryDependencies, review: Judge | null, baseless = false, vouched: Set<string> = new Set()) {
   if ('error' in dir) return dir
   const { locked, moreLocked, added, ...told } = dir
   if (!review) return { ...told, added: baseless ? [] : added.slice(0, MAX_ADDED).map(shown), ...baseless ? { more: 0 } : {} }
@@ -199,7 +202,10 @@ function reviewedDirectory(dir: DirectoryDependencies, review: Judge | null, bas
     return { pkg, judged: least, wanting: judged.filter(one => one.wants).map(({ variant }) => variant) }
   })
   const others = locked.filter(pkg => !adds.has(lockedAs(pkg))).map(pkg => ({ pkg, judged: review(pkg, 'any') }))
-  const unsupported = locked.flatMap(pkg => { const as = reviewedAs(pkg); return as === 'version' || as === 'skip' ? [] : [{ ...shown(pkg), unsupported: as }] })
+  const unsupported = locked.flatMap(pkg => {
+    const as = reviewedAs(pkg)
+    return as === 'version' || as === 'skip' || (as === 'integrity' && vouched.has(askedOf(pkg)[0])) ? [] : [{ ...shown(pkg), unsupported: as }]
+  })
   const listed = baseless ? own.filter(({ judged }) => judged.wants || 'unsupported' in judged.review || 'commented' in judged.review) : own
   // Each row against the base of the way it is locked that it is told by.
   const row = ({ pkg, judged }: (typeof own)[number]) => {
@@ -290,7 +296,11 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
   // for nothing, whatever it was compared with: of a pull request's versions,
   // a default branch's or a bundle's. Its author still copies it as a comment.
   const published = reviewed?.parseComments ? [] : state.reviews
-  let context = { state, reviews: reviewsByVersion(published), baseline: reviewed ? null : baseline }
+  // Each of npm's registry locked with no integrity, which can't be reviewed
+  // here, asked of `lookup` as it is, which may pass it all the same.
+  const integrityless = new Map(reviewed ? held.flatMap(dir => 'error' in dir ? [] : [...dir.added, ...dir.locked]).filter(pkg => reviewedAs(pkg) === 'integrity').map(askedOf) : [])
+  const vouching = integrityless.size > 0 && reviewed ? await askReviewed(reviewed.lookup, integrityless) : { passed: new Set<string>(), unasked: 0 }
+  let context = { state, reviews: reviewsByVersion(published), baseline: reviewed ? null : baseline, vouched: vouching.passed }
   // What wants a review, as `lookup` is asked of, each once.
   const wanting = () => {
     const asked = new Map<string, ReviewedDependency>()
@@ -303,7 +313,7 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
     return asked
   }
   const passed = new Set<string>()
-  let unasked = 0
+  let unasked = vouching.unasked
   const ask = async (asked: Map<string, ReviewedDependency>) => {
     const answer = asked.size > 0 && reviewed ? await askReviewed(reviewed.lookup, asked) : { passed: new Set<string>(), unasked: 0 }
     for (const key of answer.passed) passed.add(key)
@@ -337,7 +347,7 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
   const dirs = held.map(dir => reviewedDirectory(dir, (pkg, bases) => {
     const judged = judge(pkg, bases, context)
     return judged.wants && passed.has(askedOf(pkg)[0]) ? { review: { reviewed: true }, wants: false } : judged
-  }, baseless))
+  }, baseless, vouching.passed))
   const unread = baselineUnread.filter(path => heldTo(scope, path))
   const listed = dirs.filter(dir => 'unreviewed' in dir)
   for (const dir of listed) wantedIn.set(dir.paths, distinct([dir.toReview], versionKey))

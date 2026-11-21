@@ -298,6 +298,19 @@ test('read without its base, a version its comments alone pass is still told, as
   assert.deepEqual([answer.lockfiles[0].added.map(pkg => [pkg.name, pkg.reviews, pkg.commented ?? 0]), answer.review.toReview], [[['commented', 1, 1], ['wanting', 0, 0]], 1])
 })
 
+test('where the host registers reviewed dependencies, one of npm\'s registry locked with no integrity is asked of `lookup` without one, passing where it passes it; else, as with none registered, it can\'t be reviewed', async () => {
+  const [vouched, refused] = [at('vouched', '1.0.0'), at('refused', '1.0.0')].map(({ integrity: _integrity, ...pkg }) => pkg)
+  const told = { base: mergeBase, head, cut: false, lockfiles: [{ paths: ['package-lock.json'], more: 0, moreLocked: 0, added: [vouched, refused], locked: [vouched, refused] }] }
+  const asked = []
+  const lookup = dependency => { asked.push(dependency); return Promise.resolve(dependency.name === 'vouched') }
+  const state = { required: 1, since: null, canReview: true, reviews: [] }
+  const answer = await reviewedDependencies(told, state, { reviewed: { lookup } })
+  assert.deepEqual(asked.map(one => [one.name, Object.hasOwn(one, 'integrity')]).toSorted(), [['refused', false], ['vouched', false]], 'each once, with no integrity')
+  assert.deepEqual(answer.lockfiles[0].added.map(pkg => [pkg.name, pkg.reviewed ?? pkg.unsupported]), [['vouched', true], ['refused', 'integrity']])
+  assert.deepEqual([answer.lockfiles[0].unsupported.map(pkg => pkg.name), answer.review.unsupported], [['refused'], 1])
+  assert.deepEqual((await reviewedDependencies(told, state)).lockfiles[0].added.map(pkg => pkg.unsupported), ['integrity', 'integrity'], 'with none registered, as before')
+})
+
 test('a version added past those told is judged as one added, against the versions it was, and counted as wanting a review', async () => {
   const added = Array.from({ length: MAX_ADDED }, (_, n) => at(`new-${String(n).padStart(3, '0')}`, '1.0.0'))
   const tail = at('zz-tail', '2.0.0', { was: ['1.0.0'] })

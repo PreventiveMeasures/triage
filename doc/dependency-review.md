@@ -45,7 +45,7 @@ For a reader who publishes to a counting team, each version links to its review 
 ## What can't be reviewed
 
 A version can be reviewed only where it is locked from npm's registry, by name or by the exact link to its tarball (with only a hash after it, as Yarn 1 writes its sha1), and with an integrity.
-These versions fail the pull request's review even where its lockfiles locked them before: one from git, a tarball another host serves (a mirror's too) or a tarball link with a query, and one locked with no integrity.
+These versions fail the pull request's review even where its lockfiles locked them before: one from git, a tarball another host serves (a mirror's too) or a tarball link with a query, and one locked with no integrity, unless the [host's `lookup`](#lookup) passes it.
 The review also fails for a changed lockfile that couldn't be read, a Bun lockfile, lockfiles left unread because the pull request changes too many files or directories, or a directory that locks more versions than are checked (see [Limits](#limits)).
 A file of the project's own is not reviewed.
 
@@ -261,7 +261,8 @@ A commit stored before is kept unused, for a server that later registers no hook
 
 `lookup` is asked about each version an open pull request's lockfiles lock that its teams' reviews don't pass.
 Where the host has `parseComments`, it is also asked about each added version the teams' reviews do pass, before comments are read for it.
-It receives the version as the lockfile locks it: `ecosystem` (`npm`), `lockfile` (`npm`, `pnpm` or `yarn1`), and always `name`, `version` and `integrity`, as a version with no integrity fails the review instead.
+It receives the version as the lockfile locks it: `ecosystem` (`npm`), `lockfile` (`npm`, `pnpm` or `yarn1`), `name`, `version`, and `integrity` where the lockfile has one.
+A version of npm's registry locked with no integrity, which reviews here can't hold, is asked about without it: it passes where `lookup` passes it, else it fails the review as it does with no host. Whether to pass a version by its name alone, or how to hold it to an integrity, is the host's to decide.
 It also receives `shasum`, the hex sha1 Yarn 1 writes after a tarball's `#`, and `patchHash`, pnpm's patch hash, where the lockfile has them.
 A version it answers `true` for passes, and shows as **reviewed**.
 A version it fails to answer for wants its reviews and is counted as unasked in the popup, and the error is logged.
