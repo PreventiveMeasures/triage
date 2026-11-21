@@ -12,8 +12,9 @@ import { openImportConflictDialog, openSyncDownloadDialog } from './lazy-dialogs
 // Up front, not in the dialogs' bundle (lazy-dialogs.js says why).
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 import { dropZone, report } from './dom.js'
-import { clearMergedGroups, getRevalidationConflicts, getShownGroups, toGroup } from './group.js'
-import { configureDepsDir, hasRevalidateStamp, stampUpstreamFindings } from './format.js'
+import { clearMergedGroups, getRevalidationConflicts, getShownGroups } from './group.js'
+import { configureDepsDir, stampUpstreamFindings } from './format.js'
+import { hasRevalidateStamp } from '../../common/finding-filters.js'
 import { reportCommit } from '../../common/repo-commit.js'
 import { dropForeignRepo } from '../../common/finding-repo.js'
 import { applyOpeningFilters, resetFilters } from './filters.js'
@@ -40,31 +41,18 @@ import { setLoadedWorkspaceAppReports, updateWorkspaceAppMetadata } from './work
 import { beginViewNavigation, currentViewGeneration, currentViewSignal } from './view-navigation.js'
 export { beginViewNavigation, currentViewGeneration } from './view-navigation.js'
 
-// localStorage key for the last-viewed file — restored on page load so
-// the user picks back up where they left off. The stored value is the
-// OPFS filename for a single-file view, or `r:` + JSON containing its
-// name and selected workspace parent; prefixed with `ws:` for a
-// workspace view, `wrs:`/`wbs:` for its report/bundle lists; or `b:` followed by the SRI-shaped
-// integrity for a bundle view, optionally followed by a space and the
-// active sub-tab (`b:<integrity> <tab>`). Mutually exclusive — one
-// current selection at a time, last-clicked wins.
+// The last-viewed selection, restored on page load (local mode only;
+// managed selections live in the URL): an OPFS report filename, or `r:` +
+// JSON of its name and workspace parent; `ws:<id>` for a workspace,
+// `wrs:`/`wbs:<id>` for its report / bundle lists; `b:<integrity>` for a
+// bundle, optionally ` <tab>`. One selection at a time, last wins.
 export const LAST_FILE_KEY = 'deepview.lastFile'
-// Tabs in the bundle view's tab strip — `renderBundleSlide`
-// (render-bundle.js), the data-bundle-tab click handler (events.js),
-// and the boot-time restore (view.js) all key off this list.
-// 'overview' is the default and is omitted from the LAST_FILE_KEY
-// suffix; an unrecognised value on restore falls back to 'overview'.
-// That fallback also covers old persisted suffixes naming removed
-// values ('packages' / 'files' / 'reports') — no migration needed,
-// they just miss the set.
+// The bundle view's tabs; 'overview' is the default and left off the
+// LAST_FILE_KEY suffix, and an unknown one (a removed tab) restores to it.
 export { BUNDLE_TABS } from '../../common/bundle-tabs.js'
 
-// Managed selections live in the URL; local selections use LAST_FILE_KEY.
-// Persist a bundle selection to LAST_FILE_KEY as `b:<integrity> <tab>`.
-// The default 'overview' tab is dropped from the suffix so the
-// round-trip lands on a clean `b:<integrity>`.
-// Managed, a switch to another tab (`push`) adds a history entry; anything
-// else rewrites the current one.
+// Persist a bundle selection: managed, as the route (`push` adds a history
+// entry, else the current one is replaced); local, as `b:<integrity> <tab>`.
 export function persistLastBundle(integrity, tab = 'overview', { push = false } = {}) {
   if (isManagedUiMode()) {
     const entry = state.bundles.find(bundle => bundle.integrity === integrity)
@@ -79,23 +67,19 @@ export function persistLastBundle(integrity, tab = 'overview', { push = false } 
   setSecureItem(LAST_FILE_KEY, `b:${integrity}${suffix}`).catch(() => {})
 }
 
-// Generation token shared by every async load path
-// (switchToFile / switchToWorkspace / deleteCurrent). Bumped at the
-// entry of each; in-flight loads from a previous generation see their
-// captured token go stale and bail before touching state.reports.
-// Without this, a quick second sidebar click could interleave two
-// concurrent reads' pushes — the array would briefly hold the previous
-// file's data merged with the new. The headless `window.__loadFile`
-// path stays unguarded (doesn't begin navigation) so the print flow's
-// repeated-ingest accumulation still works.
+// Every async load path captures the navigation generation and bails once
+// a newer navigation has bumped it, so two quick clicks can't interleave
+// their reports. A `null` generation is the headless `window.__loadFile`
+// path, unguarded so the print flow's repeated ingests accumulate.
 const isStaleLoad = (captured) => captured !== currentViewGeneration()
+const isStale = (gen) => gen !== null && isStaleLoad(gen)
 
-// Keep expensive view renders out of the report-ingest call stack. A
-// workspace can contain many reports, and rendering after each parse both
-// blocks the next read and makes the final workspace render redundant. A
-// frame boundary lets the browser paint other work first; the timeout
-// fallback keeps headless callers moving when requestAnimationFrame is not
-// available.
+// A report's entries are findings or groups of them.
+const toGroup = (entry) => (Array.isArray(entry) ? entry : [entry])
+
+// Renders wait for a frame, out of the ingest call stack: a workspace
+// parses many reports, and a render per parse would block the next one.
+// The timeout keeps headless callers without requestAnimationFrame moving.
 function nextAnimationFrame() {
   return new Promise((resolve) => {
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(resolve)
@@ -105,17 +89,15 @@ function nextAnimationFrame() {
 
 async function renderAfterAnimationFrame(gen) {
   await nextAnimationFrame()
-  if (gen !== null && isStaleLoad(gen)) return false
+  if (isStale(gen)) return false
   render()
   void prefetchBundleHashesAfterPaint(state.reports.flatMap((r) => r.bundleHashes ?? []),
-    () => gen === null || !isStaleLoad(gen)).catch(() => {})
+    () => !isStale(gen)).catch(() => {})
   return true
 }
 
-// Reset graph v2 so a new report / workspace doesn't open with the
-// previous file's selection / hidden / soloed pkg. Layout cache also
-// invalidates (new tree → re-layout). Shared by switchToFile,
-// switchToWorkspace and clearActiveView.
+// A new view must not open on the previous one's graph selection, hidden
+// or soloed packages, or layout.
 function resetGraph2() {
   graph2.selected = null
   graph2.focusedPkg = null
@@ -126,10 +108,46 @@ function resetGraph2() {
   cleanupGraph2()
 }
 
-// Close the triage-sync session AND its presence session for every
-// open workspace not in `keepIds`. Both planes go in lockstep — a
-// presence session must never outlive its sync subscription (it
-// rides `workspace-subscribe`), so presence ⊆ sync always holds.
+// The header repo chip's URL (`url` for a single report, else none) and
+// a fresh graph.
+function resetRepoAndGraph(url = '') {
+  state.repoUrl = url
+  state.repoEditing = false
+  resetGraph2()
+}
+
+function clearLoadedReports() {
+  state.reports = []
+  clearMergedGroups()
+  state.workspaceMerges = []
+  state.revalidateConflicts = new Map()
+}
+
+function clearManagedReport() {
+  state.managedReport = null
+  state.managedReports = []
+  state.managedComments.clear()
+  state.managedIssues.clear()
+}
+
+// Report navigation leaves non-report surfaces, but keeps the Files lens.
+function openFindingsView() {
+  if (state.currentView !== 'findings' && state.currentView !== 'files') state.currentView = 'findings'
+}
+
+function showReportPane() {
+  report.classList.add('active')
+  dropZone.classList.add('hidden')
+}
+
+// The local workspaces listing report `name` (membership is additive).
+function workspacesWith(name) {
+  return listWorkspaces().filter((w) => Array.isArray(w.reports) && w.reports.includes(name))
+}
+
+// Close the sync AND presence sessions of every open workspace not in
+// `keepIds`, in lockstep: presence rides sync's `workspace-subscribe`, so
+// a presence session must never outlive its sync one.
 function closeSessionsExcept(keepIds) {
   for (const info of triageSync.openSessions) {
     if (info && !keepIds.has(info.workspaceId)) {
@@ -139,15 +157,9 @@ function closeSessionsExcept(keepIds) {
   }
 }
 
-// Put the main pane back to the welcome surface without touching any
-// selection state — what a load that ended up with nothing to show
-// has to do, or the previous view stays up while the sidebar says the
-// user moved. `clearActiveView` below is the bigger hammer (it drops
-// the selection too) and paints through here.
-//
-// render.js owns #report's child containers imperatively and renders Lit
-// inside those containers. Remove the containers themselves so their views
-// disconnect; rendering Lit's `nothing` at #report would leave them mounted.
+// The welcome surface, selection untouched: for a load that ended with
+// nothing to show. render.js owns #report's containers imperatively; they
+// are removed so their Lit views disconnect.
 function showEmptyMainPane() {
   report.classList.remove('active')
   report.replaceChildren()
@@ -155,23 +167,16 @@ function showEmptyMainPane() {
   document.title = 'DeepView'
 }
 
-// OPFS `NotFoundError` (from `getFileHandle`) or the storage.js
-// localStorage fallback's `File not found:` Error — the two shapes a
-// genuinely absent file surfaces as. Shared by the import-conflict
-// read and switchToFile's read so both classify "gone" identically.
+// The two shapes an absent file takes: OPFS `NotFoundError`, or the
+// localStorage fallback's `File not found:` (storage.js).
 function isMissingFileError(err) {
   return (err instanceof DOMException && err.name === 'NotFoundError')
     || (typeof err?.message === 'string' && err.message.startsWith('File not found:'))
 }
 
-// Bundle classifier — sourcemap (.map) or stasis (`.stasis.code.br`
-// or the bare `stasis.code.br` filename for top-level drops).
-// Returns the kind, or null when the file isn't a bundle. The stasis
-// marker is the full `stasis.code.br` suffix (brotli-compressed JSON
-// snapshot, see src/loaders/stasis.js); a plain `.br` could be any
-// brotli payload, so we don't accept that. Both markers are
-// filename-based; ingest doesn't validate the shape — bundles are
-// archived as-is for the analyzer pipeline to consume later.
+// A dropped bundle's kind by its filename, or null: a sourcemap (`.map`)
+// or a stasis snapshot (`stasis.code.br` — not any `.br`). Bundles are
+// archived as-is, unvalidated.
 export function bundleKind(name) {
   const lower = stripDownloadDup(name.toLowerCase())
   if (lower.endsWith('.map')) return 'sourcemap'
@@ -179,119 +184,56 @@ export function bundleKind(name) {
   return null
 }
 
-// Browsers (Chrome / Firefox / Safari) insert ` (N)` before the LAST
-// `.ext` when re-downloading a duplicate — `bar.stasis.code.br`
-// becomes `bar.stasis.code (1).br`. Strip a single trailing ` (\d+)`
-// immediately before the final extension so drop-routing matches the
-// canonical filename. Conservative: only the rightmost occurrence
-// (lookahead pins it to the last `.foo`) and only bare digits, so a
-// legitimate `foo (final).enc` is left alone.
+// Browsers name a re-downloaded duplicate `bar.stasis.code (1).br`: strip
+// one ` (N)` right before the last extension (bare digits only, so
+// `foo (final).enc` stays).
 function stripDownloadDup(name) {
   return name.replace(/ \(\d+\)(?=\.[^.]*$)/u, '')
 }
 
-// Persist a single dropped report's content to OPFS, asking the user
-// what to do on a same-name collision. Callers (`addFiles` directly +
-// its CSV branch) loop over every drop through here so the conflict
-// dialog runs uniformly for JSON / markdown drops and CSV-derived
-// `.codex` scans.
-//
-// Conflict resolution rules (the user-visible spec):
-//   1. name doesn't exist locally → save it, navigate to it.
-//   2. name exists, content byte-identical → skip the save, just
-//      navigate (no spurious OPFS write, cloud re-upload, or reflow).
-//   3. name exists, DIFFERENT content → open the conflict dialog:
-//        - Replace: overwrite locally, and push the new bytes to
-//          every workspace whose remote inventory ALREADY carries
-//          this report (live session or persisted presence cache) so
-//          the cloud copy tracks. Workspaces that list it locally but
-//          never uploaded it are left alone — re-uploading would open
-//          a presence session to a maybe-never-authenticated server,
-//          surfacing a password prompt for a report the user thinks
-//          of as local-only.
-//        - Rename: save under a different name (the dialog
-//          live-validates against `existingNames` so the rename can't
-//          loop into another collision).
-//        - Cancel: skip — returns null so the caller doesn't navigate
-//          or stamp a count.
-//
-// Returns `{ name, content }` of the report that landed (renamed name,
-// or original on replace / no-op), or null on cancel. `existingNames`
-// is updated in place so a follow-up file in the same drop sees the
-// just-imported names without re-listing OPFS.
+// Persist one dropped report, resolving a same-name collision:
+//   - new name → save;
+//   - byte-identical content → no write, no re-upload;
+//   - different content → the conflict dialog: Replace overwrites, and
+//     re-uploads to every workspace whose remote ALREADY holds the report
+//     (one that never uploaded it would open a presence session and prompt
+//     for a password for a report the user thinks local); Rename saves
+//     under a name the dialog checked against `existingNames`; Cancel
+//     returns null.
+// Returns `{ name, content }` of what landed; `existingNames` is kept
+// current so later files of the same drop see it.
 async function importReportContent({ name, content, existingNames }) {
-  if (!existingNames.has(name)) {
-    await saveFile(name, content)
-    existingNames.add(name)
-    return { name, content }
+  const saveAs = async (as) => {
+    await saveFile(as, content)
+    existingNames.add(as)
+    return { name: as, content }
   }
-  // Read existing bytes through the regular text path so the compare
-  // is on the LOGICAL content (decompressed, envelope-peeled), not the
-  // on-disk gzipped form.
-  //
-  // Three failure modes:
-  //  - sibling-tab delete (file vanished between snapshot and read)
-  //    → treat as "no collision", save under the now-free name.
-  //    Detected as OPFS `NotFoundError` or the storage.js localStorage
-  //    fallback's `File not found:` Error.
-  //  - vault locked at rest — readFile throws `storage: vault locked,
-  //    cannot decrypt ...`. MUST NOT collapse to "no collision" and
-  //    overwrite an existing encrypted file with dropped plaintext
-  //    (that replaces real content the user can't currently see).
-  //    Propagate so addFiles' catch hits the standard alert; the user
-  //    can unlock and re-drop.
-  //  - any other read failure — propagate too; don't pretend it's gone.
+  if (!existingNames.has(name)) return saveAs(name)
+  // Compared on the LOGICAL content (decrypted, decompressed). A file gone
+  // since the snapshot (a sibling tab deleted it) is no collision; a locked
+  // vault or any other read failure propagates — never overwrite what the
+  // user can't currently see.
   let existing
   try { existing = await readFile(name) }
   catch (err) {
     if (!isMissingFileError(err)) throw err
-    await saveFile(name, content)
-    existingNames.add(name)
-    return { name, content }
+    return saveAs(name)
   }
   if (existing === content) return { name, content }
-  // Workspace context for the dialog's upload warning. A report can
-  // sit in multiple workspaces (additive membership); collect every
-  // one listing this name, then narrow to those whose remote already
-  // holds it (live session or persisted cache). One that lists it
-  // locally but never uploaded is ineligible — uploading would open a
-  // presence session to a maybe-never-authenticated relay, surfacing
-  // an unwanted password prompt. The dialog copy keys off this
-  // filtered list, so the warning names only workspaces an upload
-  // would touch.
-  const workspaces = listWorkspaces().filter(
-    (w) => Array.isArray(w.reports) && w.reports.includes(name),
-  )
-  const uploadableWorkspaces = workspaces.filter(
-    (w) => isInRemoteOrCached(w.id, name),
-  )
+  const uploadableWorkspaces = workspacesWith(name).filter((w) => isInRemoteOrCached(w.id, name))
   const decision = await openImportConflictDialog({
     name,
     workspaceNames: uploadableWorkspaces.map((w) => w.name),
     existingNames,
   })
   if (decision.action === 'cancel') return null
-  if (decision.action === 'rename') {
-    const newName = decision.newName
-    await saveFile(newName, content)
-    existingNames.add(newName)
-    return { name: newName, content }
-  }
-  // Replace: write the new bytes first so the upload reads the
-  // freshly-saved on-disk form. Re-uploading the same name replaces
-  // the workspace objstore's encrypted blob; putFile's retryOnConflict
-  // handles the optimistic-concurrency dance. Sync is best-effort —
-  // the local replace already happened, so a transient network failure
-  // (logged) shouldn't undo it.
-  //
-  // Announce the save + uploads to sync first: until they're done it must
-  // not read the new local bytes as an un-uploaded change ("N differ",
-  // the "Reports out of sync" dialog). Released however the uploads
-  // went, so one that failed is flagged right then.
+  if (decision.action === 'rename') return saveAs(decision.newName)
+  // Replace: save first so the upload reads the new on-disk form. While the
+  // save and uploads run, sync must not read the new bytes as an
+  // un-uploaded change; the hold is released however they went. Both are
+  // best-effort: the local replace stands.
   let release
   if (uploadableWorkspaces.length > 0) {
-    // Best-effort like the uploads: a sync chunk that won't load must not
-    // stop the local replace.
     try { release = await holdLocalChangeChecks(name) }
     catch (err) { console.warn(`Import: couldn't announce the replace of "${name}" to sync:`, err) }
   }
@@ -306,44 +248,11 @@ async function importReportContent({ name, content, existingNames }) {
   return { name, content }
 }
 
-// Best-effort push of a freshly-replaced report to every workspace
-// whose remote already carries it. Callers (Replace branch) pre-filter
-// via `isInRemoteOrCached` so a never-uploaded workspace never reaches
-// this loop — opening a presence session would trip the relay's
-// first-touch auth gate and surface an unwanted password prompt. Each
-// session is opened on demand (mirrors `deleteFromRemote`'s lazy-open:
-// the user may not have visited these workspaces this session, but the
-// cloud copies still need to track the replace).
-//
-// Both `openPresence` and `putFile` route through client-sync.js's
-// lazy wrapper sharing a memoised chunk load, so MUST `await
-// openPresence` before `putFile` — putFile reads
-// `sessions.get(workspaceId)` and throws "Workspace … is not open"
-// if openPresence's `sessions.set` hasn't run yet. Awaiting also
-// catches a chunk-load rejection so it doesn't bubble unhandled.
-// The repository the sender named for a report they exported
-// (workspace-export.js `manualRepo` puts it on the entry). Without
-// this the reports land but their file links resolve to nothing on a
-// machine that never typed the URL — the hand-off the raw export is
-// for.
-//
-// Same rule the workspace import applies to its `repoUrls` map
-// (client/workspace-import.js): keyed on the name the report actually
-// LANDED under, so a rename on a name collision takes the URL with
-// it, and never written over a URL this browser already holds —
-// overwriting what the reader typed here is the surprise. A report
-// carrying no `repo` leaves whatever is on this side alone.
-//
-// `adoptRepoUrlFor` decides that inside secure-storage's per-key
-// lock rather than here: a check in this tab followed by a write
-// would hand a sibling tab a window to type a URL into, and the
-// write would take it back. It refreshes the header chip too, when
-// the report it adopted for is the one on screen.
-//
-// Best-effort, like the workspace upload below it: the report itself
-// is already on disk, so a repo-URL write that loses (a sibling tab
-// locking the vault mid-drop) is a line in the console, not a failed
-// import.
+// The repository the sender of a raw reports export named for a report
+// (workspace-export.js `manualRepo`), keyed on the name it LANDED under and
+// never over a URL this browser already holds — `adoptRepoUrlFor` decides
+// that inside secure-storage's per-key lock, so a sibling tab can't race
+// it. Best-effort: the report is already saved.
 async function adoptImportedRepo(name, repo) {
   const url = typeof repo?.github === 'string' ? repo.github : ''
   if (!url) return
@@ -354,6 +263,10 @@ async function adoptImportedRepo(name, repo) {
   }
 }
 
+// Best-effort push of a replaced report to the workspaces whose remote
+// already holds it (callers pre-filter with isInRemoteOrCached), opening
+// each session on demand. `openPresence` MUST be awaited before `putFile`,
+// which throws for a workspace whose session isn't open yet.
 async function uploadReportToWorkspaces(name, workspaces) {
   let bytes
   try {
@@ -376,95 +289,63 @@ async function uploadReportToWorkspaces(name, workspaces) {
 }
 
 async function addFiles(files) {
-  // FileList is only readable during the drop event (or until the picker is
-  // reset). Keep the File objects before waiting, without reading their bytes.
+  // A FileList is only readable during the drop (or until the picker is
+  // reset): keep the File objects before waiting.
   files = [...files]
   if (files.length === 0) return
-  // The landing can appear while a slow /api/config request is still pending.
-  // Once startup selects managed or local mode, follow that mode's import path.
+  // The landing can show while /api/config is pending; follow the mode it
+  // settles on. Managed servers take uploads server-side only, so nothing
+  // here writes to disk — the one choke point for drops and the picker.
   await ensureClientMode()
-  // On a managed server the local (OPFS / "local storage") ingest path is
-  // disabled: uploads belong server-side, via the admin "Manage reports" /
-  // "Manage bundles" pages. So a drop / file-pick anywhere in the app chrome
-  // here must NOT write to disk — bail before any of the pipeline runs. This is
-  // the single choke point for every entry (document drop, the empty-screen
-  // drop-zone, and the file picker).
   if (isManagedUiMode()) return
-  // A lockfile is shown, never saved (lockfile-drop.js): it takes none of the
-  // pipeline below, the first-import passkey prompt included, as nothing of
-  // it is written. Dropped with files that are saved, it opens only where
-  // none of them does.
+  // A lockfile is shown, never saved (lockfile-drop.js), so it skips the
+  // pipeline; dropped with files that are saved, it opens only if none is.
   const lockfile = droppedLockfile(files, file => stripDownloadDup(file.name))
   if (lockfile) files = files.filter(file => !lockfile.taken.has(file))
   if (files.length === 0) { await openDroppedLockfile(lockfile); return }
-  // First-import nudge: ask once whether to enable passkey encryption
-  // before this drop's files hit disk, so an accepted enable seals the
-  // very first write rather than landing plaintext then re-writing the
-  // migration. Skipped silently when the vault is already enabled, the
-  // browser lacks WebAuthn, or the user already chose.
+  // Ask about passkey encryption before the first write, so an accepted
+  // enable seals it rather than migrating plaintext after.
   await maybePromptFirstUse()
   if (isManagedUiMode()) return
   let last = null
   let lastBundleIntegrity = null
-  // Track newly-saved bundle integrities so we can prefetch their
-  // per-file hashes after `renderSidebar()` refreshes `state.bundles`
-  // (the prefetch helper looks the entry up there). Lets existing
-  // reports' "Code →" buttons surface as soon as the matching bundle
-  // lands, without the user manually opening it.
+  // Prefetched after the sidebar refreshes `state.bundles`, so existing
+  // reports' "Code →" buttons find a just-dropped bundle.
   const newBundleIntegrities = new Set()
-  // Snapshot of OPFS report names, taken once per drop and kept in
-  // lock-step as `importReportContent` saves. Drives its conflict
-  // check so back-to-back files within ONE addFiles call see each
-  // other (e.g. a CSV deriving two same-named .codex files would else
-  // miss the second collision). Re-listed after
-  // `importWorkspaceFromGzip` below: that branch saves bundled reports
-  // via `applyWorkspaceImport` (which we can't reach to update
-  // `existingNames`), so without the re-list a regular report dropped
-  // alongside a same-named workspace import would silently overwrite
-  // the import's just-saved copy.
+  // OPFS report names, kept current by importReportContent so files of one
+  // drop see each other; re-listed after a workspace import, which saves
+  // reports out of its reach.
   const existingNames = new Set(await listFiles())
-  // Reports inside a raw reports export that no parser recognises.
-  // Collected rather than alerted per entry: a hand-edited export
-  // could hold many, and one dialog per name is not a report on the
-  // drop, it is a punishment for it.
+  // Unrecognised reports of a raw export, named once at the end.
   const unreadable = []
+  // One report through the collision prompt, counted for the sidebar; the
+  // last one landed is navigated to.
+  const land = async (name, content, { count, source }) => {
+    const saved = await importReportContent({ name, content, existingNames })
+    if (saved) {
+      setCount(saved.name, count, source)
+      last = saved
+    }
+    return saved
+  }
   for (const file of files) {
     try {
-      // Route plaintext gzip and encrypted bundles to workspace import
-      // BEFORE the file.text() read — UTF-8 decoding would mangle the
-      // binary bytes. importWorkspaceFromGzip throws on a non-export
-      // shape. `stripDownloadDup` normalises browser ` (N)` suffixes so
-      // a redownloaded `foo.deepview-workspace (1).enc` still routes here.
+      // Workspace exports (gzip, or encrypted) route before `file.text()`,
+      // which would mangle their bytes.
       const lower = stripDownloadDup(file.name.toLowerCase())
       if (lower.endsWith('.gz') || lower.endsWith('.deepview-workspace.enc')) {
         const imported = await importWorkspaceFromGzip(file)
-        // The raw reports export is not an import of its own — it is a
-        // drop of the reports that were in it. So they land here,
-        // through the same path a dragged-in report takes: recognised
-        // before anything is written, the rename / replace prompt on a
-        // name already taken, the count and source stamped for the
-        // sidebar, and the last one navigated to. `importReportContent`
-        // keeps `existingNames` current as it saves, so two entries of
-        // the same name inside one file see each other.
+        // A raw reports export is a drop of the reports in it, each taking
+        // a dragged-in report's path; one bad entry doesn't stop the rest.
         if (imported?.kind === 'reports') {
           for (const r of imported.reports) {
             if (typeof r?.name !== 'string' || !r.name || typeof r?.content !== 'string') continue
             const result = analyzeContent(r.content)
-            // A report the viewer can't parse doesn't reach OPFS — the
-            // same gate a dragged-in file passes. One bad entry is not
-            // the file's fault, though, so the rest still land and the
-            // skipped names are named once at the end.
             if (!result.recognized) { unreadable.push(r.name); continue }
-            const saved = await importReportContent({ name: r.name, content: r.content, existingNames })
-            if (!saved) continue
-            setCount(saved.name, result.count, result.source)
-            await adoptImportedRepo(saved.name, r.repo)
-            last = { name: saved.name, content: saved.content }
+            const saved = await land(r.name, r.content, result)
+            if (saved) await adoptImportedRepo(saved.name, r.repo)
           }
         }
-        // Refresh existing-names after the import's internal saveFiles
-        // so a later same-named file in this drop hits the conflict
-        // path instead of silently overwriting (see snapshot note above).
         try {
           const refreshed = await listFiles()
           existingNames.clear()
@@ -474,10 +355,8 @@ async function addFiles(files) {
         }
         continue
       }
-      // Bundle drops (sourcemap / stasis) — archive in the bundles
-      // OPFS dir, skip the report-ingest pipeline. Name preserved
-      // verbatim so the bundles list shows what was dropped. Content is
-      // binary (stasis is brotli); read as ArrayBuffer, not text.
+      // Sourcemap / stasis bundles are archived as dropped (binary, so read
+      // as bytes), outside the report pipeline.
       const kind = bundleKind(file.name)
       if (kind) {
         const buf = new Uint8Array(await file.arrayBuffer())
@@ -487,50 +366,24 @@ async function addFiles(files) {
         continue
       }
       const content = await file.text()
-      // Codex is named by the file, not its content (see @preventive/report);
-      // `lower` has the download-duplicate suffix stripped already.
+      // Codex is named by the file, not its content (see @preventive/report).
       const products = splitMarkdownImport(content, file.name)
       if (products) {
-        for (const product of products) {
-          const { count, source } = analyzeContent(product.content)
-          const imported = await importReportContent({ ...product, existingNames })
-          if (!imported) continue
-          setCount(imported.name, count, source)
-          last = { name: imported.name, content: imported.content }
-        }
+        for (const product of products) await land(product.name, product.content, analyzeContent(product.content))
       } else if (detectFormat(content, lower) === 'codex') {
-        const scans = parseCodexCsvToScans(content)
-        for (const { displayName, data } of scans) {
-          // '/' → '__': OPFS filenames can't contain '/'; file-display.js
-          // maps it back for the visible label.
-          const codexName = displayName.replaceAll('/', '__') + '.codex'
+        for (const { displayName, data } of parseCodexCsvToScans(content)) {
+          // OPFS names can't hold '/'; file-display.js maps '__' back.
           const json = JSON.stringify(data)
-          const { count, source } = analyzeContent(json)
-          const imported = await importReportContent({ name: codexName, content: json, existingNames })
-          if (!imported) continue
-          setCount(imported.name, count, source)
-          last = { name: imported.name, content: imported.content }
+          await land(displayName.replaceAll('/', '__') + '.codex', json, analyzeContent(json))
         }
       } else {
-        // Validate before persisting — analyzeContent recognises
-        // analyzer-native JSON, DeepSec, Piolium, and Claude / Codex /
-        // markdown imports, plus the links file (which is not a report:
-        // see client/linked-findings.js). Anything else is rejected so
-        // we don't litter OPFS with files nothing here can read.
-        //
-        // A links file needs no branch of its own on the way in: it is
-        // saved, conflict-resolved and counted through the same path a
-        // report takes, and it's `result.source` — cached by setCount,
-        // read back by `getKind` — that keeps the two apart afterwards,
-        // in the sidebar's bucket and in `switchToFile` below.
+        // Only what a parser here recognises is saved. A links file takes
+        // the same path; its cached `source` tells it apart afterwards.
         const result = analyzeContent(content)
         if (!result.recognized) {
           throw new Error('not a recognized DeepView, DeepSec, Piolium, Claude Security, Codex, or Markdown (generic) report, and not a links file')
         }
-        const imported = await importReportContent({ name: file.name, content, existingNames })
-        if (!imported) continue
-        setCount(imported.name, result.count, result.source)
-        last = { name: imported.name, content: imported.content }
+        await land(file.name, content, result)
       }
     } catch (err) {
       alert(`Failed to load ${file.name}: ${err.message}`)
@@ -540,20 +393,13 @@ async function addFiles(files) {
     const n = unreadable.length
     alert(`Skipped ${n} report${n === 1 ? '' : 's'} no parser recognised: ${unreadable.join(', ')}`)
   }
-  // renderSidebar refreshes state.bundles from OPFS so a just-imported
-  // bundle is visible to the bundles view path below.
+  // Refreshes state.bundles for the bundle path below.
   await renderSidebar()
   if (last) {
-    // Single-report drop wins over a bundle when both happen in
-    // the same drop — the user's primary intent was the report.
+    // A report wins over a bundle dropped beside it.
     await switchToFile(last.name, last.content)
   } else if (lastBundleIntegrity) {
-    // Bundle-only drop: switch to the bundles view AND open the
-    // dropped bundle's details panel. `selectBundle` clears stale
-    // source-viewer state and resets search (the same setup as the
-    // sidebar's bundle-row click), then hand off to the shared
-    // open-bundle pipeline so the panel populates without a second
-    // click.
+    // Open the dropped bundle's panel, set up as a sidebar click would.
     selectBundle(lastBundleIntegrity)
     persistLastBundle(lastBundleIntegrity, state.bundleDetailsTab)
     render()
@@ -562,15 +408,12 @@ async function addFiles(files) {
   } else if (lockfile) {
     await openDroppedLockfile(lockfile)
   }
-  // Imported bundles can supply source links even when a report did not name
-  // them. Populate those hashes after the selected report/bundle has rendered.
   void prefetchBundleHashesAfterPaint(newBundleIntegrities).catch(() => {})
 }
 
-// Open a dropped lockfile alone in an editor of its own, on its packages
-// (lockfile-drop.js), in place of whatever view was up, as Home leaves it:
-// nothing saved, nothing to reopen on the next visit. The drop navigates
-// before its read, so a page left meanwhile, or a later drop, keeps the screen.
+// A dropped lockfile alone in an editor of its own, in place of the view,
+// as Home leaves it: nothing saved or reopened next visit. The drop
+// navigates before its read, so a page left meanwhile keeps the screen.
 function openDroppedLockfile(dropped) {
   return readAndShowLockfile(dropped, file => stripDownloadDup(file.name), (lockfile) => {
     closeSessionsExcept(new Set())
@@ -583,117 +426,59 @@ function openDroppedLockfile(dropped) {
   }, err => alert(`Failed to load ${dropped.lockfile.name}: ${err.message}`))
 }
 
-// Replace the active view with the named OPFS file. Pre-fetched
-// `content` skips a redundant OPFS read (drop path passes it through).
-// Resolves true when this load is what ended up on screen — every other
-// exit (a newer switch took over, the read failed, a recovery flow
-// re-entered) resolves undefined, so callers can distinguish completion
-// from a cancelled or failed load.
+// Replace the view with the named OPFS file (`content` when already read).
+// Resolves true only when this load ended up on screen.
 export async function switchToFile(name, content, { workspaceId } = {}) {
   if (isManagedUiMode()) return
   const gen = beginViewNavigation()
   state.currentManagedTeam = null
   state.currentManagedReport = null
   state.currentReportWorkspace = reportWorkspaceFor(name, workspaceId)
-  // Subscribe-on-report-open: a single-file view of a workspace
-  // member should still ride the workspace's chain, so the user sees
-  // peer edits and pushes their own without switching to the workspace
-  // tab first. A report can sit in more than one workspace
-  // (cross-workspace finding share); open a session for each. Sessions
-  // for OTHER workspaces close — intersecting (rather than close-all-
-  // then-open) keeps same-workspace sessions warm across file switches
-  // so we don't re-pay key derivation.
-  const desiredWorkspaceIds = new Set(
-    listWorkspaces()
-      .filter((w) => Array.isArray(w.reports) && w.reports.includes(name))
-      .map((w) => w.id),
-  )
-  // Close BOTH planes in lockstep. A presence session must never
-  // outlive its sync subscription: the objstore client rides
-  // triage-sync's `workspace-subscribe` (carrying the inventory
-  // snapshot and registering the socket for objstore-put/-deleted
-  // broadcasts), so a presence session kept past its sync session
-  // would, on the next reconnect, have no subscribe to seed its
-  // inventory or deliver broadcasts. Keeping presence ⊆ sync (at the
-  // cost of a cold cache on return visits) makes that impossible.
+  // A report rides the chain of every workspace it sits in, so peer edits
+  // arrive without opening the workspace. Other workspaces' sessions close;
+  // these stay warm across switches (no re-paid key derivation).
+  const desiredWorkspaceIds = new Set(workspacesWith(name).map((w) => w.id))
   closeSessionsExcept(desiredWorkspaceIds)
-  state.reports = []
-  clearMergedGroups()
-  state.workspaceMerges = []
-  state.revalidateConflicts = new Map()
+  clearLoadedReports()
   state.currentFile = name
   state.currentWorkspace = null
   state.currentLinks = null
-  // Local file navigation leaves the managed report scope.
-  state.managedReport = null
-  state.managedReports = []
-  state.managedComments.clear()
-  state.managedIssues.clear()
-  // A report opens its findings from every non-report surface, including
-  // Scans. Preserve the Files lens when moving between reports.
-  // (A links file lands back on 'links' below, once the read confirms
-  // that's what it is; going through 'findings' first means a report
-  // never inherits the previous file's view.)
-  if (state.currentView !== 'findings' && state.currentView !== 'files') {
-    state.currentView = 'findings'
-  }
-  // Per-report repo URL (see state.js / saveRepoUrlFor): the user's
-  // last-typed URL for THIS file lights up the header repo chip, unseen
-  // file starts empty. Reset before ingest so a stale URL from the
-  // previous file doesn't briefly drive the chip.
-  state.repoUrl = loadRepoUrlFor(name)
-  state.repoEditing = false
-  resetGraph2()
+  clearManagedReport()
+  // A links file moves to 'links' once read; through 'findings' first, a
+  // report never inherits the previous file's view.
+  openFindingsView()
+  // The URL last typed for THIS file (saveRepoUrlFor), set before ingest
+  // so the previous file's doesn't drive the chip meanwhile.
+  resetRepoAndGraph(loadRepoUrlFor(name))
   setSecureItem(LAST_FILE_KEY, encodeReportLocation(name, state.currentReportWorkspace)).catch(() => {})
   if (content === undefined) {
+    // A failed read leaves no file selected (a newer switch owns the state).
+    const unselect = async () => {
+      if (isStaleLoad(gen)) return
+      state.currentFile = null
+      await renderSidebar()
+    }
     try {
       content = await readFile(name)
     } catch (err) {
-      // Skip the alert / state-reset when a newer switch already took
-      // over — its setup replaced what we'd clear, and an error from
-      // the dead load would just confuse the user.
       if (isStaleLoad(gen)) return
-      // "vault locked" is actionable: prompt to unlock, retry on
-      // success. Mirrors the boot-time prompt for users who dismissed
-      // it earlier this session.
+      // A locked vault: prompt to unlock, and retry on success.
       if (err && err.message?.includes('vault locked')) {
         const ok = await openPasskeyUnlockDialog()
         if (ok && !isStaleLoad(gen)) {
           await switchToFile(name)
           return
         }
-        // User dismissed the dialog (or a newer switch took over).
-        // Clear the about-to-be-current file so the sidebar doesn't
-        // leave the row highlighted with no content loaded.
-        if (!isStaleLoad(gen)) {
-          state.currentFile = null
-          await renderSidebar()
-        }
+        await unselect()
         return
       }
-      // A missing file — including a corrupt/empty entry that storage
-      // just quarantined (readFile surfaces both as the same
-      // not-found shape) — is not worth an alert: the bytes are gone
-      // either way. When a workspace's cloud copy still holds the
-      // report, offer to re-download it through the same dialog the
-      // sync badge uses; on success re-enter switchToFile with the
-      // restored bytes. Otherwise (no cloud copy, or the user
-      // declined) just clear the selection like the vault-dismiss
-      // branch above — the quarantine already dropped the sidebar row.
+      // A missing (or just quarantined) file isn't worth an alert. When a
+      // workspace's remote still holds it — only one that already does, as
+      // for Replace — offer the sync badge's re-download, and retry.
       if (isMissingFileError(err)) {
-        // Same eligibility rule as the Replace-upload flow: only a
-        // workspace whose remote ALREADY carries this report (live
-        // session or persisted presence cache) — opening a session to
-        // a never-uploaded workspace would surface an unwanted
-        // password prompt for a local-only report.
-        const cloudWs = listWorkspaces().find(
-          (w) => Array.isArray(w.reports) && w.reports.includes(name) && isInRemoteOrCached(w.id, name),
-        )
+        const cloudWs = workspacesWith(name).find((w) => isInRemoteOrCached(w.id, name))
         if (cloudWs) {
           try {
-            // The dialog's download needs an open presence session;
-            // lazy-open mirrors uploadReportToWorkspaces (the user may
-            // not have visited this workspace this session).
             await openPresence(cloudWs.id)
             if (isStaleLoad(gen)) return
             const result = await openSyncDownloadDialog({
@@ -706,17 +491,12 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
               return
             }
           } catch (redownloadErr) {
-            // Session open / dialog failure — fall through to the
-            // quiet missing-file teardown; the report stays available
-            // through the sync badge's recovery flow.
+            // The sync badge's recovery flow still offers it.
             console.warn(`Re-download prompt for missing "${name}" failed:`, redownloadErr)
             if (isStaleLoad(gen)) return
           }
         }
-        if (!isStaleLoad(gen)) {
-          state.currentFile = null
-          await renderSidebar()
-        }
+        await unselect()
         return
       }
       alert(`Failed to read ${name}: ${err.message}`)
@@ -726,10 +506,8 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
     }
     if (isStaleLoad(gen)) return
   }
-  // A links file declares which findings are the same finding; it
-  // carries none of its own, so it never goes through `ingestReport`
-  // and `state.reports` stays empty. Its view (render-links.js) points
-  // at the findings in the reports that DO carry them.
+  // A links file carries no findings of its own (render-links.js points at
+  // those in the reports that do), so it skips ingest.
   const linked = parseLinkedFindings(content)
   if (linked) {
     state.currentLinks = { name, ...linked }
@@ -739,15 +517,8 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
     await ingestReport(name, content, gen)
   }
   if (isStaleLoad(gen)) return
-  // Open the session(s) AFTER ingest so buildWorkspaceIds sees the
-  // freshly-loaded findings — otherwise it runs against the empty
-  // state.reports reset above and the id-set stays empty until the
-  // next save. openSession is idempotent on already-open ids, so
-  // follow with `refreshSession` to pick up newly-in-scope ids: without
-  // it, a report dragged into the workspace while a different file was
-  // focused would never propagate its triage when finally loaded (the
-  // session was open with stale ids and openSession's idempotence skips
-  // the rebuild).
+  // Sessions open AFTER ingest, which their id-sets are built from.
+  // `refreshSession` updates an already-open one, whose ids are stale.
   for (const id of desiredWorkspaceIds) {
     triageSync.openSession(id)
     triageSync.refreshSession(id)
@@ -790,8 +561,7 @@ export async function switchToWorkspaceContent(id, kind, { history = true, tab =
   state.currentManagedTeam = managed ? id : null
   state.currentView = view
   if (managed) state.bundles = managedTeamBundleEntries(state.managedTeams)
-  report.classList.add('active')
-  dropZone.classList.add('hidden')
+  showReportPane()
   document.body.classList.remove('report-fullscreen')
   render({ animate: false })
   document.querySelector('#main-content')?.scrollTo({ top: 0 })
@@ -817,13 +587,9 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   closeSessionsExcept(new Set())
   clearReportSources()
   renderTriageLoading(reportId === null && !deduplication ? team.id : null)
-  report.classList.add('active')
-  dropZone.classList.add('hidden')
+  showReportPane()
   state.currentView = 'findings'
-  state.reports = []
-  clearMergedGroups()
-  state.workspaceMerges = []
-  state.revalidateConflicts = new Map()
+  clearLoadedReports()
   state.currentFile = opened?.filename ?? null
   // Namespaced, in-memory workspace identity: all existing workspace lens
   // rules apply, without registering a local workspace or sync subscription.
@@ -872,9 +638,7 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   state.selectedBundle = null
   state.selectedBundleWorkspace = null
   state.scanSelection = null
-  state.repoUrl = ''
-  state.repoEditing = false
-  resetGraph2()
+  resetRepoAndGraph()
   for (const entry of findings) {
     await ingestReport(entry.filename, entry.data, gen, {
       renderView: false, managedReportId: entry.id, managedRepo: entry.repo, keepLens: Boolean(workspace.folded),
@@ -941,12 +705,12 @@ const OPENING_FIELDS = ['showRevalidation', 'upstreamOnly', 'revalidationDetaile
 // rows App mode does not show (common/managed/finding-detail.js `fold`):
 // ingested again as they are, the lens configured once they are all in, the
 // reader's filters left as they set them, or, while they leave the `opening`
-// ones alone throughout, those the whole reports open on. The findings the board's copy held keep the annotations kept for them
-// since, a reader's edits among them; those it left out are hydrated from the
-// annotations read as the team opened, any told since caught up with
-// (managed-feed.js). The board is held as it was meanwhile (render.js), and
-// takes nothing from its reader. One that fails once begun goes Home, as a
-// failed load does.
+// ones alone throughout, those the whole reports open on. The findings the
+// board's copy held keep the annotations kept for them since, a reader's
+// edits among them; those it left out are hydrated from the annotations
+// read as the team opened, any told since caught up with (managed-feed.js).
+// The board is held as it was meanwhile (render.js), and takes nothing from
+// its reader. One that fails once begun goes Home, as a failed load does.
 async function replaceManagedReports(workspace, findings, { gen, hydrate, annotations, opening }) {
   const whole = new Map(workspace.map(entry => [entry.id, entry]))
   const entries = findings.map(entry => whole.get(entry.id))
@@ -987,106 +751,66 @@ async function failManagedTeamLoad(message) {
   showToast(message)
 }
 
-// Replace the active view with the merged contents of an entire
-// workspace — every assigned report loaded via `ingestReport`,
-// accumulating in `state.reports`. `state.currentFile` is cleared
-// (workspace mode is mutually exclusive with single-file);
-// `state.currentWorkspace` carries the id. Per-report repo URLs
-// round-trip via each finding's `_repoFallback` stamp (see
-// ingestReport), so the global `state.repoUrl` is empty here and the
-// editable header chip is omitted. Reports the workspace references
-// but that no longer exist in OPFS are skipped silently.
+// The App lens a workspace's metadata asks for (workspace-app-load.js).
+function openAppLens() {
+  state.showRevalidation = true
+  state.upstreamOnly = false
+  state.revalidationDetailed = false
+  configureReportRevalidation()
+}
+
+// Replace the view with every report of a local workspace merged. Each
+// report's repo URL rides its findings' `_repoFallback`, so there is no
+// global `state.repoUrl` (nor editable chip); reports gone from OPFS are
+// skipped.
 export async function switchToWorkspace(workspaceId) {
   if (isManagedUiMode()) return
   state.currentManagedTeam = null
   state.currentManagedReport = null
-  state.managedReport = null
-  state.managedReports = []
-  state.managedComments.clear()
-  state.managedIssues.clear()
+  clearManagedReport()
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   if (!ws) return
   const gen = beginViewNavigation()
-  // Close triage-sync sessions for OTHER workspaces, keeping the
-  // target's alive to avoid a close + open + re-subscribe round-trip on
-  // every click of the workspace title (the ingest loop's trailing
-  // `refreshSession` brings its id-set up to date). Close each other's
-  // presence session in lockstep — presence must never outlive its
-  // sync subscription (rides `workspace-subscribe`), so presence ⊆ sync.
+  // Keep the target's sessions open (no re-subscribe per click; the
+  // trailing refreshSession updates their ids).
   closeSessionsExcept(new Set([workspaceId]))
-  // Match report navigation: leave non-report surfaces, preserving the
-  // Files lens when moving between workspaces.
-  if (state.currentView !== 'findings' && state.currentView !== 'files') {
-    state.currentView = 'findings'
-  }
-  // Same fire-and-forget prime as ingestReport, for the workspace half
-  // of a deep link's location hint.
+  openFindingsView()
+  // Primes the workspace half of a deep link's location hint.
   void computeLinkHint('workspace', workspaceId)
-  state.reports = []
-  clearMergedGroups()
-  state.workspaceMerges = []
-  state.revalidateConflicts = new Map()
+  clearLoadedReports()
   state.currentFile = null
   state.currentWorkspace = workspaceId
   state.currentReportWorkspace = null
   state.currentLinks = null
-  state.repoUrl = ''
-  state.repoEditing = false
-  resetGraph2()
+  resetRepoAndGraph()
   setSecureItem(LAST_FILE_KEY, `ws:${workspaceId}`).catch(() => {})
   // Clear the previous view while the empty workspace loads. Its header
   // below still offers navigation to bundles when there are no findings.
   if (ws.reports.length === 0) showEmptyMainPane()
-  // Kick off every readFile concurrently up front, then ingest in
-  // workspace order. The await inside the loop only blocks on each
-  // report's bytes — slower reads continue in the background while
-  // earlier ones parse + render, so the first findings show as soon as
-  // their read finishes, not after the slowest in the batch. Ingest
-  // order is preserved because the awaits walk the promise array in
-  // workspace.reports order. Per-read failures resolve to `null`
-  // (caught at the promise) so one bad file doesn't reject the batch.
   const appToken = await workspaceAppCacheToken(ws)
   if (isStaleLoad(gen)) return
   let complete = true
+  // Every read starts at once and ingest walks them in workspace order, so
+  // the first findings don't wait for the slowest read; a failed read is
+  // null rather than a rejected batch.
   const reads = ws.reports.map((name) => readFile(name).catch(() => null))
   let ingested = 0
   for (let i = 0; i < ws.reports.length; i++) {
     const content = await reads[i]
     if (isStaleLoad(gen)) return
     if (content === null) { complete = false; continue }
-    // A workspace holds whatever the user dragged into it, and a links
-    // file is a member like any other — but it carries no findings, so
-    // there is nothing to merge into the view and `ingestReport` would
-    // reject it as an unreadable report. Skip it here; its sidebar row
-    // under this workspace still opens it in its own view.
+    // A links file is a member with no findings to merge; its own row
+    // still opens it.
     if (parseLinkedFindings(content)) continue
-    // Workspace loads accumulate all reports before painting. Rendering
-    // here would force one expensive graph/list pass per report and block
-    // the next report's ingest on the main thread.
+    // One paint for the whole workspace, not a graph/list pass per report.
     if (await ingestReport(ws.reports[i], content, gen, { renderView: false })) ingested++
     else complete = false
     if (isStaleLoad(gen)) return
   }
-  // Nothing painted the main pane: every member was a links file, or
-  // unreadable. Same teardown as the empty workspace above — otherwise
-  // the previous view stays up while the sidebar says we moved.
+  // Nothing painted (every member a links file, or unreadable): don't
+  // leave the previous view up.
   if (ingested === 0 && ws.reports.length > 0) showEmptyMainPane()
-  // What the WORKSPACE opens on. The loop above asked this of its
-  // FIRST member (ingestReport's isFirst branch), which is the answer
-  // for a single file and the wrong one for a set: a revalidated
-  // report sitting behind an imported one leaves the whole workspace
-  // on the confidence range, and a floor tuned to one member's
-  // findings gets applied to everyone's. A workspace is one view over
-  // its reports, so ask once more now that they are all in — nothing
-  // has touched the filters since that first member's resetFilters,
-  // so this is still what a fresh load would set, not a user's
-  // selection being overwritten. Paint the complete workspace once.
-  if (complete && getWorkspaceAppMetadata(ws)?.appMode) {
-    state.showRevalidation = true
-    state.upstreamOnly = false
-    state.revalidationDetailed = false
-    configureReportRevalidation()
-  }
+  if (complete && getWorkspaceAppMetadata(ws)?.appMode) openAppLens()
   const loadedReports = state.reports.slice()
   setLoadedWorkspaceAppReports(ws, loadedReports, appToken, {
     complete,
@@ -1096,6 +820,9 @@ export async function switchToWorkspace(workspaceId) {
   // Start the sidebar refresh with the completed snapshot, alongside the main
   // view's first paint, without waiting for unrelated files to finish indexing.
   const sidebarRender = renderSidebar().catch((err) => console.warn('workspace sidebar:', err))
+  // What the WORKSPACE opens on, asked again now every member is in (each
+  // ingest asked it only of the first): nothing has touched the filters
+  // since that first member's reset.
   if (ingested > 0) {
     applyOpeningFilters(getShownGroups())
     if (!(await renderAfterAnimationFrame(gen))) return
@@ -1112,131 +839,71 @@ export async function switchToWorkspace(workspaceId) {
       if (!metadata.appMode || state.currentWorkspace !== workspaceId
           || !['findings', 'files'].includes(state.currentView)
           || OPENING_FIELDS.some((key, i) => state[key] !== opening[i])) return
-      state.showRevalidation = true
-      state.upstreamOnly = false
-      state.revalidationDetailed = false
-      configureReportRevalidation()
+      openAppLens()
       applyOpeningFilters(getShownGroups())
       await renderAfterAnimationFrame(gen)
     },
   }).catch((err) => console.warn('workspace App metadata:', err))
-  // Open the per-workspace sync session AFTER every report is ingested
-  // — it needs a complete view of state.reports to build its
-  // workspace-id set. No-op when sync is disabled (no server URL).
+  // The sync session opens once every report is in (its id-set is built
+  // from them); refreshSession updates one kept open from before.
   triageSync.openSession(workspaceId)
-  // Refresh the id-set: if the session was already open (intersection-
-  // close preserved it), its `ids` still reflect the OLD state.reports,
-  // so newly-in-scope ids get their triage propagated to the chain.
-  // Also covers a report dragged into this workspace while another file
-  // was focused — its finding-ids are visible to triage-sync only once
-  // state.reports carries the report.
   triageSync.refreshSession(workspaceId)
   openPresence(workspaceId)
   await sidebarRender
 }
 
-// Remove the current file from OPFS and close the view. Doesn't
-// auto-switch — the user picks from the sidebar.
-//
-// Also strips the name from any workspace's `reports` array — the
-// canonical "prune at write time" point. Without it a deleted file
-// stays listed in any workspace it was moved into; render skips
-// ghosts, but `workspace-export` would log skip-warnings forever and
-// the next import on another machine would resurrect the stale entry.
-//
-// `triage` ('keep' | 'wipe', default 'keep') controls whether
-// `pruneOrphanTriage` runs after the removal. The sidebar precomputes
-// the orphan count via `analyzeTriageImpact` and surfaces the action
-// through `<delete-report-dialog>`, whose triage section adapts to it
-// (terse note when nothing's attached or everything's also reachable
-// from a kept report; keep-vs-wipe radio when orphans exist). 'keep'
-// is the no-op path the dialog resolves with when there's nothing to
-// ask about.
-//
-// `deleteFromRemoteWorkspaceIds` — every workspace whose remote holds
-// the report. The sidebar gathers all owning workspaces (multi-
-// workspace membership) and filters by `isInRemoteOrCached` (live
-// sessions AND persisted cache). Fan the per-workspace `deletePresence`
-// calls out, each try/catch-wrapped so a network blip on workspace N
-// doesn't strand local bytes + later workspaces' remote tags half-
-// deleted. Errors are logged but never abort the local cleanup —
-// intact local bytes alongside peers' partial remote state is worse
-// than "remote not fully cleaned, retry by re-deleting".
-export async function deleteCurrent({ triage = 'keep', deleteFromRemoteWorkspaceIds = [] } = {}) {
-  if (!state.currentFile) return
-  // Bump the load generation AND capture it. The bump alone gates
-  // other in-flight switchTo*/ingestReport from clobbering
-  // state.reports, but deleteCurrent's own tail (state.currentFile =
-  // null; state.reports = []; ...) would still run even if a new
-  // switchTo* landed during one of the awaits below (deletePresence,
-  // deleteFile, setReportWorkspace, pruneOrphanTriage), clobbering the
-  // freshly-built view. So mirror switchToFile: capture gen, re-check
-  // `isStaleLoad(gen)` at every await checkpoint, bail before the state
-  // mutations if a newer load superseded us. Concurrency audit
-  // `ui/view/ingest.js:366`.
-  const gen = beginViewNavigation()
-  const name = state.currentFile
-  // Drop name-scoped cache + localStorage entries up-front, BEFORE any
-  // await. removeCount + saveRepoUrlFor are synchronous and scoped to
-  // the captured `name`, so they can't clobber the active file's state
-  // even if a switchTo* races in. Deferring them past the awaits would
-  // let an early stale-bail leave a stale repoUrl that resurrects on a
-  // future same-name re-import. Audit follow-up: PR-73 cross-module
-  // review.
-  removeCount(name)
-  saveRepoUrlFor(name, '')
-  // Remote deletes BEFORE the local one close the window where the
-  // next `openWorkspace(W)` auto-download could re-pull the report
-  // through that workspace's tag. Each call is wrapped — `not-found`
-  // is fine (idempotent when a peer already dropped the tag); other
-  // errors warn but don't abort the loop or block the local delete.
-  for (const wsId of deleteFromRemoteWorkspaceIds) {
+// Remote deletes, each best-effort ('not-found' is fine: a peer already
+// dropped it) and BEFORE the local one, so an auto-download can't re-pull
+// through a remaining tag. False once a newer navigation took over.
+async function deleteFromRemotes(workspaceIds, gen, what, remove) {
+  for (const wsId of workspaceIds) {
     try {
-      const remoteResult = await deletePresence(wsId, name)
-      if (isStaleLoad(gen)) return
-      if (remoteResult && remoteResult.ok === false && remoteResult.reason !== 'not-found') {
-        console.warn(`Failed to delete '${name}' from workspace ${wsId} remote: ${remoteResult.reason}`)
+      const result = await remove(wsId)
+      if (isStaleLoad(gen)) return false
+      if (result && result.ok === false && result.reason !== 'not-found') {
+        console.warn(`Failed to delete ${what} from workspace ${wsId} remote: ${result.reason}`)
       }
     } catch (err) {
-      console.warn(`Failed to delete '${name}' from workspace ${wsId} remote:`, err)
+      console.warn(`Failed to delete ${what} from workspace ${wsId} remote:`, err)
     }
   }
+  return true
+}
+
+// The 'wipe' choice: drop triage no remaining report reaches. A failure
+// leaves the orphans for the next prune; the removal already landed.
+async function pruneOrphans() {
+  try { await pruneOrphanTriage() }
+  catch (err) { console.warn('Skipped orphan-triage GC:', err) }
+}
+
+// Remove the current file from OPFS and every workspace listing it (so no
+// export or other machine resurrects it), and close the view. `triage`
+// 'wipe' also prunes orphaned triage ('keep' leaves it for a re-import);
+// `deleteFromRemoteWorkspaceIds` are the workspaces whose remote holds the
+// report (the sidebar's `isInRemoteOrCached`). Re-checks the generation
+// after every await, so a switch landing meanwhile keeps its view.
+export async function deleteCurrent({ triage = 'keep', deleteFromRemoteWorkspaceIds = [] } = {}) {
+  if (!state.currentFile) return
+  const gen = beginViewNavigation()
+  const name = state.currentFile
+  // Name-scoped and synchronous, so before any await: a stale bail must not
+  // leave a repo URL that resurfaces on a same-name re-import.
+  removeCount(name)
+  saveRepoUrlFor(name, '')
+  if (!await deleteFromRemotes(deleteFromRemoteWorkspaceIds, gen, `'${name}'`, (wsId) => deletePresence(wsId, name))) return
   await deleteFile(name)
   if (isStaleLoad(gen)) return
   await setReportWorkspace(name, null)
-  if (isStaleLoad(gen)) return
-  // GC orphan triage only on "wipe". Default ('keep') leaves them in
-  // localStorage so a future re-import of the same report resurfaces
-  // the triage. A GC error (round-1 review #1: now propagated, not
-  // silently wiping everything) is warned and swallowed — the OPFS
-  // removal already landed; orphans stay until the next clean prune.
-  if (triage === 'wipe') {
-    try { await pruneOrphanTriage() }
-    catch (err) { console.warn('Skipped orphan-triage GC:', err) }
-    if (isStaleLoad(gen)) return
-  }
-  // Final stale-check before the tail mutation block: a switchTo*'s
-  // `beginViewNavigation()` is synchronous and can land between any two statements,
-  // so re-check here even with no await separating them, lest a brand-
-  // new view have its `state.reports` cleared / `graph2` torn down out
-  // from under it. Audit follow-up: PR-73 cross-module review.
+  if (triage === 'wipe' && !isStaleLoad(gen)) await pruneOrphans()
   if (isStaleLoad(gen)) return
   clearActiveView()
   await renderSidebar()
 }
 
-// Shared empty-state reset — clears all in-memory view state
-// (selections, reports, graph2, repo-url) and repaints `#report` /
-// `#drop-zone` / `<title>` to the empty welcome surface. The
-// `<download-button>` hides itself reactively via its StateElement
-// autorun (see view/download-button.js) when its predicate fails, so
-// no manual visibility reset here. `goHome`, `deleteCurrent`'s tail,
-// and `leaveWorkspace`'s active-view branch all route through here so
-// the three paths can't drift.
-//
-// Does NOT begin navigation or close sync sessions — those are caller
-// concerns (each path has its own ordering constraints with the
-// surrounding OPFS / triage / remote operations).
+// Clear every in-memory view state and paint the empty welcome surface —
+// for goHome, deleteCurrent and leaveWorkspace alike. Navigation and sync
+// sessions are the callers' (each orders them with its own operations).
 function clearActiveView({ forgetLastView = true } = {}) {
   resetBundleTerminal()
   state.currentManagedTeam = null
@@ -1245,10 +912,7 @@ function clearActiveView({ forgetLastView = true } = {}) {
   state.currentWorkspace = null
   state.currentReportWorkspace = null
   state.currentLinks = null
-  state.managedReport = null
-  state.managedReports = []
-  state.managedComments.clear()
-  state.managedIssues.clear()
+  clearManagedReport()
   state.selectedBundle = null
   state.selectedBundleWorkspace = null
   state.scanSelection = null
@@ -1272,10 +936,7 @@ function clearActiveView({ forgetLastView = true } = {}) {
   state.kanbanExpandedColumn = null
   state.focusGid = null
   state.activeTabByGroup.clear()
-  state.reports = []
-  clearMergedGroups()
-  state.workspaceMerges = []
-  state.revalidateConflicts = new Map()
+  clearLoadedReports()
   state.repoUrl = ''
   state.repoEditing = false
   state.shownTriage = null
@@ -1303,65 +964,26 @@ export function resetForClientModeTransition(options) {
   clearActiveView(options)
 }
 
-// Drop back to the empty drop-zone screen without touching stored
-// data — non-destructive counterpart to `deleteCurrent`'s tail. The
-// DeepView wordmark in the sidebar header routes here, so clicking it
-// always lands on the supported-formats welcome surface regardless of
-// what's open. Skips OPFS / remote / triage GC — the file the user
-// came from stays as-is for them to pick back up from the sidebar.
+// Back to the welcome surface (the sidebar wordmark), stored data left as
+// it is. Invalidates in-flight loads and closes the view's sync sessions,
+// which would otherwise echo edits to a chain nothing shows.
 export async function goHome({ history = true } = {}) {
   if (history && isManagedUiMode() && managedHistory.active) return managedHistory.navigate({ view: 'home' })
-  // Bump the load generation so any in-flight switchTo* / ingestReport
-  // bails before pushing into the cleared state. Mirrors the guard in
-  // `deleteCurrent` / `leaveWorkspace`.
   beginViewNavigation()
-  // Close any per-workspace sync sessions tied to the active view —
-  // both single-file-member and merged-workspace views open sessions
-  // (in switchToFile / switchToWorkspace); without closing them,
-  // returning home would leave triage-sync echoing edits to a chain no
-  // view consumes.
   closeSessionsExcept(new Set())
   clearActiveView({ forgetLastView: !isManagedUiMode() })
   await renderSidebar()
   return true
 }
 
-// Bundle counterpart of `deleteCurrent` — drives the sidebar's
-// "Delete current" button when the bundles view's `selectedBundle` is
-// active. Removes the OPFS bytes, detaches the integrity from every
-// workspace's `bundles` list, prunes the cross-bundle SHA-512 hash
-// index (so the finding-card "Code →" lookup stops surfacing the gone
-// bundle), drops the panel selection + persisted last-view pointer,
-// refreshes `state.bundles`, repaints view + sidebar.
-//
-// `deleteFromRemoteWorkspaceIds` — workspace ids whose remote objstore
-// should also drop this bundle. The sidebar gathers every owning
-// workspace whose remote holds the integrity (live session OR cache,
-// via `isBundleInRemoteOrCached`). Each `deleteBundleFromRemote` runs
-// FIRST so the tag drops before we clear the local bytes; each is
-// wrapped so a network blip doesn't strand local bytes + later
-// workspaces' tags half-deleted. Same shape + rationale as
-// `deleteCurrent`.
-//
-// Concurrency: `beginViewNavigation()` + `isStaleLoad(gen)` mirrors
-// `deleteCurrent` — a switchToWorkspace landing during an await below
-// would otherwise clobber the freshly-built view via the trailing
-// `listBundles()` + `render()`.
+// deleteCurrent for the selected bundle: its bytes, its workspace
+// listings, its hash-index entries (the "Code →" lookups), the panel
+// selection and a last-view pointer naming it.
 export async function deleteCurrentBundle({ deleteFromRemoteWorkspaceIds = [] } = {}) {
   if (!state.selectedBundle) return
   const gen = beginViewNavigation()
   const integrity = state.selectedBundle
-  for (const wsId of deleteFromRemoteWorkspaceIds) {
-    try {
-      const result = await deleteBundleFromRemote(wsId, integrity)
-      if (isStaleLoad(gen)) return
-      if (result && result.ok === false && result.reason !== 'not-found') {
-        console.warn(`Failed to delete bundle from workspace ${wsId} remote: ${result.reason}`)
-      }
-    } catch (err) {
-      console.warn(`Failed to delete bundle from workspace ${wsId} remote:`, err)
-    }
-  }
+  if (!await deleteFromRemotes(deleteFromRemoteWorkspaceIds, gen, 'bundle', (wsId) => deleteBundleFromRemote(wsId, integrity))) return
   await deleteBundle(integrity)
   if (isStaleLoad(gen)) return
   await setBundleWorkspace(integrity, null)
@@ -1371,12 +993,8 @@ export async function deleteCurrentBundle({ deleteFromRemoteWorkspaceIds = [] } 
   state.bundleDetails = null
   state.bundleSourceFile = null
   state.bundleSourceFindingIdx = null
-  // Only clear LAST_FILE_KEY when it pointed at THIS bundle —
-  // workspace pointers (`ws:<id>`) and report filenames share the slot,
-  // so an unconditional clear would dump the user to the empty drop
-  // zone on reload after deleting a bundle from a workspace view.
-  // `persistLastBundle` writes `b:<integrity>` (optional ` <tab>`
-  // suffix); match the prefix to keep unrelated pointers intact.
+  // Only a pointer to THIS bundle (`b:<integrity>[ <tab>]`): the slot is
+  // shared with workspace and report pointers.
   const lastFile = getSecureItem(LAST_FILE_KEY)
   if (typeof lastFile === 'string'
       && (lastFile === `b:${integrity}` || lastFile.startsWith(`b:${integrity} `))) {
@@ -1389,106 +1007,46 @@ export async function deleteCurrentBundle({ deleteFromRemoteWorkspaceIds = [] } 
   await renderSidebar()
 }
 
-// Leave a workspace from THIS browser. Always drops the workspace
-// entry in localStorage and the persisted triage base (latter via
-// triage-sync's `onWorkspaceDeleted`); attached reports depend on
-// `mode`:
-//   - 'detach' (default): OPFS bytes stay — reports reappear in the
-//     sidebar's unattached bucket; cached counts + repo URLs survive.
-//   - 'delete': OPFS bytes go too, alongside counts + repo URLs.
-// `triage` controls the persisted-triage GC (only meaningful in
-// delete mode):
-//   - 'keep' (default): orphaned triage stays in localStorage so a
-//     future re-import of a matching report can resurface it.
-//   - 'wipe': run `pruneOrphanTriage` after the removal so any triage
-//     entry whose finding-id isn't reachable from a remaining report
-//     is dropped.
-// Both modes leave the server's workspace chain untouched — subscribed
-// peers keep their copy, and a future re-import of the same workspace
-// bundle resumes against the same chain. UI responsibility: if the
-// active view was this workspace (merged-mode) — or, in delete mode,
-// one of its reports — clear `state.currentFile` /
-// `state.currentWorkspace` and drop to the drop zone so the renderer
-// doesn't trip over a reference to gone data.
+// Leave a workspace from THIS browser: its entry and persisted triage base
+// go (`onWorkspaceDeleted`); its reports stay ('detach', back to the
+// unfiled bucket) or go with their counts and repo URLs ('delete', then
+// `triage: 'wipe'` prunes orphaned triage). The server's chain is
+// untouched. The view is cleared if it showed the workspace, or — deleting
+// — one of its reports.
 export async function leaveWorkspace(workspaceId, mode = 'detach', { triage = 'keep' } = {}) {
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   if (!ws) return
-  // Bump the load generation so any in-flight switchTo* / ingestReport
-  // (e.g. a workspace click that started a merged-view load) bails
-  // before pushing into the cleared state.reports — mirrors
-  // `deleteCurrent`.
   beginViewNavigation()
   const reports = Array.isArray(ws.reports) ? [...ws.reports] : []
-  // Tear down the live sync session BEFORE touching the workspace
-  // entry. `deleteWorkspace`'s listener does the same teardown (and
-  // drops the persisted base), but a manual `closeSession` here also
-  // stops the in-flight save loop from picking up a mid-deletion view
-  // of state.reports and emitting a doomed save against a chain whose
-  // identity is about to vanish.
+  // Before the entry goes, so the save loop can't emit a doomed save
+  // against a chain about to vanish.
   triageSync.closeSession(workspaceId)
   closePresence(workspaceId)
   if (mode === 'delete') {
-    // Drop each report's OPFS bytes + localStorage sidekicks (counts,
-    // repo URL). A report can sit in more than one workspace (additive
-    // membership), so a copy another workspace still lists loses its
-    // bytes too — that workspace's merged view skips the missing file
-    // (`readFile` → null in switchToWorkspace) until it is re-imported
-    // or re-downloaded from the workspace's remote.
+    // A copy another workspace lists loses its bytes too; that workspace
+    // skips it until re-imported or re-downloaded.
     for (const name of reports) {
       try { await deleteFile(name) } catch {}
       removeCount(name)
       saveRepoUrlFor(name, '')
     }
-    // GC orphan triage only on "wipe". Default ('keep') leaves orphans
-    // so a future re-import of a matching report can resurface them.
-    // Same single-source-of-truth as `deleteCurrent`: any marker /
-    // triage / comment / fix / per-report ignore whose finding-id no
-    // longer matches a finding in any remaining report is dropped;
-    // triage still reachable from a report we keep (cross-workspace or
-    // unattached) survives either way. A GC error (round-1 review #1:
-    // now propagated, not silently wiping) is warned and swallowed —
-    // the reports are already gone; orphans stay until the next prune.
-    if (triage === 'wipe') {
-      try { await pruneOrphanTriage() }
-      catch (err) { console.warn('Skipped orphan-triage GC:', err) }
-    }
+    if (triage === 'wipe') await pruneOrphans()
   }
-  // Detach mode needs no per-report mutation: `deleteWorkspace` below
-  // drops the whole entry (with its `reports` array), the OPFS bytes
-  // stay, and the sidebar's unfiled bucket re-claims them next render.
-  //
-  // Reset the active view if it pointed at the leaving workspace
-  // (merged-mode) or — delete mode only — one of its reports. In
-  // detach mode the files survive, so a single-file view of one is
-  // still valid: leaving the user on the same report under the unfiled
-  // bucket is less disruptive than slamming them to the drop zone.
   const wasActiveWorkspace = state.currentWorkspace === workspaceId
   const wasActiveFile = mode === 'delete'
     && state.currentFile != null
     && reports.includes(state.currentFile)
   if (wasActiveWorkspace || wasActiveFile) clearActiveView()
-  // Finally drop the workspace entry. Fires `onWorkspaceDeleted`, which
-  // wipes this workspace's persisted triage base (see triage-sync.ts).
-  // No server message — the relay retains the chain until a future
-  // operator-side delete (not exposed yet).
   await deleteWorkspace(workspaceId)
   await renderSidebar()
 }
 
-// Pure parse + render path — no FileReader, no OPFS. Used by
-// switchToFile (after content is materialized) and the headless print
-// flow (`window.__loadFile`), so that flow can merge multiple inputs
-// by calling repeatedly.
-//
-// `gen` is the optional load-generation token captured by the caller
-// (switchToFile / switchToWorkspace). When set, every await inside
-// re-checks it on resume and bails before mutating state.reports — how
-// a stale load from a superseded sidebar click avoids interleaving its
-// push. The headless `window.__loadFile` path passes nothing, staying
-// unguarded so it keeps accumulating across calls (the print pipeline
-// relies on that).
+// Parse + store one report, no OPFS: for switchToFile, the workspace and
+// team loads, and the headless print flow (`window.__loadFile`), which
+// calls it repeatedly to merge inputs. `gen` (see isStaleLoad) is
+// re-checked after every await.
 async function ingestReport(name, content, gen = null, { renderView = true, managedReportId = null, managedRepo = null, keepFilters = false, keepLens = false } = {}) {
-  const stale = () => gen !== null && isStaleLoad(gen)
+  const stale = () => isStale(gen)
   try {
     // Finish both hints before rendering the Link button. Copy remains
     // synchronous inside its click handler, including on a cold load.
@@ -1497,89 +1055,43 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
       computeLinkHint('workspace', state.currentWorkspace || state.currentReportWorkspace),
     ])
     if (stale()) return
-    // Persistent triage (markers/deletedIds keyed by uuid) loads once
-    // on local navigation; await it before rendering so the first drop
-    // already shows stored marks/deletions for matching findings.
+    // Stored triage is awaited before the first render shows marks.
     await ensureTriageLoaded()
     if (stale()) return
-    // Format dispatch lives in the report library (@preventive/report),
-    // which also words the failure — usually a malformed dump rather
-    // than an unknown format.
     // Managed responses are already parsed. Clone before stamping IDs so the
     // session's cached report remains independent of the active view.
     const { data, reason } = managedReportId === null
       ? isManagedUiMode() ? readManagedReport(content, name) : readReport(content)
       : { data: structuredClone(content), reason: null }
     if (!data) throw new Error(reason)
-    // First report in the current view (state.reports cleared on
-    // switchToFile / deleteCurrent, accumulating in the headless print
-    // flow). Gates both the filter reset and the auto-tune below.
+    // The first report of the view gates the filter reset below.
     const isFirst = state.reports.length === 0
-    // The report's entries, under whichever of the two names it files
-    // them (@preventive/report reportEntries): `findings`, or `groups`
-    // for a report that arrives already deduplicated — a native dump
-    // that merged its runs, and every markdown export of a view that
-    // showed a finding as one card with several cases. Read as
-    // `data.findings` alone, those come out EMPTY, so a workspace
-    // export re-imported here would render as a report with nothing
-    // in it.
-    //
-    // Derive deterministic ids for findings lacking one — must run
-    // BEFORE the dedup loop so MD-imported (and id-less JSON) findings
-    // dedupe by content like exporter-id'd ones, and so triage
-    // (markers / deletions) persists across reloads of the same source.
-    // Mutates the finding objects in place; `toGroup` returns them by
-    // reference, so the ids are visible to the loop below.
+    // `findings` or, for an already deduplicated report, `groups`
+    // (reportEntries). Ids are derived for findings lacking one BEFORE
+    // grouping, so imports dedupe and keep triage across reloads; in place.
     const rawEntries = reportEntries(data) ?? []
     const rawFindings = rawEntries.flatMap(toGroup)
     await backfillFindingIds(rawFindings)
     if (stale()) return
-    // Which PRODUCERS judged something in this document — the sources
-    // whose findings carry a verdict of their own here. A product's
-    // import rides `revalidation` in the outcome filter for want of a
-    // stamp it could never have carried (filters.js
-    // filterRevalidateKind), and that reading is only true while
-    // nothing of that producer's was judged: DeepSec writes its own
-    // pass's verdicts into the report it exports, and there an
-    // unstamped row is one its pass did not reach, not one it
-    // confirmed.
-    //
-    // Per producer rather than per document, because a document can
-    // hold several: a re-imported export carries a revalidated
-    // analysis beside imports the pass never saw
-    // (@preventive/report/src/parse-deepview-md.js stamps each row's own source),
-    // and the analysis being judged says nothing about them. Read off
-    // each finding's own marker, the same one `_source` takes below.
+    // The producers whose own pass judged something in this document, per
+    // producer (a re-imported export mixes a revalidated analysis with
+    // imports no pass saw): an unstamped import rides `revalidation` in the
+    // outcome filter only where its producer judged nothing
+    // (filters.js filterRevalidateKind).
     const judgedSources = new Set(rawFindings
       .filter(hasRevalidateStamp)
       .map((f) => f.source ?? data.source ?? null))
-    // Per-report repo URL stamped on each finding so format.js's
-    // fileUrl / lineLink resolves the right fallback in workspace mode
-    // (where state.repoUrl can't represent N reports at once). Empty
-    // string for headless / print ingests with no OPFS-backed URL.
-    //
-    // A report-level `repo.github` declaration outranks that typed URL
-    // — it's the analyzer naming what the run covered, and the header
-    // shows it INSTEAD of the editable chip (see repoChipTemplate), so
-    // links have to resolve against the repo the chip names. Stamped in
-    // slug form: `repoBaseUrl` expands it for links, and it buckets
-    // with analyzer-stamped `repo.github` values in the Repositories
-    // view rather than splitting the same repo across two keys.
-    // Managed assignments, including an unassigned repo, override embedded
-    // report metadata. Finding-specific upstream repositories stay intact.
+    // The repo each finding's links resolve against (`state.repoUrl` can't
+    // hold N reports'): a report-level `repo.github` declaration (slug
+    // form), outranking the URL typed for it; a managed assignment, even an
+    // unassigned one, overrides the embedded one. With it, the
+    // `directory` its tree sits in (fileUrl's path prefix).
     const reportRepo = managedRepo ?? data?.repo
     const declaredRepo = reportRepoGithub({ repo: reportRepo })
     const repoFallback = declaredRepo ?? (managedReportId == null ? loadRepoUrlFor(name) : '')
-    // …and the `directory` beside that declaration, stamped alongside
-    // it: where inside the repository the tree this report describes
-    // sits, which the link builders splice in front of every path the
-    // report wrote (group.js findingRepoTarget, format.js fileUrl).
-    // Empty string when the report declares none, the same "nothing
-    // here" the repo stamp uses.
     const repoDir = repoDirectory(reportRepo)
-    // Preserve report boundaries and every original copy. Workspace grouping
-    // depends on the App lens, so discarding duplicates here would make it
-    // impossible to keep App rows separate and later merge their source rows.
+    // Report boundaries and every original copy are kept: workspace grouping
+    // depends on the App lens.
     const depsDirectory = dependencyDirectory([{ groups: rawEntries.map(toGroup), tree: data.tree, treeDependencies: data.treeDependencies }])
     const groups = []
     for (const entry of rawEntries) {
@@ -1587,10 +1099,6 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
       if (members.length === 0) continue
       const stamped = []
       for (const f of members) {
-        // `_bundleHashes`: the report-level integrities the analyzer
-        // ran against, stamped per-finding so the finding-card's
-        // "Code →" lookup constrains its search to bundles this report
-        // is about. Empty array when the report lacked the field.
         const filled = {
           ...dropForeignRepo(f, repoFallback),
           _id: state.nextFindingId++,
@@ -1600,37 +1108,21 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
           _reportName: name,
           _depsDirectory: depsDirectory,
           _managedReportId: managedReportId,
+          // The bundles the analyzer ran against, for "Code →" lookups.
           _bundleHashes: data.bundleHashes ?? [],
         }
         inheritReportMeta(filled, data)
-        // Which PRODUCER this finding came from — a `source` marker
-        // (deepsec / codex-security / claude-security / piolium), or
-        // null for the analyzer's own dump, which is DeepView's
-        // (file-display.js PRODUCER_LABELS names that bucket). Its own
-        // marker when it carries one — a re-imported markdown export
-        // that mixed a product's findings with the analyzer's own runs
-        // stamps them per finding (@preventive/report/src/parse-deepview-md.js),
-        // and such a finding is that product's whatever report it now
-        // sits in — else its report's. The same answer the markdown
-        // writer's `sourceReader` gives (@preventive/report/src/write-md.js), read
-        // off the finding so the filters don't have to find its report.
+        // The PRODUCER (a `source` marker, or null for DeepView's own dump):
+        // the finding's own marker first (a re-imported export stamps them
+        // per finding), else its report's — as the markdown writer's
+        // `sourceReader` reads it.
         filled._source = filled.source ?? data.source ?? null
-        // Which LAYER this finding describes — the app as it runs, or
-        // the source underneath. The producer answer above decides it
-        // (see `isAppFinding`), so it is settled here, once, rather
-        // than re-derived by each surface that sorts or filters on it.
-        // A finding that arrived carrying the field keeps its own
-        // answer: a re-imported export can have been written by a
-        // reader that already knew.
+        // The LAYER, settled once from the producer; a field the finding
+        // arrived with is kept.
         if (!('isApp' in filled)) filled.isApp = isAppFinding(filled, filled._source)
-        // …and whether that producer's own pass judged anything here,
-        // which is what the outcome filter's stand-in turns on
-        // (filters.js filterRevalidateKind).
         filled._sourcePass = judgedSources.has(filled._source)
-        // Effective analyzer string for the toolbar's analyzer filter:
-        // the producer when there is one, else the per-finding `type`
-        // of a native dump (undefined → null, a stable sentinel for
-        // the "no analyzer" bucket).
+        // The analyzer filter's value: the producer, else a native dump's
+        // `type`, else null (the "no analyzer" bucket).
         filled._analyzer = filled._source ?? (filled.type ?? null)
         stamped.push(filled)
       }
@@ -1639,20 +1131,14 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     stampSecurityGroups(groups)
     state.reports.push({
       type: data.type || 'analysis',
-      // `source` is set by the markdown parser ('claude-security'),
-      // absent on JSON dumps — render.js uses it to swap the header
-      // title for an all-MD report.
+      // Set by the markdown parsers; render.js titles an all-MD view by it.
       source: data.source ?? null,
       fileName: name,
       _managedReportId: managedReportId,
       groups,
-      // Report-level repo declaration, normalised to an `owner/name`
-      // slug (null when the dump names none). The header prefers it
-      // over the repo its findings agree on — see headerTemplate.
+      // The report-level repo slug, or null; the header prefers it.
       repo: declaredRepo,
-      // Per-file imports / exports / hashes from the analyzer dump
-      // (stamped at JSON-export time). The renderer surfaces this as a
-      // separate "Tree" tab when more than one file is present.
+      // Per-file imports / exports / hashes (the "Tree" tab).
       tree: data.tree ?? null,
       // A team's report tells in its place how many files it holds and the
       // dependency directory it names; the tree is asked for once its graph
@@ -1670,18 +1156,12 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     // left out might tell otherwise (render.js), and its whole reports
     // ingested in its place, the lens configured once they are all in.
     configureReportRevalidation({ held: keepLens })
-    // A view's reports ingested again, whole, keep the filters its reader set.
+    // A view's reports ingested again, whole, keep the filters its reader
+    // set. Otherwise the set opens on an auto-tuned floor, or Confirmed,
+    // over the rows the view SHOWS; a workspace asks again once all its
+    // members are in.
     if (isFirst && !keepFilters) {
       resetFilters()
-      // What this set opens on: an auto-tuned confidence floor, and
-      // then — for a REVALIDATION report, one where every group that
-      // floor leaves on screen carries a row the second pass stamped —
-      // Confirmed instead of the range. Over the rows the view SHOWS
-      // (getShownGroups) — merged, so a partial dupe inside the report
-      // counts once, and in the reader's triage bucket, since a row
-      // filed away is not on screen for either face of the block. A
-      // workspace asks again over all of its members once they are in
-      // (switchToWorkspace).
       applyOpeningFilters(getShownGroups())
     }
     if (renderView) await renderAfterAnimationFrame(gen)
@@ -1691,38 +1171,32 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
   }
 }
 
-// Headless / automated entry point — parses + renders a JSON report
-// in-process, no OPFS, no sidebar swap. The returned promise resolves
-// when this file's render has run, so the `print` command (src/print.js)
-// can await every input before printing. Repeated calls accumulate.
+// Headless entry point (the `print` command, src/print.js): parse and
+// render a report in-process, resolving once it has rendered. Repeated
+// calls accumulate.
 window.__loadFile = (name, content) => ingestReport(name, content)
 
-// Headless filter override — the `print` command applies CLI
-// --severity / --confidence AFTER all reports load (overriding the
-// first-load auto-tuned floor when present). `severities` may be an
-// array (or null/undefined to leave unchanged); empty array clears the
-// filter so all severities show.
+// Headless filter override, applied by `print` after every report loads:
+// `severities` an array (empty clears; null/undefined leaves it).
 window.__setFilters = ({ severities, confMin } = {}) => {
   if (severities !== undefined && severities !== null) state.filterSeverities = new Set(severities)
   if (confMin !== undefined) state.filterConfMin = confMin
   render()
 }
 
-// Prevent default drag behavior everywhere. Drops anywhere on the page
-// route through addFiles → OPFS save → switch to the last dropped; the
-// drop zone keeps its hover affordance for the empty-state case.
-// Global Esc → exit fullscreen (mirrors the toolbar's fullscreen-button
-// toggle, giving the canonical browser "give me my chrome back" gesture).
+// Esc leaves fullscreen, as the toolbar's button does.
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && document.body.classList.contains('report-fullscreen')) {
     document.body.classList.remove('report-fullscreen')
   }
 })
 
+// Drops anywhere route through addFiles; the drop zone's own handler adds
+// its hover affordance.
 document.addEventListener('dragover', (e) => e.preventDefault())
 document.addEventListener('drop', (e) => {
   e.preventDefault()
-  if (e.target.closest('#drop-zone')) return // dropZone handler owns this
+  if (e.target.closest('#drop-zone')) return
   addFiles(e.dataTransfer.files)
 })
 
@@ -1737,18 +1211,10 @@ dropZone.addEventListener('drop', (e) => {
   addFiles(e.dataTransfer.files)
 })
 
-// Click-to-browse: only the `<button class="drop-prompt-action">`
-// opens the native file picker — the empty surface around the prompt
-// triggers nothing, so WCO mode can use it as a window drag handle (via
-// body's `app-region: drag` baseline). The button gets affordance +
-// keyboard handling for free; chosen files route through the same
-// `addFiles` pipeline as a drop.
-//
-// The `<input type="file">` is created lazily on first activation and
-// parked on document.body — keeping it out of index.html leaves the
-// static markup focused on visible chrome, and `hidden` keeps it off
-// layout. Resetting `.value = ''` after each change lets the user
-// re-pick the same file (browsers suppress the change event otherwise).
+// Only the `.drop-prompt-action` button opens the picker: the empty
+// surface around it is a window drag handle in WCO mode. The hidden input
+// is made on first use; its value is reset after each change so the same
+// file can be picked again.
 let filePickerInput = null
 function openFilePicker() {
   if (isManagedUiMode()) return
@@ -1758,14 +1224,8 @@ function openFilePicker() {
     filePickerInput.multiple = true
     filePickerInput.hidden = true
     filePickerInput.addEventListener('change', () => {
-      // Snapshot BEFORE the reset. `input.files` is a live FileList —
-      // the same object on every read — and `.value = ''` empties it
-      // ("empty the list of selected files"). `addFiles` is async: it
-      // suspends on its first await and returns a pending promise, so
-      // the reset below runs before it ever reaches its loop. Handing
-      // it the live list left it iterating an emptied one, and every
-      // picked file was silently dropped. An array serves it just as
-      // well — it only iterates the argument and reads each File.
+      // Copied BEFORE the reset: `input.files` is live, `.value = ''`
+      // empties it, and async addFiles reaches its loop only after.
       const files = [...filePickerInput.files]
       if (files.length > 0) addFiles(files)
       filePickerInput.value = ''
@@ -1774,8 +1234,7 @@ function openFilePicker() {
   }
   filePickerInput.click()
 }
-// Event-delegate via the drop-zone so the listener survives Lit
-// re-renders if the prompt template ever becomes a component.
+// Delegated on the drop zone, so it survives the prompt's re-renders.
 dropZone.addEventListener('click', (e) => {
   const managedPage = e.target.closest('[data-managed-page]')
   if (managedPage) { void navigateToAdminPage(managedPage.dataset.managedPage); return }
