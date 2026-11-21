@@ -75,9 +75,10 @@ function packagesOf(format: LockfileFormat, text: string): ReadPackage[] {
   if (format !== 'yarn') throw new TypeError(`lockedPackages: ${format} lockfiles are not read`)
   // Yarn 2 and later write another format, which only the text tells apart.
   if (/^__metadata:/mu.test(text)) throw new LockfileError('a yarn.lock of Yarn 2 or later, which is not read')
-  // Yarn 1 names an alias, `my-q@npm:q@^1.5.1`, by its own name.
+  // Yarn 1 names an alias, `my-q@npm:q@^1.5.1`, by its own name, and
+  // resolves none of a directory (`file:` or `link:`).
   return Object.values(parseYarn1Lockfile(text, { checkVersions: false }).packages)
-    .map(pkg => ({ ...pkg, name: /@npm:((?:@[^/@]+\/)?[^/@]+)/u.exec(pkg.patterns[0] ?? '')?.[1] ?? pkg.name }))
+    .map(pkg => ({ ...pkg, name: /@npm:((?:@[^/@]+\/)?[^/@]+)/u.exec(pkg.patterns[0] ?? '')?.[1] ?? pkg.name, resolution: pkg.resolution ?? { type: 'directory' as const } }))
 }
 
 // npm's registry, by either of its names, and yarn's mirror of it, as
@@ -92,10 +93,14 @@ const shown = (url: URL | null) => url ? { from: `${url.protocol}//${url.host}${
 
 // Where a package read comes from (LockedPackage), with npm's registry's
 // integrity where `review`; null for one a package bundles, with no
-// resolution, or one of the project's own directories.
+// resolution. One installed from a directory of the project's own (a `file:`
+// one, which pnpm and Yarn 1 copy into node_modules) is a file of it, for a
+// review alone: a bundle may hold it under node_modules, by the version its
+// package.json names, which pnpm's lockfile doesn't (bundle-dependency-reviews.ts).
 function located({ name, version, resolution }: ReadPackage, review: boolean): LockedPackage | null {
   const at = { name, version: version ?? null }
-  if (resolution === undefined || resolution.type === 'directory') return null
+  if (resolution === undefined) return null
+  if (resolution.type === 'directory') return review ? { ...at, source: 'file' } : null
   if (resolution.type === 'git') return { ...at, source: 'git', ...shown(URL.parse(resolution.repo)) }
   const { tarball, integrity } = resolution
   if (resolution.gitHosted) return { ...at, source: 'git', ...shown(URL.parse(tarball ?? '')) }

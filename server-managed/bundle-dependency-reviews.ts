@@ -46,9 +46,15 @@ const lockedAsInstalled = (one: BundledVersion, pkg: LockedPackage) => one.integ
 
 // The versions `bundled` as `read`'s lockfiles lock them (`locked`), each as
 // the nearest of their directories locking it locks it; one told with how it
-// was installed, as the nearest locking it so does, where one does. With
-// those none lock (`unlocked`), how many versions there are (`versions`),
-// and the lockfiles' paths, the nearest first.
+// was installed, as the nearest locking it so does, where one does. One a
+// lockfile installs from a directory of the project's own by no version, as
+// pnpm's does, is locked by its name alone, where none there locks it by its
+// version: a bundle holds it by its package.json's, with no integrity, as
+// Stasis before it tagged one `npm:directory`
+// (common/managed/directory-packages.ts) records it; one installed from an
+// archive, told with its integrity, never so. With those none lock
+// (`unlocked`), how many versions there are (`versions`), and the
+// lockfiles' paths, the nearest first.
 export function lockedVersions(bundled: BundledVersion[], read: CommitLockfiles) {
   const byDirectory = Map.groupBy(read.lockfiles.map(({ path }) => path), directoryOf)
   // Each directory's versions by their name and version, the nearest first.
@@ -58,7 +64,8 @@ export function lockedVersions(bundled: BundledVersion[], read: CommitLockfiles)
   const unlocked = new Map<string, BundledVersion>()
   for (const one of bundled) {
     const key = `${one.name}@${one.version}`
-    const locking = nearest.flatMap(({ locked }) => locked.has(key) ? [locked.get(key)!] : [])
+    const directory = (locked: Map<string, LockedPackage[]>) => one.integrity === undefined ? locked.get(`${one.name}@`)?.filter(pkg => pkg.source === 'file') : undefined
+    const locking = nearest.flatMap(({ locked }) => { const locks = locked.get(key) ?? directory(locked); return locks?.length ? [locks] : [] })
     const variants = locking.map(locks => locks.filter(pkg => lockedAsInstalled(one, pkg))).find(locks => locks.length > 0) ?? locking[0]
     if (!variants) { unlocked.set(key, { name: one.name, version: one.version }); continue }
     for (const pkg of variants) if (!found.has(lockedWith(pkg))) found.set(lockedWith(pkg), pkg)
