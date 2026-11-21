@@ -18,7 +18,9 @@ import { templateText, templates } from './_lit.js'
 const state = { managedSession: { id: 's', role: 'triage' }, managedTeams: [{ id: 'team-1', slug: 'deps' }], teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest' }
 // The team reads asked, by the repositories each names (none: all), and the
 // pull requests or deltas asked alone.
-const asked = { teams: [], dependencies: [], deltas: [] }
+const asked = { teams: [], dependencies: [], deltas: [], reviews: [] }
+// What each ask whether reviews changed is answered, in turn.
+const reviewChanges = []
 // Each team read's signal, as asked.
 const reads = []
 // A pull request's answer once it is asked alone, by its repository and number: unanswered where none is.
@@ -109,6 +111,11 @@ mock.module('../ui/view/client-managed.js', { exports: {
     return answers.has(`${repoId}#${number}`) ? Promise.resolve(answers.get(`${repoId}#${number}`)) : new Promise(() => {})
   },
   fetchPullDependenciesOf(repoId, numbers, options) { asked.dependencies.push([repoId, numbers, options]); return new Promise(() => {}) },
+  fetchTeamReviewChanges(teamId, since, versions, csrfToken) {
+    asked.reviews.push([teamId, since, versions.map(({ name, version }) => `${name}@${version}`).toSorted(), csrfToken])
+    const next = reviewChanges.shift()
+    return next === undefined ? new Promise(() => {}) : next instanceof Error ? Promise.reject(next) : Promise.resolve(next)
+  },
 } })
 const opened = []
 mock.module('../ui/view/lazy-dialogs.js', { exports: { openRepositoryItemDialog(props) { opened.push(props) } } })
@@ -975,5 +982,69 @@ test('a pull request read alone, into another branch, holds the lines its versio
     answers.clear()
     Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest', teamDependenciesAllBranches: false })
     routes.length = 0
+  }
+})
+
+test('a tab showing asks which of the versions it lists had reviews counting for its team\'s repositories change since it last asked, and asks again of the pull requests listing them alone', async () => {
+  TEAM.push(31)
+  branches[31] = { cut: false, review: { ...terms, unreviewed: 0 }, lockfiles: [dir()] }
+  pulls[31] = { items: [pull(1), pull(2), pull(3)], more: false }
+  Object.assign(dependencies, {
+    '31#1': { cut: false, review: terms, lockfiles: [dir({ added: [wants('reviewed')] })] },
+    '31#2': { cut: false, review: terms, lockfiles: [dir({ added: [wants('untouched')], unreviewed: [wants('reviewed', { version: '2.0.0' })] })] },
+    '31#3': { cut: false, review: terms, lockfiles: [dir({ added: [wants('untouched')] })] },
+  })
+  // Each as it is told once asked again: the first's version reviewed once since, the second's other version passing, so listed no more.
+  answers.set('31#1', { number: 1, cut: false, review: terms, lockfiles: [dir({ added: [wants('reviewed', { reviews: 1 })] })] })
+  answers.set('31#2', { number: 2, cut: false, review: terms, lockfiles: [dir({ added: [wants('untouched')] })] })
+  answers.set('31#3', { number: 3, ...dependencies['31#3'] })
+  Object.assign(state, { managedSession: { id: 'review-changes', role: 'triage', csrfToken: 'csrf' }, teamDependenciesTab: 'pulls', teamDependenciesSort: 'newest' })
+  const view = shown([repo(31, 'org/watched')])
+  // Drawn till its team's read, of every repository this file's tests added, is told.
+  const told = async () => {
+    let text = await read(view)
+    for (let round = 0; round < 20 && text.includes('Reading their pull requests'); round++) text = await read(view)
+    return text
+  }
+  // Those asked again, alone or several of a repository's together.
+  const reasked = () => asked.dependencies.flatMap(([repoId, numbers]) => [numbers].flat().map(number => [repoId, number])).toSorted(([, a], [, b]) => a - b)
+  const card = (text, number) => cardsOf(text).find(one => nameOf(one) === `watched#${number}`)
+  const reviews = text => /data-tooltip=reviewed@1\.0\.0 [^]*?<span>(\d+) reviews? of 2 required<\/span>/u.exec(card(text, 1))?.[1]
+  try {
+    assert.equal(reviews(await told()), '0')
+    asked.dependencies.length = asked.reviews.length = 0
+    reviewChanges.push({ now: 500_000, versions: [] })
+    await view._askReviews()
+    assert.deepEqual(asked.reviews, [['team-1', null, [], 'csrf']], 'first, the server\'s time alone, none asked of')
+    reviewChanges.push({ now: 530_000, versions: [{ name: 'reviewed', version: '1.0.0' }, { name: 'reviewed', version: '2.0.0' }] })
+    await view._askReviews()
+    assert.deepEqual(asked.reviews.at(-1), ['team-1', 500_000 - 120_000, ['reviewed@1.0.0', 'reviewed@2.0.0', 'untouched@1.0.0'], 'csrf'],
+      'then since then, less what it shows may be as old, of each version it lists once, those it adds and those locked otherwise')
+    const text = await told()
+    assert.deepEqual(reasked(), [[31, 1], [31, 2]], 'those listing a version whose reviews changed asked again, one it adds and one its lockfiles lock otherwise; not the other')
+    assert.equal(reviews(text), '1', 'told as it is now')
+    asked.dependencies.length = 0
+    reviewChanges.push({ now: 560_000, versions: [] })
+    await view._askReviews()
+    assert.equal(asked.reviews.at(-1)[1], 530_000, 'since the last answer')
+    await read(view)
+    assert.deepEqual(asked.dependencies, [], 'none asked again where none changed')
+    assert.deepEqual(asked.reviews.at(-1)[2], ['reviewed@1.0.0', 'reviewed@2.0.0', 'untouched@1.0.0'], 'one that passed since, listed no more, still asked of')
+
+    // Past as many as a request asks of, several, its time the earliest they tell, once all are told.
+    for (let at = 0; at < 2500; at++) view._watched.versions.get('31#3').add(`many-${at}@1.0.0`)
+    const before = asked.reviews.length
+    reviewChanges.push(new Error('Busy.'))
+    await view._askReviews()
+    assert.equal(view._reviewsSince.at, 560_000, 'one failing: from where it was, asked again')
+    reviewChanges.push({ now: 600_000, versions: [] }, { now: 590_000, versions: [{ name: 'many-2400', version: '1.0.0' }] })
+    await view._askReviews()
+    assert.deepEqual(asked.reviews.slice(before + 1).map(([, at, versions]) => [at, versions.length]), [[560_000, 2000], [560_000, 503]])
+    assert.equal(view._reviewsSince.at, 590_000)
+    asked.dependencies.length = 0
+    await read(view)
+    assert.deepEqual(reasked(), [[31, 3]])
+  } finally {
+    Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest' })
   }
 })

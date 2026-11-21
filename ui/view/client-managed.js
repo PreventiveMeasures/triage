@@ -134,6 +134,9 @@ export async function runBundleValidation(id, csrfToken, options) {
 export async function fetchTeamDependencies(teamId, onLine, options) {
   return (await loadManagedBundle()).fetchTeamDependencies(teamId, onLine, options)
 }
+export async function fetchTeamReviewChanges(teamId, since, versions, csrfToken, options) {
+  return (await loadManagedBundle()).fetchTeamReviewChanges(teamId, since, versions, csrfToken, options)
+}
 export async function fetchNpmDeltas(versions, onLine, options) {
   return (await loadManagedBundle()).fetchNpmDeltas(versions, onLine, options)
 }

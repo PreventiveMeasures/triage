@@ -277,6 +277,21 @@ export function seedPullDependencies(repoId, answers, review = false) {
   }
 }
 
+// Those of `pulls` (`{ repoId, number }` each) held with their review made
+// old at once (`stale`), as reviews their versions count changed, for those
+// showing them to ask of them again, each shown as it was meanwhile
+// (team-dependencies.js); one asked of again already left so.
+export function staleReviews(pulls) {
+  const data = sessionHeld()
+  for (const pull of pulls) {
+    const key = `${pull.repoId}\0${pull.number}\0true`
+    const entry = data.get(key)
+    if (entry?.status !== 'ready' || entry.refreshing) continue
+    data.set(key, { ...entry, until: 0, stale: true })
+    changed(pull)
+  }
+}
+
 // What pull request `number` of repository `repoId` adds as held, however
 // old, nothing asked: null where nothing is.
 export function heldPullDependencies(repoId, number, review = false) {

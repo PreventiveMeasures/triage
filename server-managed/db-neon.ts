@@ -40,7 +40,7 @@ const LOCK = 'SELECT pg_advisory_xact_lock(1937006964, 1835101793)'
 // Whether every version up to the latest is recorded, in one round trip at
 // a cold start: a database with no versions table yet (undefined_table) has
 // none. Outside a transaction, so the failed read aborts nothing.
-const SCHEMA_VERSIONS = 36
+const SCHEMA_VERSIONS = 37
 async function currentSchema(db: PgConnection): Promise<boolean> {
   try {
     const { rows } = await db.query(`SELECT count(*) AS n FROM managed_schema_version WHERE version BETWEEN 1 AND ${SCHEMA_VERSIONS}`)
@@ -139,6 +139,10 @@ async function migrateFrom12(db: PgConnection): Promise<void> {
   // The patch a dependency review's base is of, none of those written
   // before; each author's one draft of a comparison held to it too.
   await migration(db, 36, `ALTER TABLE managed_dependency_review ${addColumns(DEPENDENCY_REVIEW_COLUMNS)}`, DEPENDENCY_REVIEW_INDEXES)
+  // When a dependency review was last published to a team, none of those
+  // published before: a time in milliseconds, so BIGINT, as postgresSchema
+  // makes SQLite's INTEGER.
+  await migration(db, 37, postgresSchema(`ALTER TABLE managed_dependency_review ${addColumns(DEPENDENCY_REVIEW_COLUMNS)}`))
 }
 
 async function initialize(db: PgConnection): Promise<void> {

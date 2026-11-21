@@ -62,6 +62,10 @@ export interface RepositoryDependencyReviewStore {
   // Which of `users` publish reviews to a team counting for repository
   // `repoId`, whose reviews its pull requests' comments make count.
   listRepoReviewers(repoId: number, users: string[]): Promise<Set<string>>
+  // Those of `versions` whose reviews published to a team counting for any of
+  // `repoIds` were published, to it or to one more team, or revoked, at
+  // `since` or after, each once.
+  changedReviewVersions(repoIds: number[], since: number, versions: ReviewedVersionKey[]): Promise<ReviewedVersionKey[]>
 }
 
 type SettingRow = { repoId: number; enabled: number; required: number; since: string | null; lockfiles: string | null }
@@ -147,6 +151,23 @@ export function repositoryDependencyReviewMethods(db: ManagedSql): RepositoryDep
       const rows = await db.prepare(`SELECT DISTINCT u.id FROM managed_user u JOIN managed_team t ON t.hidden = 0
         WHERE u.id IN (${users.map(() => '?').join(',')}) AND ${reviewsIn(true)} AND ${COUNTING_TEAM}`).all(...users, repoId) as { id: string }[]
       return new Set(rows.map(row => row.id))
+    },
+    async changedReviewVersions(repoIds, since, versions) {
+      if (repoIds.length === 0) return []
+      const found = new Map<string, ReviewedVersionKey>()
+      for (let at = 0; at < versions.length; at += VERSIONS_AT_ONCE) {
+        const asked = versions.slice(at, at + VERSIONS_AT_ONCE)
+        const keys = new Set(asked.map(({ name, version }) => `${name}@${version}`))
+        const [names, numbers] = [[...new Set(asked.map(({ name }) => name))], [...new Set(asked.map(({ version }) => version))]]
+        const rows = await db.prepare(`SELECT DISTINCT r.package AS name, r.version FROM managed_dependency_review r
+          WHERE r.ecosystem = 'npm' AND r.published_at IS NOT NULL AND (r.published_at >= ? OR r.shared_at >= ? OR r.revoked_at >= ?)
+            AND r.package IN (${names.map(() => '?').join(',')}) AND r.version IN (${numbers.map(() => '?').join(',')})
+            AND EXISTS (SELECT 1 FROM managed_dependency_review_team rt JOIN managed_team t ON t.id = rt.team_id JOIN managed_team_repo tr ON tr.team_id = t.id
+              WHERE rt.review_id = r.id AND t.hidden = 0 AND t.dependency_review = 1 AND tr.repo_id IN (${repoIds.map(() => '?').join(',')}))`)
+          .all(since, since, since, ...names, ...numbers, ...repoIds) as ReviewedVersionKey[]
+        for (const row of rows) if (keys.has(`${row.name}@${row.version}`)) found.set(`${row.name}@${row.version}`, row)
+      }
+      return [...found.values()]
     },
     async repoDependencyReviewState(repoId, user, versions, read) {
       const now = read === undefined ? await readSetting(repoId) : read

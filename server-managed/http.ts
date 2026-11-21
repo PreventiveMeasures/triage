@@ -699,8 +699,10 @@ function sendViewOnly(res: ServerResponse): void {
 // would link it to the viewed user.
 function viewAllows(method: string, path: string): boolean {
   if (method === 'GET' || method === 'HEAD') return path !== ISSUE_LOGIN_PATH && path !== LINK_LOGIN_PATH
-  return (method === 'DELETE' && path === VIEW_AS_PATH) || (method === 'POST' && (path === LOGOUT_PATH || path === REPORT_QUERY_PATH))
+  return (method === 'DELETE' && path === VIEW_AS_PATH) || (method === 'POST' && (path === LOGOUT_PATH || path === REPORT_QUERY_PATH || TEAM_REVIEW_CHANGES.test(path)))
 }
+// Where a team's Dependencies tab asks which versions' reviews changed (handleTeamReviewChanges).
+const TEAM_REVIEW_CHANGES = /^\/api\/teams\/([^/]+)\/dependency-reviews\/changed$/u
 
 // POST /api/auth/logout — drop the session (same-origin + CSRF), which also
 // ends a view opened from it.
@@ -2899,6 +2901,36 @@ async function handleTeamDependencies(res: ServerResponse, deps: ManagedHttpDeps
   const unread = reading.filter((_, at) => !done[at]).map(({ access }) => access.repo.repoId)
   if (!await send(unread.length === 0 ? { done: true } : { done: false, unread })) return
   await out.end()
+}
+
+// POST /api/teams/:id/dependency-reviews/changed, `{ since, versions:
+// [[name, version], …] }`: those of `versions`, the npm versions its
+// Dependencies tab shows, whose reviews, published to a team counting for
+// any of the team's repositories, were published (to it or to one more
+// team) or revoked at `since` or after (the `now` an earlier answer told,
+// the server's time), for the tab to ask again of the pull requests listing
+// them: `{ now, versions: [[name, version], …] }`; with no `since`, `{ now }`
+// alone. Only those asked of are told, as many as MAX_CHANGED_ASKED, so it
+// lists no other team's reviews of packages the team's pull requests lock
+// none of. A POST of no effect, allowed while viewing as another user.
+const MAX_CHANGED_ASKED = 5000
+const MAX_CHANGED_BODY_BYTES = 512 * 1024
+async function handleTeamReviewChanges(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, teamId: string): Promise<void> {
+  const s = await checkMutation(req, res, deps, cookie, { view: true })
+  if (!s) return
+  const body = await readBodyObject(req, res, MAX_CHANGED_BODY_BYTES)
+  if (!body) return
+  const { since = null, versions = [] } = body
+  if ((since !== null && (!Number.isSafeInteger(since) || (since as number) < 0)) || !Array.isArray(versions) || versions.length > MAX_CHANGED_ASKED
+    || !versions.every(one => Array.isArray(one) && one.length === 2 && isNpmPackageName(one[0]) && isNpmPackageSpec(one[1]))) {
+    sendJson(res, 400, { error: 'bad-request' }); return
+  }
+  const snapshot = await teamSnapshot(deps.db, s.session.id, teamId)
+  const now = Date.now()
+  if (since === null) { sendJson(res, 200, { now }); return }
+  const changed = await deps.db.changedReviewVersions([...new Set(snapshot.repositories.map(repo => repo.repoId))], since as number,
+    (versions as [string, string][]).map(([name, version]) => ({ name, version })))
+  sendJson(res, 200, { now, versions: changed.map(({ name, version }) => [name, version]) })
 }
 
 // A repository's lines of its team's Dependencies, as handleTeamDependencies
@@ -5873,6 +5905,11 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (teamDependencies) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleTeamDependencies(res, deps, cookie, workspaceSession!, teamDependencies[1]!, url.searchParams); return
+    }
+    const teamReviewChanges = TEAM_REVIEW_CHANGES.exec(path)
+    if (teamReviewChanges) {
+      if (method !== 'POST') { send405(res, 'POST'); return }
+      await handleTeamReviewChanges(req, res, deps, cookie, teamReviewChanges[1]!); return
     }
     const teamFixes = /^\/api\/teams\/([^/]+)\/fixes$/u.exec(path)
     if (teamFixes) {

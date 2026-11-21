@@ -32,9 +32,9 @@ import { html, nothing, svg } from 'lit'
 import { styleMap } from './style-map.js'
 import { StateElement } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
-import { fetchTeamDependencies } from './client-managed.js'
+import { fetchTeamDependencies, fetchTeamReviewChanges } from './client-managed.js'
 import { UNSUPPORTED_WHY, addedVersions, checked, heldPullDependencies, isPending, passedByComments, pullDependencies, readsDependencies, reviewFailures, reviewOf, seedPullDependencies,
-  subscribePullDependencies, unreviewedVersions, versionKey } from './pull-dependencies.js'
+  staleReviews, subscribePullDependencies, unreviewedVersions, versionKey } from './pull-dependencies.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { icon } from './repository-tiles.js'
 import { sourcePackageIcon } from './source-file-icon.js'
@@ -87,11 +87,20 @@ const ontoDefault = (item, defaultBranch) => !defaultBranch || typeof item.base 
 // repository's default branch, not a draft (http.ts).
 const toldOf = (item, defaultBranch) => ontoDefault(item, defaultBranch) && item.draft !== true
 // A pull request's dependencies as its team's read told them, else still to
-// be told; one awaiting a build of Stasis's asked again alone as it grows old.
+// be told; one awaiting a build of Stasis's asked again alone as it grows
+// old, as is one whose versions' reviews changed (`stale`, staleReviews).
 function pullEntry(repoId, number) {
   const held = heldPullDependencies(repoId, number, true)
-  return held?.pending ? pullDependencies(repoId, number, true, { background: true }) : held ?? TELLING
+  return held?.pending || held?.stale ? pullDependencies(repoId, number, true, { background: true }) : held ?? TELLING
 }
+// How often a tab showing asks whether reviews counting for its team's
+// repositories changed, while its page is seen; and how long before its
+// first answer it asks since, as what it shows may be as old.
+const REVIEWS_EVERY_MS = 30_000
+const REVIEWS_BEFORE_MS = KEEP_MS
+// The versions a request asks of, past which more requests do: less than the
+// server takes in one (http.ts MAX_CHANGED_ASKED).
+const REVIEWS_ASKED_TOGETHER = 2000
 // How long past the time one is read again its tab is told to.
 const AGAIN_PAST_MS = 50
 
@@ -580,6 +589,9 @@ class TeamDependencies extends StateElement {
     listeners.add(this._notify)
     this._unsubscribe = subscribePullDependencies(this._notify)
     showing.set(this, this.team)
+    this._reviewsSince = null
+    this._reviewsTimer = setInterval(() => { this._askReviews() }, REVIEWS_EVERY_MS)
+    this._askReviews()
   }
 
   disconnectedCallback() {
@@ -589,6 +601,51 @@ class TeamDependencies extends StateElement {
     showing.delete(this)
     stopUnshown()
     this._masonry?.disconnect()
+    clearInterval(this._reviewsTimer)
+  }
+
+  // Asks which of the versions its pull requests list had reviews counting
+  // for its team's repositories published or revoked since it last asked,
+  // the server's time each answer tells (fetchTeamReviewChanges), its first
+  // answer's time less REVIEWS_BEFORE_MS, while its page is seen; and makes
+  // those pull requests stale, for each to be asked again alone (pullEntry).
+  // Each pull request's versions are those it listed while shown
+  // (`_watched`), a version that passed since, which its answer lists no
+  // more, still asked of, lest its review revoked be missed; asked as many
+  // as REVIEWS_ASKED_TOGETHER a request, its time moved on once all are told,
+  // to the earliest they tell.
+  async _askReviews() {
+    const csrfToken = state.managedSession?.csrfToken, team = this.team
+    if (!team || !csrfToken || this._askingReviews || globalThis.document?.hidden) return
+    if (this._watched?.team !== team) this._watched = { team, versions: new Map() }
+    const since = this._reviewsSince?.team === team ? this._reviewsSince.at : null
+    const watched = this._watched.versions
+    const listed = (this._listed ?? []).filter(({ entry }) => entry.status === 'ready').map(pull => {
+      const key = `${pull.repo.repoId}#${pull.item.number}`
+      const versions = watched.get(key) ?? watched.set(key, new Set()).get(key)
+      for (const pkg of [...addedVersions(pull.entry).versions, ...unreviewedVersions(pull.entry).versions]) if (pkg.version) versions.add(`${pkg.name}@${pkg.version}`)
+      return { pull, versions }
+    })
+    const asked = since === null ? [] : [...new Set(listed.flatMap(({ versions }) => [...versions]))].map(key => {
+      const at = key.lastIndexOf('@')
+      return { name: key.slice(0, at), version: key.slice(at + 1) }
+    })
+    this._askingReviews = true
+    try {
+      const told = []
+      for (let at = 0; at === 0 || at < asked.length; at += REVIEWS_ASKED_TOGETHER) told.push(await fetchTeamReviewChanges(team, since, asked.slice(at, at + REVIEWS_ASKED_TOGETHER), csrfToken))
+      if (team !== this.team || told.some(one => one.now === null)) return
+      const changes = new Set(told.flatMap(one => one.versions.map(({ name, version }) => `${name}@${version}`)))
+      if (changes.size > 0) {
+        staleReviews(listed.filter(({ versions }) => [...versions].some(key => changes.has(key))).map(({ pull: { repo, item } }) => ({ repoId: repo.repoId, number: item.number })))
+      }
+      const now = Math.min(...told.map(one => one.now))
+      this._reviewsSince = { team, at: since === null ? now - REVIEWS_BEFORE_MS : now }
+    } catch {
+      // Asked again on its next turn, from where it last was.
+    } finally {
+      this._askingReviews = false
+    }
   }
 
   open(event, { repo, item }) {
@@ -643,6 +700,8 @@ class TeamDependencies extends StateElement {
     const pulls = listing.flatMap(({ repo, item, onto }) => (!onto && !every) || (item.draft === true && !drafts) ? []
       : onto && item.draft !== true ? [{ repo, item, entry: pullEntry(repo.repoId, item.number) }]
       : [{ repo, item, ...onto ? {} : { into: item.base }, entry: pullDependencies(repo.repoId, item.number, true, { background: true }) }])
+    // Those shown, for reviews changed since to make those listing their versions stale (_askReviews).
+    this._listed = pulls
     // Each pull request's versions wanting reviews, as many as its answer
     // tells, and how many in all, those past them too (`toReview`), by which
     // it is kept; how many reviews they still want between them (`left`),

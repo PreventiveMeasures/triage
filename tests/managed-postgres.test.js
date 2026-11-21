@@ -209,6 +209,24 @@ test('Postgres adds build conditions to existing bundles as unrecorded', async t
   assert.deepEqual((await upgraded.getBundle('new')).buildConditions, conditions)
 })
 
+test('Postgres adds when a dependency review was last published to a team to existing reviews, as a BIGINT that holds a time in milliseconds', async t => {
+  const { db, connect } = await database(t)
+  const users = await people(db)
+  const legacy = await connect()
+  try { await legacy.query('ALTER TABLE managed_dependency_review DROP COLUMN shared_at; DELETE FROM managed_schema_version WHERE version = 37;') }
+  finally { await legacy.release() }
+  await db.close()
+  const upgraded = await openPostgresManagedDb(connect)
+  t.after(() => upgraded.close())
+  const read = await connect()
+  try {
+    const { rows } = await read.query(`SELECT data_type FROM information_schema.columns WHERE table_name = 'managed_dependency_review' AND column_name = 'shared_at'`)
+    assert.deepEqual(rows.map(row => row.data_type), ['bigint'])
+  } finally { await read.release() }
+  await publish(upgraded, users.alice, context('pkg', '1.0.0'), ['one'])
+  assert.deepEqual((await upgraded.changedReviewVersions([reviewedRepo.repoId], 0, [{ name: 'pkg', version: '1.0.0' }])).map(({ name }) => name), ['pkg'], 'published now, its time kept')
+})
+
 test('Postgres adds upload keys to existing sessions, keeping the first stored key', async t => {
   const { db, connect } = await database(t)
   const userId = await db.upsertUser(identity(1), 1)
