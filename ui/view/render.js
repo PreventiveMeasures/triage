@@ -441,10 +441,12 @@ function sortGroupsByPrimary(groups, cmp) {
     .map((x) => x.g)
 }
 
-// file → line, the file-grouped layout's order, for the 'file' sort's flat
-// layouts.
-const fileLineCmp = (pa, pb) =>
-  pa.file.localeCompare(pb.file) || parseInt(pa.line, 10) - parseInt(pb.line, 10)
+// The flat layouts' order: under the 'file' sort, file → line, as the
+// file-grouped layout reads (applySorting orders lines within a file only
+// for the other sorts).
+const flatOrder = (groups) => state.sortBy === 'file'
+  ? sortGroupsByPrimary(groups, (pa, pb) => pa.file.localeCompare(pb.file) || parseInt(pa.line, 10) - parseInt(pb.line, 10))
+  : groups
 
 // The table body's sorted groups, for render() to hand the persistent
 // <finding-table> once the slots land (a property keeps their identity).
@@ -817,7 +819,7 @@ function kanbanDetailTemplate(focusGroup, column, columns = [], preview = null) 
 // the static (binding-free) `.finding-table-slot`, whose foreign children
 // Lit leaves alone.
 function tableBody(filtered, selectedGroup) {
-  const items = state.sortBy === 'file' ? sortGroupsByPrimary(filtered, fileLineCmp) : filtered
+  const items = flatOrder(filtered)
   if (items.length === 0) return nothing
   pendingTableItems = items
   return html`<div class=${selectedGroup ? 'findings-table-layout open' : 'findings-table-layout'}>
@@ -956,7 +958,7 @@ function groupedBody(filtered) {
 // meta); `:host([in-group]) .line-row` hides the card's own. Print flips
 // both for groups with duplicates (.multi-case, styles/print.css).
 function flatBody(filtered) {
-  const items = state.sortBy === 'file' ? sortGroupsByPrimary(filtered, fileLineCmp) : filtered
+  const items = flatOrder(filtered)
   return html`${repeat(items, (g) => groupKey(g), (g) => {
     const p = activeTabFor(g)
     const lineLinkTpl = lineLink(p, findingRepoTarget(p))
