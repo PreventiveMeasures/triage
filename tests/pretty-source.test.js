@@ -298,7 +298,7 @@ test('a source map is listed here, in any bundle, once the toggle is on, glossed
   state.bundleSourcePretty = 'indented'
   const copy = prettyCopy(details, {}, 'lib/index.js.map', map)
   assert.equal(copy.status, 'ready')
-  assert.match(copy.text, /^# Glossed \(@ ‹\) with lib\/index\.js, whose sourceMappingURL names this map\.$/mu)
+  assert.match(copy.text, /^# Generated: lib\/index\.js$/mu)
   assert.match(copy.text, /^@ function f\(\) \{ return 1 \}$/mu)
   assert.equal(prettyCopy(details, {}, 'lib/index.js.map', map), copy, 'kept')
   const spaced = prettyCopy(details, {}, 'lib/spaced.js.map', files['lib/spaced.js.map'])

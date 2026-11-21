@@ -153,19 +153,19 @@ function listingRows() {
   }
 }
 
+const plural = (count, what) => `${count} ${what}${count === 1 ? '' : 's'}`
+
+// What a listing says above its values: the file its mappings are glossed
+// with, and how much they map; or why they are shown as written.
 function header(out, value, generated, { lines, reason }) {
-  out.push('# A source map listed: each of its keys in order, a value to a line; a list an item to a line, below its key;')
-  out.push('# sourcesContent a text at each ┌, a line to a line (│ as written, ┊ as JSON, for a character that shows as another or none);')
-  out.push('# mappings decoded: @ a line of the generated file; ← the source line the segments below map from, as lines on from the')
-  out.push('# last mapped in that source, ″ the one above, ∅ none; each segment its column (+ past the one before), source column, name.')
   if (lines) {
-    out.push(generated ? `# Glossed (@ ‹) with ${gloss(generated.path)}, whose sourceMappingURL names this map.` : '# No file beside it whose sourceMappingURL names this map, to gloss it with.')
     const segments = lines.reduce((sum, line) => sum + line.length, 0)
     const mapped = lines.filter(line => line.some(segment => segment.length > 1)).length
     const withText = value.sources.filter((_, i) => typeof value.sourcesContent?.[i] === 'string').length
-    out.push(`# Sources: ${value.sources.length} (${withText} with text) · names: ${value.names?.length ?? 0} · segments: ${segments} · lines: ${lines.length}, ${mapped} mapped.`)
+    out.push(`# Generated: ${generated ? gloss(generated.path) : 'no file beside it names this map'}`)
+    out.push(`# ${plural(value.sources.length, 'source')} (${withText} with text) · ${plural(value.names?.length ?? 0, 'name')} · ${plural(segments, 'segment')} · ${plural(lines.length, 'line')}, ${mapped} mapped`)
   } else if (reason) {
-    out.push(`# Its mappings are shown as written: ${reason}`)
+    out.push(`# Mappings shown as written: ${reason}`)
   }
 }
 

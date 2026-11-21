@@ -8,6 +8,7 @@
 // the old map's listing and the changes it shows, reads back to the new map
 // (sourcemapDiffRebuilds). A map that can't be listed, or a diff of two that
 // doesn't read back, is shown as published.
+import { UNSEEN } from '../risk/files/characters.js'
 import { SOURCE_MAP } from '../risk/files/readability.js'
 import { besideFile, mapNamed } from '../risk/files/source-map-link.js'
 import { blocksHold } from './line-diff.js'
@@ -43,8 +44,9 @@ export function sourcemapGenerated(value, path, files) {
 // map's own. Throws, saying why, for a text that isn't a JSON object written
 // as JSON.stringify writes it (spaced, keys repeated, a number or an escape
 // spelled otherwise: a listing wouldn't read back to it), an index map, or a
-// listing too long; and where its listing doesn't read back to its text,
-// which no map should come to.
+// listing too long. Asserted of every listing before it is shown, as no map
+// should fail them: that it reads back to the very text it lists, and that
+// no row of it holds a character that shows as another or none.
 export function listSourcemap(text, path = '', files = null) {
   let value
   try {
@@ -58,6 +60,7 @@ export function listSourcemap(text, path = '', files = null) {
   const generated = sourcemapGenerated(value, path, files)
   const listing = sourcemapListing(value, generated)
   if (JSON.stringify(unlistSourcemap(listing)) !== text) throw new Error("Its listing doesn't read back to its text.")
+  if (UNSEEN.test(listing)) throw new Error('Its listing would show a character as another or none.')
   return { text: listing, generated }
 }
 
