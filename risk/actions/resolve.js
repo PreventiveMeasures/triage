@@ -189,13 +189,19 @@ const RATED = new Set(['critical', 'high', 'moderate', 'low'])
 // finding: malware red, else as its source rates it, one unrated yellow. One
 // not known public is `internal`, asked of its own advisories alone, its name
 // sent to no other source; why not (`advisories-unavailable`) where they
-// couldn't be had, the rest resolved all the same.
+// couldn't be had, the rest resolved all the same. Each with what tells it
+// apart, as its row's tooltip shows it: its source, other ids, CVSS score,
+// CWEs, the range it affects, whether its source rates it (`unrated`) and,
+// where it is no vulnerability as such, what it is (`informational`); not
+// its text, which its link has.
 async function advisoryFindings(source, info, versions) {
   if (source.advisories === undefined) return []
   try {
-    return (await source.advisories(info.fullName, versions, info.private ?? true)).map(({ id, title, url, severity, malware, versions: affected }) => ({
+    return (await source.advisories(info.fullName, versions, info.private ?? true)).map(({ id, title, url, severity, malware, versions: affected, source: from,
+      aliases, cvss, cwe, range, informational }) => ({
       id: 'advisory', severity: malware ? 'critical' : RATED.has(severity) ? severity : 'moderate', advisory: id, ...title && { title }, ...url && { url },
-      ...malware && { malware: true }, versions: affected }))
+      ...malware && { malware: true }, ...!malware && !RATED.has(severity) && { unrated: true }, versions: affected, ...from && { source: from }, ...aliases?.length && { aliases }, ...Number.isFinite(cvss) && { cvss },
+      ...cwe?.length && { cwe }, ...range && { range }, ...informational && { informational } }))
   } catch { return [{ id: 'advisories-unavailable', severity: 'notice' }] }
 }
 

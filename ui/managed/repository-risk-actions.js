@@ -5,6 +5,7 @@
 import { html, nothing } from 'lit'
 import { SEVERITIES } from '../../risk/files/stamps.js'
 import { encodePath } from '../view/bundle-origin-links.js'
+import { EXTERNAL_LINK_ICON } from '../view/advisory-parts.js'
 
 // What each finding is called, and what it says, beside what it found.
 const ACTION_FINDINGS = {
@@ -40,7 +41,7 @@ const ACTION_FINDINGS = {
   'comment-mismatch': ['Comment mismatch', 'The version the comment beside it names isn’t this commit’s.'],
   'action-missing': ['No action.yml', 'No action.yml where it names, at the commit.'],
   'unreadable': ['Unreadable', 'Its file couldn’t be read as GitHub reads it.'],
-  'advisory': ['Advisory', 'A published advisory of the version it runs.'],
+  'advisory': ['Advisory'],
   'advisories-unavailable': ['Advisories unavailable', 'Its advisories couldn’t be had: asked again by the next scan.'],
 }
 // The Actions tab's rows shown: all, the references resolved, or what steps fetch.
@@ -58,7 +59,7 @@ function findingLabel(finding) {
 // What a finding found, as its tooltip tells it beside what it says.
 function findingDetail(finding) {
   const parts = []
-  if (finding.id === 'advisory') parts.push(finding.malware ? 'Malware, not a vulnerability.' : '', finding.title, finding.versions?.length ? `affects ${finding.versions.join(', ')}` : '', finding.url)
+  if (finding.id === 'advisory') parts.push(...advisoryRows(finding).map(([label, value]) => `${label}: ${value}`))
   if (finding.id === 'fetched-package') parts.push(stepName(finding), ...finding.localFirst ? [finding.locked ? (finding.installed ? '' : 'locked, but run before any install') : 'no lockfile here locks it'] : [])
   if (finding.services) parts.push(finding.services.join(', '))
   if (finding.expression) parts.push(`\${{ ${finding.expression} }}`)
@@ -72,6 +73,28 @@ function findingDetail(finding) {
   if (finding.detail) parts.push(finding.detail)
   return [ACTION_FINDINGS[finding.id]?.[1], ...parts.filter(Boolean)].filter(Boolean).join('\n')
 }
+
+// Where an advisory comes from, as upstream's advisories name its source.
+const ADVISORY_SOURCES = { osv: 'OSV', repository: 'The repository’s own GitHub advisories', registry: 'npm registry', packagist: 'Packagist', rubysec: 'RubySec' }
+const SEVERITY_SAID = { critical: 'Critical', high: 'High', moderate: 'Moderate', low: 'Low' }
+// An advisory's link, where it is to a page on the web.
+const advisoryHref = finding => typeof finding.url === 'string' && /^https:\/\//iu.test(finding.url) ? finding.url : null
+// What an advisory's tooltip tells of it, `[label, value]` each, but its
+// text, which its link has: what it is, where not a vulnerability; its
+// severity, as its source rates it, and CVSS score; its other ids; the range
+// it affects and the versions of it run here; its CWEs; and its source.
+function advisoryRows(finding) {
+  const severity = finding.malware ? 'Critical' : finding.unrated ? 'Unrated' : SEVERITY_SAID[finding.severity]
+  return [finding.malware ? ['Kind', 'Malware, not a vulnerability'] : finding.informational ? ['Kind', finding.informational] : null,
+    severity ? ['Severity', `${severity}${Number.isFinite(finding.cvss) ? `, CVSS ${finding.cvss.toFixed(1)}` : ''}`] : null,
+    finding.aliases?.length ? ['Also', finding.aliases.join(', ')] : null,
+    finding.range ? ['Affected', finding.range] : null,
+    finding.versions?.length ? ['Runs', finding.versions.join(', ')] : null,
+    finding.cwe?.length ? ['CWE', finding.cwe.join(', ')] : null,
+    finding.source ? ['Source', ADVISORY_SOURCES[finding.source] ?? finding.source] : null].filter(Boolean)
+}
+const advisoryTip = finding => html`<div class="compare-tip"><div class="compare-tip-head">${finding.title ?? finding.advisory}</div>
+  <div class="compare-tip-rows">${advisoryRows(finding).map(([label, value]) => html`<span class="compare-tip-label">${label}</span><span>${value}</span>`)}</div></div>`
 
 // What a step's finding is about, as its row is named: its package, its
 // image, its expression, or what it is.
@@ -196,10 +219,17 @@ export function pinnedTo(line) {
 }
 
 // The findings' cell of a row: each by its severity, its tooltip saying what
-// it found, and where in a resolved reference's own code.
+// it found, and where in a resolved reference's own code; an advisory's, by
+// its id linking to it, its tooltip telling it apart (advisoryTip), and its
+// title, where it has one, before its id in its plain text.
 export function findingsCell(findings) {
-  return html`<ul class="risk-findings">${findings.map(finding => html`<li class=${`risk-${finding.severity}`}
-    data-tooltip=${findingDetail(finding) || nothing}>${findingLabel(finding)}${finding.file ? html`<span class="risk-in-code">in code</span>` : nothing}</li>`)}</ul>`
+  return html`<ul class="risk-findings">${findings.map(finding => {
+    const advisory = finding.id === 'advisory', href = advisory ? advisoryHref(finding) : null
+    const said = [advisory ? finding.title : null, findingDetail(finding)].filter(Boolean).join('\n')
+    const label = href ? html`<a class="risk-advisory" href=${href} target="_blank" rel="noopener noreferrer">${findingLabel(finding)}${EXTERNAL_LINK_ICON}</a>` : findingLabel(finding)
+    return html`<li class=${`risk-${finding.severity}`} data-tooltip=${said || nothing} .tooltipContent=${advisory ? advisoryTip(finding) : null}>${label}${finding.file
+      ? html`<span class="risk-in-code">in code</span>` : nothing}</li>`
+  })}</ul>`
 }
 
 // A reference's link on GitHub at the ref it names, its path in it.
