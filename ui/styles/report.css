@@ -1973,13 +1973,12 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   display: flex; align-items: center; gap: .75rem; flex: none; min-height: 1.375rem; margin-bottom: -.25rem;
 
   & > .team-deps-quiet { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  & > .bundles-overview-sort { margin-left: auto; flex: none; }
+  & > .bundles-overview-sort { margin-left: auto; flex: none; box-sizing: border-box; height: 1.3rem; }
   /* Whether the pull requests into other branches than the default show, at
-     its end, before their order. */
+     its end, before their order, as tall and as small as its buttons. */
   & > .team-deps-branches {
     margin-left: auto; flex: none; --switch-track-width: 20px; --switch-track-height: 11px;
-    /* As tall and as small as the order's buttons beside it. */
-    &::part(button) { height: auto; gap: .35rem; padding: .1rem .4rem; font-size: .65rem; }
+    &::part(button) { height: 1.3rem; gap: .35rem; padding: 0 .4rem; font-size: .65rem; }
     & + .bundles-overview-sort { margin-left: 0; }
   }
   /* What the red rows are, in their color. */
