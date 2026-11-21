@@ -1,26 +1,17 @@
-// The code viewer's Replay (render-bundle.js), Activity's play button: the
-// latest commits of the revision shown (below the repository's root, the
-// directory's) played as Gource plays a repository's history
-// (replay-model.js), on a canvas: its directories a tree, its files dots
-// about them in their kinds' colors, those who made each commit flying to
-// the files it changes, a beam to each, green where added, amber modified
-// and red removed. It starts from the files as they were before the first
-// commit it plays (GET /api/admin/repositories/tree, its parent's), from
-// none where that commit is the repository's first. The commits are read
-// as Commits reads them (repository-history.js), what each changes of the
-// server (GET /api/admin/repositories/changes), the oldest first, ahead of
-// where it plays, as a video buffers, and it waits where they aren't read
-// yet.
-// Over it, the day played, the commit last played, the kinds of files by
-// their colors, and what lies under the pointer; under it, a play button,
-// the commits to seek through, and how fast it plays. It starts playing as
-// it opens, unless the reader asks for less motion. What was read, and where
-// each replay is, is kept for the session that read it.
+// The code viewer's Replay (render-bundle.js): the latest commits of the
+// revision shown (a directory's, below the root) played as Gource plays a
+// history (replay-model.js), on a canvas: directories a tree, files dots in
+// their kinds' colors, those who made each commit beaming to the files it
+// changes, green added, amber modified, red removed. It starts from the
+// files before its first commit (GET /api/admin/repositories/tree), and
+// reads what each commit changes (GET /api/admin/repositories/changes)
+// ahead of where it plays, as a video buffers, waiting where not read yet.
+// It plays as it opens, unless the reader asks for less motion.
 import { LitElement, html, nothing, svg } from 'lit'
-import { state } from '#client/index.js'
 import { fetchRepositoryChanges, fetchRepositoryTree } from './client-managed.js'
 import { activityPicker, activitySubtab, pickActivitySubtab, watchActivitySubtabs } from './repository-activity.js'
-import { rereadHistory, revisionHistory, subjectLinks, unwatchHistories, watchHistories } from './repository-history.js'
+import { githubOf, rereadHistory, revisionHistory, subjectLinks, unwatchHistories, watchHistories } from './repository-history.js'
+import { number, sessionKept, shownElements } from './activity-reads.js'
 import { appUser, commitAgent, commitAuthors } from './github-users.js'
 import { CLAUDE_MARK_PATH, COPILOT_MARK_PATH, OPENAI_MARK_PATH } from './icons.js'
 import { GITHUB_AGENTS } from '../../common/managed/github-agents.ts'
@@ -53,31 +44,16 @@ const SQUARE_DOT = 1.8
 const END_S = 2
 const STATUS = new Set(['A', 'M', 'D', 'R'])
 
-const replays = new Map()
 const changesRead = new Map()
 const cutCommits = new Set()
 const treesRead = new Map()
-const shownElements = new Set()
 const images = new Map()
-let keptFor = null
+const sessionReplays = sessionKept(new Map(), changesRead, cutCommits, treesRead)
+const { Shown, shown: shownReplays, repaint } = shownElements(LitElement)
 // How many commits, as its route's sub-tab names them (repository-activity.js),
 // the last 300 where it names none; and how fast, as the reader last picked.
 const shownCount = () => Number(activitySubtab('replay') ?? 300)
 let shownSpeed = 1
-
-function sessionReplays() {
-  const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
-  if (session !== keptFor) {
-    replays.clear()
-    changesRead.clear()
-    cutCommits.clear()
-    treesRead.clear()
-    keptFor = session
-  }
-  return replays
-}
-
-const repaint = () => { for (const element of shownElements) element.requestUpdate() }
 watchActivitySubtabs(tab => { if (tab === 'replay') repaint() })
 const reducedMotion = () => globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
 
@@ -94,7 +70,7 @@ function replayOf(repository, count) {
   if (held) return held
   const replay = { key, repoId, path, count, commits: null, times: [], reading: false, treeReading: false, error: null, counted: '', counts: new Map(),
     colors: new Map(), people: null, scene: createScene(), clock: 0, next: 0, playing: false, waiting: false, ended: false, started: false }
-  replays.set(key, replay)
+  sessionReplays().set(key, replay)
   return replay
 }
 
@@ -273,7 +249,6 @@ function imageOf(src) {
   return image.complete && image.naturalWidth > 0 ? image : null
 }
 
-const number = value => value.toLocaleString('en-US')
 const day = at => new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 const speedName = speed => speed === 0.5 ? '½×' : `${speed}×`
 
@@ -284,7 +259,7 @@ const AGAIN_ICON = svg`<path d="M3.25 8a4.75 4.75 0 1 0 1.4-3.36M3.25 2.5v2.75H6
 // The tab's body, for the directory shown (`repository`, an entry's) and its
 // repository's full name (`repo`, repository-code.js repositoryFullName,
 // once known), which its commit line links to GitHub by.
-class RepositoryReplay extends LitElement {
+class RepositoryReplay extends Shown {
   static properties = { repository: { attribute: false }, repo: { attribute: false } }
 
   createRenderRoot() { return this }
@@ -309,7 +284,6 @@ class RepositoryReplay extends LitElement {
 
   connectedCallback() {
     super.connectedCallback()
-    shownElements.add(this)
     watchHistories(this)
     // A theme picked, drawn in its colors at once, as the other graphs are.
     this._themes = new AbortController()
@@ -324,14 +298,13 @@ class RepositoryReplay extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback()
-    shownElements.delete(this)
     unwatchHistories(this)
     this._themes?.abort()
     this._resize?.disconnect()
     cancelAnimationFrame(this._frame)
     this._frame = null
     // Paused where it was, to play on from there when shown again.
-    if (this.replay && ![...shownElements].some(element => element.replay === this.replay)) this.replay.playing = false
+    if (this.replay && ![...shownReplays].some(element => element.replay === this.replay)) this.replay.playing = false
   }
 
   // Its commits, once its history is read as far as they go (a page of it
@@ -786,13 +759,10 @@ class RepositoryReplay extends LitElement {
       ${this.renderControls(replay, total, buffered)}`
   }
 
-  // The commit last played, as Commits lists it: its short id and the pull
-  // requests its subject names opening them on GitHub, in a new tab, where
-  // the repository's name is known; who made it, their avatars and marks
-  // stacked, all of them named on hover.
+  // The commit last played, as Commits lists it: its short id and subject,
+  // linking on GitHub, and who made it.
   renderCommit(commit) {
-    const repo = this.repo ?? this.repository.repo
-    const github = repo ? `https://github.com/${repo.split('/').map(encodeURIComponent).join('/')}` : null
+    const github = githubOf(this.repo ?? this.repository.repo)
     const short = commit.sha.slice(0, 7)
     return html`<p class="replay-commit">${github ? html`<a class="replay-sha" href=${`${github}/commit/${commit.sha}`} target="_blank" rel="noopener noreferrer"
         aria-label=${`Commit ${short} on GitHub`}>${short}</a>` : html`<code class="replay-sha">${short}</code>`}

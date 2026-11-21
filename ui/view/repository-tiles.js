@@ -79,10 +79,6 @@ export function agentIcon(agent) {
   return avatar ? html`<img class="agent-avatar" src=${`/api/avatar/${avatar}`} alt="" width="14" height="14" loading="lazy" decoding="async">` : nothing
 }
 
-// A click to open a tile's popup: the main button's, none held with it, which
-// would open its link in a new tab or window instead.
-export const plainClick = event => event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
-
 // Where a session ran: its Claude Code session or Codex task; null for one
 // that names neither.
 export function sessionRan(session) {

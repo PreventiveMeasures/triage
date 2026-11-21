@@ -1,26 +1,22 @@
 // The code viewer's Commits (render-bundle.js): a repository's commits as
-// `git log --oneline --decorate --graph` lists them, across its branches as
-// `--all` does, or those not merged; from the revision shown where reading
-// every branch needs the reader's GitHub sign-in. One compact line a
-// commit: its short id, the branches and tags naming it, its subject, author
-// and time, beside the graph of the lines its parents make (history-graph.js),
-// the commit shown marked. A directory's history lists the commits touching
-// it, in a line. Opening a commit shows its code. The server reads it with
-// the reader's own GitHub access (GET /api/admin/repositories/history); what
-// it answered is kept a while, for the session that read it.
+// `git log --oneline --decorate --graph [--all]` lists them, every branch's
+// or those not merged (the revision's alone where every branch needs the
+// reader's GitHub sign-in), or a directory's, in a line. One line a commit:
+// its short id, refs, subject, author and time, beside its graph
+// (history-graph.js). Read with the reader's own GitHub access
+// (GET /api/admin/repositories/history).
 import { LitElement, html, nothing, svg } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { styleMap } from './style-map.js'
 import { appMarkup } from './markup.js'
-import { state } from '#client/index.js'
 import { fetchRepositoryHistory } from './client-managed.js'
 import { firstParentLine, historyLayout, historyOrder } from './history-graph.js'
 import { PULL_ICON_SVG, TAG_ICON_SVG } from './icons.js'
-import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { navigateToRepositoryCode, shownRevision } from './repository-code.js'
 import { activityPicker } from './repository-activity.js'
 import { commitAuthors } from './github-users.js'
 import { heldRead } from './held-read.js'
+import { KEEP_MS, RETRY_MS, failedRead, moreButton, readMore, readingBody, sessionKept, shownElements } from './activity-reads.js'
 
 // The graph's geometry, in pixels: a lane's width, a line's height, and the
 // margin before the first lane and after the last.
@@ -31,10 +27,8 @@ const LANE_COLORS = 8
 const MAX_REFS = 3
 // What keys reach in a line: its links on GitHub, then its button.
 const LINE_KEYS = 'a[href], .history-commit'
-const KEEP_MS = 5 * 60_000
 // The longest a read again of every branch, answered as the server kept them, waits to ask once more.
 const RETRY_FRESH_MS = 15_000
-const RETRY_MS = 30_000
 // How long after an answer whose squashed pull requests GitHub is still
 // looking up to ask for them again, and how many times (askPulls).
 const PULLS_MS = 3000
@@ -43,32 +37,14 @@ const PULLS_TRIES = 10
 // branches at first (repository-history.ts ALL_BRANCHES).
 const ALL_STARTS = 25
 
-const histories = new Map()
-const shownElements = new Set()
-let keptFor = null
-// What the reader asked for, `--all` at first: every branch ('all') or the
-// branches not merged ('unmerged'); and the repositories reading every
-// branch was refused for want of a sign-in, which show the revision's own
-// history ('revision').
+// What the reader asked for, every branch ('all') or those not merged
+// ('unmerged'); and the repositories every branch was refused for want of a
+// sign-in, which show the revision's own ('revision').
 let preferred = 'all'
 const allRefused = new Set()
+const sessionHistories = sessionKept(new Map(), allRefused)
+const { Shown, shown: shownHistories, repaint } = shownElements(LitElement)
 
-function sessionHistories() {
-  const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
-  if (session !== keptFor) {
-    histories.clear()
-    allRefused.clear()
-    keptFor = session
-  }
-  return histories
-}
-
-const repaint = () => { for (const element of shownElements) element.requestUpdate() }
-
-// The history `key` names, as held, else read: `{ status }`, 'loading', then
-// 'ready' with its `commits`, `more` and the `branches` and `tags` naming
-// them, or 'error' with its `error`; read again once old, or an error's retry
-// is due.
 // A history's first page as read, `sought` the commits shown it was read
 // again, afresh, for (refreshHistory).
 function readEntry(answer, settle, sought = new Set()) {
@@ -87,11 +63,9 @@ function addPulls(entry, pulls) {
   if (added.length > 0) entry.pulls = [...entry.pulls, ...added]
 }
 
-// A page whose squashed pull requests GitHub was still looking up as the
-// server answered (`pullsPending`, the lookup going on behind it): asked
-// for again (`ask`, on from where `held` says) PULLS_MS later, those found
-// meanwhile added, again while GitHub still looks them up, PULLS_TRIES
-// times at most.
+// A page whose squashed pull requests GitHub was still looking up
+// (`pullsPending`): asked again PULLS_MS later, those found added, as long
+// as GitHub still looks, PULLS_TRIES times at most.
 function askPulls(key, entry, ask, page, held, tries = 1) {
   setTimeout(() => {
     if (sessionHistories().get(key) !== entry) return
@@ -104,23 +78,25 @@ function askPulls(key, entry, ask, page, held, tries = 1) {
   }, PULLS_MS)
 }
 
-// One gone old is shown while it is read again (held-read.js).
+// The history `key` names, as held, else read (held-read.js): 'loading',
+// then 'ready' (readEntry), or 'error' with its `error` and `code`.
 function historyRead(key, ask, settle) {
   return heldRead(sessionHistories(), key, () => ask(1), {
     ready: answer => readEntry(answer, settle),
     settled: entry => { if (entry.pullsPending) askPulls(key, entry, ask, 1, null) },
-    failed: err => err?.name === 'AbortError' ? null
-      : { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'The history could not be read.', code: err?.code ?? null },
+    failed: err => {
+      const failed = failedRead(err, 'The history could not be read.')
+      return failed && { ...failed, code: err?.code ?? null }
+    },
     retryMs: RETRY_MS, repaint,
   })
 }
 
-// Every branch's history read again, afresh (`ask`'s third argument), for
-// the commit shown, its branches read now rather than as the server kept
-// them: the one held shown meanwhile, `refreshing`, and kept where that read
-// fails; once for each commit shown, and once more where the server, having
-// read them just before, answered as it kept them, when it may read them
-// again (`retryIn`, `retryAt`).
+// Every branch's history read again afresh for the commit shown, its
+// branches read now rather than as the server kept them: the one held shown
+// meanwhile (`refreshing`), and kept where that read fails; once per commit
+// shown, and once more where the server answered as it kept them, when it
+// may read them again (`retryIn`, `retryAt`).
 function refreshHistory(key, held, ask, settle, commit) {
   const sought = held.sought
   held.sought = new Set(sought).add(commit)
@@ -142,13 +118,11 @@ function refreshHistory(key, held, ask, settle, commit) {
   })
 }
 
-// A whole repository's history read on (`settle`, as a page is read), every
-// branch's or a revision's: the branches not read that now name a commit
-// listed join those naming one, and the next page reads on from the commits
-// where those listed stop, the parents not listed, and from the branches not
-// read, the newest first (a parent by its child's time), as many as every
-// branch's first page reads branches, none twice. The server glues on what it
-// keeps of the history from each (repository-history.ts historyFrom).
+// A whole repository's history read on (`settle`, as each page is read):
+// the unread branches now naming a listed commit join the branches, and the
+// next page reads on from the parents not listed and the branches not read,
+// the newest first (a parent by its child's time), ALL_STARTS at most, none
+// twice (repository-history.ts historyFrom).
 function settleFrontier(entry) {
   const listed = new Set(entry.commits.map(commit => commit.sha))
   entry.branches = [...entry.branches, ...entry.unread.flatMap(({ name, sha }) => listed.has(sha) ? [{ name, sha }] : [])]
@@ -164,38 +138,27 @@ function settleFrontier(entry) {
   return entry
 }
 
-// The next page of a history read a page at a time, after those it holds.
-function readMore(key, entry, ask, settle) {
-  if (entry.loadingMore || !entry.more) return
-  entry.loadingMore = true
-  entry.moreError = null
-  // Kept while the next page reads, however long it was held already.
-  entry.until = Date.now() + KEEP_MS
-  repaint()
-  // Where it reads on from, as asked, for its pull requests asked for again.
+// The next page of a history; where it read on from, for its pull requests
+// asked again.
+function readOn(key, entry, ask, settle) {
   const from = { next: entry.next }
-  ask(entry.page + 1, from).then(answer => {
-    if (sessionHistories().get(key) !== entry) return null
-    const held = new Set(entry.commits.map(commit => commit.sha))
-    entry.commits = [...entry.commits, ...answer.commits.filter(commit => !held.has(commit.sha))]
-    addPulls(entry, answer.pulls)
-    entry.page += 1
-    entry.more = answer.more === true
-    settle?.(entry)
-    entry.until = Date.now() + KEEP_MS
-    if (answer.pullsPending) askPulls(key, entry, ask, entry.page, from)
-    return null
-  }, err => {
-    if (err?.name !== 'AbortError') entry.moreError = err?.message || 'More commits could not be read.'
-    return null
-  }).finally(() => {
-    entry.loadingMore = false
-    repaint()
+  readMore(entry, {
+    held: () => sessionHistories().get(key) === entry,
+    ask: () => ask(entry.page + 1, from),
+    merge: answer => {
+      const held = new Set(entry.commits.map(commit => commit.sha))
+      entry.commits = [...entry.commits, ...answer.commits.filter(commit => !held.has(commit.sha))]
+      addPulls(entry, answer.pulls)
+      entry.page += 1
+      entry.more = answer.more === true
+      settle?.(entry)
+      if (answer.pullsPending) askPulls(key, entry, ask, entry.page, from)
+    },
+    error: 'More commits could not be read.', repaint,
   })
 }
 
-// A server's answer, its commits and the branches it didn't read those it
-// names by id.
+// A server's answer, its commits and unread branches those naming an id.
 const SHA = /^[a-f\d]{40}$/u
 const isCommit = commit => typeof commit?.sha === 'string' && SHA.test(commit.sha) && Array.isArray(commit.parents)
 function checked(answer) {
@@ -211,17 +174,11 @@ function checked(answer) {
   return { ...answer, commits, unread, pulls, openPulls }
 }
 
-// The commits drawn of those listed: each a pull request was squashed into
-// as the merge it was, its pull request's head its other parent, and that
-// one's own commits, each once (a branch reused for another pull request
-// shares those both had), marked by the pull request (`pull`).
-// The branches not merged of those read: their commits the default
-// branch's `tip` doesn't reach, a squash merge reaching its pull request's
-// (plantedCommits), as `git log --all --not <tip>` lists them, each down to
-// where it began. Only those newer than the oldest of the default branch's
-// own line read: what merged one would be newer still, so read, and would
-// reach it; one older may be merged where the default branch isn't read yet,
-// told as more of it is.
+// The branches not merged of those read: the commits the default branch's
+// `tip` doesn't reach, a squash merge reaching its pull request's
+// (plantedCommits), as `git log --all --not <tip>` lists them. Only those
+// newer than the oldest of the tip's own line read: one older may be merged
+// where the default branch isn't read yet.
 export function unmergedCommits(commits, pulls, tip) {
   const planted = plantedCommits(commits, pulls)
   const bySha = new Map(planted.map(commit => [commit.sha, commit]))
@@ -240,6 +197,9 @@ export function unmergedCommits(commits, pulls, tip) {
   return planted.filter(commit => !merged.has(commit.sha) && (commit.committedAt ?? Number.NEGATIVE_INFINITY) > since)
 }
 
+// The commits drawn of those listed: each a pull request was squashed into
+// as the merge it was, its pull request's head its other parent, and that
+// one's own commits, each once, marked by the pull request (`pull`).
 export function plantedCommits(commits, pulls) {
   if (pulls.length === 0) return commits
   const squashed = new Map(pulls.map(pull => [pull.merge, pull]))
@@ -268,10 +228,9 @@ export function compactTime(at, now = Date.now()) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...date.getFullYear() === new Date(now).getFullYear() ? {} : { year: 'numeric' } })
 }
 
-// The branches, pull requests and tags naming each commit, by its id: the
-// default branch's first, then branches, then the pull requests whose heads
-// they are (those squashed in when merged, the open ones now), by number,
-// then tags, as `--decorate` lists them.
+// The refs naming each commit, by its id, as `--decorate` lists them: the
+// default branch first, then branches, then the pull requests whose heads
+// they are (squashed or open), then tags.
 export function historyRefs({ branches = [], tags = [], pulls = [], openPulls = [] }, defaultBranch) {
   const named = new Map()
   const add = (sha, ref) => named.set(sha, [...named.get(sha) ?? [], ref])
@@ -288,12 +247,12 @@ export function historyRefs({ branches = [], tags = [], pulls = [], openPulls = 
   return named
 }
 
-// A subject, the pull requests it names by number (`#12`, as GitHub links
-// them: on their own or after a space or bracket) opening them on GitHub
-// (`github`, the repository's page there), in a new tab: by the issue's
-// address, as an issue's number is one too, GitHub sending a pull
-// request's on to it. Replay's commit line links its subject so too
-// (repository-replay.js).
+// The repository's page on GitHub, once its full name is known.
+export const githubOf = repo => repo ? `https://github.com/${repo.split('/').map(encodeURIComponent).join('/')}` : null
+
+// A subject, each `#12` in it (as GitHub links them: alone or after a space
+// or bracket) linking to it on GitHub (`github`, githubOf's), in a new tab,
+// by its issue's address, which GitHub sends on to a pull request's.
 export function subjectLinks(subject, github) {
   if (!github) return subject
   const parts = []
@@ -340,10 +299,8 @@ function historyGraph(layout, shown) {
   </svg>`
 }
 
-// A commit's branches, pull requests and tags, as chips, a branch's marked in
-// its line's `color`: the first few, then how many more, those named in its
-// tooltip. A pull request's opens it on GitHub (`github`, the repository's
-// page there), in a new tab, as its line's id does.
+// A commit's refs as chips in its line's `color`: the first few, then how
+// many more, named in its tooltip. A pull request's opens it on GitHub.
 function refChips(refs, color, revision, github) {
   if (!refs?.length) return nothing
   const chip = ref => {
@@ -358,11 +315,10 @@ function refChips(refs, color, revision, github) {
     ? html`<span class="history-ref is-more" data-tooltip=${rest.map(ref => ref.name).join(', ')}>+${rest.length}</span>` : nothing}</span>`
 }
 
-// The history of the directory `repository` shows in `mode` (as
-// RepositoryHistory.mode names them), as held, else read: its `entry`
-// (historyRead), the `key` it is held by, and `more`, reading its next page.
-// The branches not merged are every branch's, read as those are; every
-// branch's refused for want of a sign-in, the revision's.
+// The history of the directory `repository` shows in `mode`
+// (RepositoryHistory.mode): its `entry` (historyRead), the `key` it is held
+// by, and `more`, reading its next page. Unmerged reads every branch's;
+// every branch's refused for want of a sign-in, the revision's.
 function readHistory(repository, mode) {
   const { repoId, commit, path } = repository
   const every = mode === 'all' || mode === 'unmerged'
@@ -374,9 +330,8 @@ function readHistory(repository, mode) {
   })
   const settle = mode === 'path' ? null : settleFrontier
   const entry = historyRead(key, ask, settle)
-  // Every branch's, as the server kept them, missing the commit shown, those
-  // of the pull requests squashed into them planted among them too, as they
-  // do once a branch reaches it since: read again, afresh.
+  // Every branch's, as the server kept them, missing the commit shown (the
+  // squashed pull requests' planted too): read again, afresh.
   if (every && entry.status === 'ready' && !entry.refreshing && !entry.sought.has(commit) && !(entry.retryAt > Date.now())
     && !plantedCommits(entry.commits, entry.pulls ?? []).some(item => item.sha === commit)) {
     refreshHistory(key, entry, ask, settle, commit)
@@ -385,16 +340,15 @@ function readHistory(repository, mode) {
     allRefused.add(repoId)
     return readHistory(repository, 'revision')
   }
-  return { mode, key, entry, more: () => readMore(key, entry, ask, settle) }
+  return { mode, key, entry, more: () => readOn(key, entry, ask, settle) }
 }
 
 // What Replay plays (repository-replay.js): the history of the revision a
-// directory shows, below the repository's root the directory's, as Commits
-// reads and keeps it; `element` updated as it is read, from when it
-// watches till it unwatches; read again where it failed (rereadHistory).
+// directory shows (a directory's below the root), as Commits keeps it;
+// `element` drawn again as it is read while it watches.
 export const revisionHistory = repository => readHistory(repository, repository.path ? 'path' : 'revision')
-export const watchHistories = element => { shownElements.add(element) }
-export const unwatchHistories = element => { shownElements.delete(element) }
+export const watchHistories = element => { shownHistories.add(element) }
+export const unwatchHistories = element => { shownHistories.delete(element) }
 export function rereadHistory(key) {
   sessionHistories().delete(key)
   repaint()
@@ -402,9 +356,8 @@ export function rereadHistory(key) {
 
 // The tab's body, for the directory shown (`repository`, an entry's), its
 // repository's full name (`repo`, repository-code.js repositoryFullName,
-// once known) and the repository's branches and tags (`refs`,
-// repositoryRefs), naming its revision.
-class RepositoryHistory extends LitElement {
+// once known) and branches and tags (`refs`, repositoryRefs).
+class RepositoryHistory extends Shown {
   static properties = { repository: { attribute: false }, repo: { attribute: false }, refs: { attribute: false } }
 
   createRenderRoot() { return this }
@@ -415,39 +368,13 @@ class RepositoryHistory extends LitElement {
     this.repo = null
     this.refs = null
     this._drawn = null
-    this._moreButton = null
     this._mode = null
   }
 
-  connectedCallback() {
-    super.connectedCallback()
-    shownElements.add(this)
-  }
-
-  disconnectedCallback() {
-    super.disconnectedCallback()
-    shownElements.delete(this)
-    if (this._moreButton) unwatchNearViewport(this._moreButton)
-    this._moreButton = null
-  }
-
-  // Older commits read as their button nears the end of the scroll, a
-  // screen before it shows, as though clicked, and again after each page
-  // while it stays near; not after one failed, which waits for a click, nor
-  // for Unmerged, whose lines a page may add none of, which would read the
-  // whole history on its own. Watched again after every update, so that
-  // whether it is near is where it is now, below the lines that update
-  // added, never where it was.
+  // Older commits read as their button nears; not for Unmerged, a page of
+  // which may add no line, and would read the whole history on its own.
   updated() {
-    const button = this.querySelector('.history-more > button')
-    if (this._moreButton && this._moreButton !== button) unwatchNearViewport(this._moreButton)
-    this._moreButton = button
-    if (button) watchNearViewport(button, near => { if (near) this.readNear(button) })
-  }
-
-  readNear(button) {
-    if (button === this._moreButton && button.isConnected && !button.disabled && !button.parentElement.querySelector('[role=alert]')
-      && this._mode !== 'unmerged') button.click()
+    this.watchMore(() => this._mode !== 'unmerged')
   }
 
   // What it lists: a directory's commits ('path'), every branch's ('all'),
@@ -464,9 +391,9 @@ class RepositoryHistory extends LitElement {
     return readHistory(this.repository, mode)
   }
 
-  // The graph of what it holds, the pull requests squashed into it planted
-  // as the branches they were, or of its branches not merged, laid out again
-  // only as that changes.
+  // The graph of what it holds, the squashed pull requests planted as the
+  // branches they were, or of its branches not merged, laid out again only
+  // as that changes.
   layout(mode, entry, defaultBranch) {
     const drawn = this._drawn
     if (drawn?.commits === entry.commits && drawn.pulls === entry.pulls && drawn.mode === mode && drawn.defaultBranch === defaultBranch) return drawn.layout
@@ -535,10 +462,7 @@ class RepositoryHistory extends LitElement {
           </div>`}
         ${ready ? html`<span class="history-summary">${count}${branches > 0 ? ` on ${branches} branch${branches === 1 ? '' : 'es'}` : ''}</span>` : nothing}
       </div>
-      ${ready ? this.renderCommits(mode, entry, more, layout, defaultBranch)
-        : entry.status === 'error' ? html`<div class="bundles-slide-placeholder is-error"><p role="alert">${entry.error}</p>
-            <button type="button" @click=${() => { sessionHistories().delete(key); repaint() }}>Retry</button></div>`
-        : html`<div class="bundles-slide-placeholder" role="status">Reading the history…</div>`}`
+      ${ready ? this.renderCommits(mode, entry, more, layout, defaultBranch) : readingBody(entry, 'Reading the history…', () => rereadHistory(key))}`
   }
 
   renderCommits(mode, entry, more, layout, defaultBranch) {
@@ -550,12 +474,9 @@ class RepositoryHistory extends LitElement {
     const named = historyRefs(entry, defaultBranch)
     const focused = Math.max(0, layout.rows.findIndex(row => row.commit.sha === shown))
     const graphWidth = EDGE * 2 + (layout.width - 1) * LANE
-    // Each line's short id, pull requests and the pull requests its subject
-    // names open them on GitHub, in a new tab, reached by keys along the line
-    // (keydown); the rest of it, its code, its button named by its subject,
-    // then its author and time.
-    const repo = this.repo ?? this.repository.repo
-    const github = repo ? `https://github.com/${repo.split('/').map(encodeURIComponent).join('/')}` : null
+    // A line's links on GitHub reached by keys along it (keydown); the rest
+    // of it, its button, named by its subject, opening its code.
+    const github = githubOf(this.repo ?? this.repository.repo)
     return html`<div class="history-scroll">
       ${mode === 'all' && !entry.refreshing && !(entry.retryAt > Date.now()) && !layout.rows.some(row => row.commit.sha === shown) ? html`<p class="history-note">
         <code>${shown.slice(0, 7)}</code> isn’t among these commits.</p>` : nothing}
@@ -580,10 +501,7 @@ class RepositoryHistory extends LitElement {
         })}</ol>
       </div>
       ${entry.cut ? html`<p class="history-note">Only the first 5,000 branches by name are read.</p>` : nothing}
-      ${entry.more || entry.moreError ? html`<div class="history-more">
-        ${entry.moreError ? html`<span role="alert">${entry.moreError}</span>` : nothing}
-        <button type="button" ?disabled=${entry.loadingMore} @click=${more}>${entry.loadingMore ? 'Reading…' : 'Older commits'}</button>
-      </div>` : nothing}
+      ${moreButton(entry, more, 'Older commits')}
     </div>`
   }
 }

@@ -24,6 +24,7 @@ import { sourceFolderIcon } from './source-file-icon.js'
 import { shallowestNamed } from './bundle-source-tree.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { currentViewGeneration, currentViewSignal } from './view-navigation.js'
+import { sessionKept } from './activity-reads.js'
 import './repository-selector.js'
 import './revision-select.js'
 
@@ -36,28 +37,16 @@ const sameDirectory = (a, b) => a.repoId === b.repoId && a.commit === b.commit &
 // The directory's name: its repository's, and its path in it.
 export const repositoryCodeName = ({ repo, path }) => path ? `${repo}/${path}` : repo
 
-// What the header reads, for the session and role that read it: the
-// repositories the reader may browse, each repository's branches and tags,
-// read again as its code opens anew where they were read HEADER_FRESH_MS
-// ago or longer (going between its views within it reads none), those read
-// before shown meanwhile, and kept where that read fails, and the revision
-// each commit was opened by, to name it so again (`{ kind, name }`, `name`
-// null for the default branch), by repository and commit.
-const headerData = new Map()
+// What the header reads, for the session that read it: the repositories the
+// reader may browse, and each one's branches and tags, read again as its
+// code opens anew HEADER_FRESH_MS after (going between its views reads
+// none), those read before shown meanwhile and kept where that read fails;
+// and the revision each commit was opened by, to name it so again
+// (`{ kind, name }`, `name` null for the default branch).
 const revisionNames = new Map()
+const sessionData = sessionKept(new Map(), revisionNames)
 const DATA_RETRY_MS = 30_000
 const HEADER_FRESH_MS = 30_000
-let keptFor = null
-
-function sessionData() {
-  const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
-  if (session !== keptFor) {
-    headerData.clear()
-    revisionNames.clear()
-    keptFor = session
-  }
-  return headerData
-}
 
 // `{ status }`: 'loading', then 'ready' with its `value`, or 'error' until a
 // read after its retry is due; each a new object, so the header repaints. One
@@ -270,18 +259,18 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
   }
   // History, Issues and Pull requests read none of its files: a directory at
   // a commit shows them alone, its other tabs opening them; at a revision
-  // named, at the commit the repository's root is read at, none listed, the
-  // directory there or not, as its history lists the commits that touched it
-  // all the same.
-  if (!entry && REPOSITORY_FILELESS_TABS.has(tab)) {
-    // Its view's first read asked for as its bundle loads, the first time
-    // one opens, before the commit it opens at is read.
-    prefetchActivityView(repoId, tab)
-    const revision = route.revision === undefined ? commit ? revisionNames.get(`${repoId}\0${commit}`) ?? null : route.ref ? null : { kind: 'branch', name: null } : route.revision
-    // Its branches and tags as they are now, for its header and History.
-    rereadHeader(`refs\0${repoId}`)
-    const known = browsableRepositories().value?.find(item => item.repoId === repoId)?.fullName
-    const opening = { repoId, commit, ref: route.ref ?? null, path, tab, repo: route.repo ?? known ?? null, revision, error: null }
+  // named, at the commit the repository's root is read at, the directory
+  // there or not, as its history lists the commits that touched it.
+  const fileless = !entry && REPOSITORY_FILELESS_TABS.has(tab)
+  // Its view's first read asked for as its bundle loads, before the commit
+  // it opens at is read.
+  if (fileless) prefetchActivityView(repoId, tab)
+  const revision = route.revision === undefined ? commit ? revisionNamed(repoId, commit) : route.ref ? null : { kind: 'branch', name: null } : route.revision
+  const known = entry ? null : browsableRepositories().value?.find(item => item.repoId === repoId)?.fullName
+  const opening = { repoId, commit, ref: route.ref ?? null, path, tab, repo: route.repo ?? known ?? null, revision, error: null }
+  // Its branches and tags as they are now, for its header and History.
+  if (!entry) rereadHeader(`refs\0${repoId}`)
+  if (fileless) {
     let at = commit
     if (!at) {
       showOpening(opening)
@@ -308,11 +297,6 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
     return routeAt(at)
   }
   if (!entry) {
-    const revision = route.revision === undefined ? commit ? revisionNames.get(`${repoId}\0${commit}`) ?? null : route.ref ? null : { kind: 'branch', name: null } : route.revision
-    const known = browsableRepositories().value?.find(item => item.repoId === repoId)?.fullName
-    const opening = { repoId, commit, ref: route.ref ?? null, path, tab, repo: route.repo ?? known ?? null, revision, error: null }
-    // Its branches and tags as they are now, for its header.
-    rereadHeader(`refs\0${repoId}`)
     // Its Treemap draws its files' sizes as its tree lists them while its
     // files are read, the sooner (repository-treemap.js), at its commit,
     // which the repository's root is read at where its route names none.

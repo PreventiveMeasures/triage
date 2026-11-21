@@ -1,52 +1,33 @@
-// The code viewer's Agents tab (render-bundle.js): the sessions of Claude, of
-// Codex and of the agents the server knows by their GitHub Apps that the
-// repository shows, reconstructed (common/managed/agent-tasks.ts)
-// from its pull requests, the commits merging them and those pushed to its
-// default branch, its branches and its issues, as the server reads them
-// (GET /api/admin/repositories/agents), a page at a time as the end of the
-// scroll nears. A session is a compact tile in a grid, as an issue is: its
-// title, opening it where it ran, its agent, author and age, its tasks (the
-// pull requests it opened and the commits it pushed) and the issues it
-// worked on, each opening on GitHub, and its branch. What was read is kept a
-// while, for the session that read it.
+// The code viewer's Agents tab (render-bundle.js): the sessions of Claude,
+// Codex and the agents the server knows by their GitHub Apps, reconstructed
+// (common/managed/agent-tasks.ts) from the repository's pull requests, the
+// commits merging them and those pushed to its default branch, its branches
+// and issues (GET /api/admin/repositories/agents), a page at a time as the
+// end of the scroll nears. A session is a tile, as an issue is: its title,
+// opening where it ran, its agent, author and age, its tasks and issues,
+// each opening on GitHub, and its branch.
 import { LitElement, html, nothing, svg } from 'lit'
-import { state } from '#client/index.js'
 import { agentSessions } from '../../common/managed/agent-tasks.ts'
 import { fetchRepositoryAgents } from './client-managed.js'
-import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { compactTime } from './repository-history.js'
-import { openRepositoryItemDialog } from './lazy-dialogs.js'
-import { BRANCH_ICON, COMMIT_ICON, PULL_ICON, agentIcon, agentName, knowAgents, plainClick, sessionLink } from './repository-tiles.js'
+import { BRANCH_ICON, COMMIT_ICON, PULL_ICON, agentIcon, agentName, knowAgents, sessionLink } from './repository-tiles.js'
 import { activityPicker, activitySubtab, pickActivitySubtab, watchActivitySubtabs } from './repository-activity.js'
 import { commitAgent, githubUser, githubUserName } from './github-users.js'
 import { heldRead } from './held-read.js'
+import { KEEP_MS, RETRY_MS, failedRead, moreButton, number, readMore, readingBody, sessionKept, shownElements } from './activity-reads.js'
 
 export { sessionLink }
 
-const KEEP_MS = 5 * 60_000
 const APP_AGENT = /^[a-z][a-z\d-]{0,31}$/u
 // An app agent's avatar, as the server serves it: a GitHub App's or account's.
 const AGENT_AVATAR = /^(?:app|user)-[1-9]\d{0,11}$/u
-const RETRY_MS = 30_000
 const MAX_CHIPS = 12
 
-const lists = new Map()
-const shownElements = new Set()
-let keptFor = null
-
-function sessionLists() {
-  const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
-  if (session !== keptFor) {
-    lists.clear()
-    keptFor = session
-  }
-  return lists
-}
-
-const repaint = () => { for (const element of shownElements) element.requestUpdate() }
+const sessionLists = sessionKept(new Map())
+const { Shown, repaint } = shownElements(LitElement)
 watchActivitySubtabs(tab => { if (tab === 'agents') repaint() })
 
-// A server's answer, its artifacts those it names by number, id or name, and
+// A server's answer, its artifacts those naming a number, id or name, and
 // the agents it knows by their GitHub Apps or accounts (its first page's),
 // each by id, name and avatar; an artifact's those of them it names.
 function checked(answer) {
@@ -76,49 +57,36 @@ const reconstructed = entry => Object.assign(entry, { sessions: agentSessions(en
   branchesSince: entry.after?.pulls ? Math.min(...entry.pulls.map(pull => pull.updatedAt ?? Number.POSITIVE_INFINITY)) : null,
 }) })
 
-// What the repository `key` names showed, as held, else read: `{ status }`,
-// 'loading', then 'ready' with the artifacts read, the `sessions` they make,
-// and where more follow, the cursors reading them (`after`), or 'error' with
-// its `error`; read again once old, or an error's retry is due, shown
-// meanwhile (held-read.js).
+// What the repository `key` names showed, as held, else read (held-read.js):
+// 'loading', then 'ready' with the artifacts read, the `sessions` they make
+// and the cursors reading on (`after`), or 'error'.
 function listRead(key, ask) {
   return heldRead(sessionLists(), key, () => ask(null).then(answer => { knowAgents(answer.agents); return answer }), {
     ready: answer => reconstructed({ status: 'ready', until: Date.now() + KEEP_MS, ...answer, loadingMore: false, moreError: null }),
-    failed: err => err?.name === 'AbortError' ? null : { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'The agents\' work could not be read.' },
+    failed: err => failedRead(err, 'The agents\' work could not be read.'),
     retryMs: RETRY_MS, repaint,
   })
 }
 
-// The next page, after those held: its pull requests and commits, each once.
-function readMore(key, entry, ask) {
-  if (entry.loadingMore || !entry.more) return
-  entry.loadingMore = true
-  entry.moreError = null
-  // Kept while the next page reads, however long it was held already.
-  entry.until = Date.now() + KEEP_MS
-  repaint()
-  ask(entry.after).then(answer => {
-    if (sessionLists().get(key) !== entry) return null
-    const pulls = new Set(entry.pulls.map(pull => pull.number))
-    const commits = new Set(entry.commits.map(commit => commit.oid))
-    entry.pulls = [...entry.pulls, ...answer.pulls.filter(pull => !pulls.has(pull.number))]
-    entry.commits = [...entry.commits, ...answer.commits.filter(commit => !commits.has(commit.oid))]
-    entry.more = answer.more
-    entry.after = answer.after
-    entry.until = Date.now() + KEEP_MS
-    // A page adding no session leaves the next to a click: most pull
-    // requests and commits may be no agent's, and its button, still near,
-    // would read the whole history on its own.
-    const shown = entry.sessions.length
-    reconstructed(entry)
-    entry.stalled = entry.sessions.length <= shown
-    return null
-  }, err => {
-    if (err?.name !== 'AbortError') entry.moreError = err?.message || 'More could not be read.'
-    return null
-  }).finally(() => {
-    entry.loadingMore = false
-    repaint()
+// The next page: its pull requests and commits, each once. One adding no
+// session leaves the next to a click (`stalled`): most may be no agent's,
+// and its button, still near, would read the whole history on its own.
+function readOn(key, entry, ask) {
+  readMore(entry, {
+    held: () => sessionLists().get(key) === entry,
+    ask: () => ask(entry.after),
+    merge: answer => {
+      const pulls = new Set(entry.pulls.map(pull => pull.number))
+      const commits = new Set(entry.commits.map(commit => commit.oid))
+      entry.pulls = [...entry.pulls, ...answer.pulls.filter(pull => !pulls.has(pull.number))]
+      entry.commits = [...entry.commits, ...answer.commits.filter(commit => !commits.has(commit.oid))]
+      entry.more = answer.more
+      entry.after = answer.after
+      const shown = entry.sessions.length
+      reconstructed(entry)
+      entry.stalled = entry.sessions.length <= shown
+    },
+    error: 'More could not be read.', repaint,
   })
 }
 
@@ -187,7 +155,7 @@ export function agentStats(sessions, agent) {
 // The tab's body, for the repository a directory shown (`repository`, an
 // entry's) is in, by its full name (`repo`, repository-code.js
 // repositoryFullName, once known).
-class RepositoryAgents extends LitElement {
+class RepositoryAgents extends Shown {
   static properties = { repository: { attribute: false }, repo: { attribute: false }, _filter: { state: true } }
 
   createRenderRoot() { return this }
@@ -197,35 +165,12 @@ class RepositoryAgents extends LitElement {
     this.repository = null
     this.repo = null
     this._filter = ''
-    this._moreButton = null
   }
 
-  connectedCallback() {
-    super.connectedCallback()
-    shownElements.add(this)
-  }
-
-  disconnectedCallback() {
-    super.disconnectedCallback()
-    shownElements.delete(this)
-    if (this._moreButton) unwatchNearViewport(this._moreButton)
-    this._moreButton = null
-  }
-
-  // More read as their button nears the end of the scroll, as the Issues
-  // tab's are (repository-issues.js): not after one failed, nor while a
-  // filter picks among those read, nor after a page that added no session,
-  // till a click reads on. Watched again after every update.
+  // More read as their button nears, as the Issues tab's are: not while a
+  // filter picks, nor after a page that added no session, till a click.
   updated() {
-    const button = this.querySelector('.issues-more > button')
-    if (this._moreButton && this._moreButton !== button) unwatchNearViewport(this._moreButton)
-    this._moreButton = button
-    if (button) watchNearViewport(button, near => { if (near) this.readNear(button) })
-  }
-
-  readNear(button) {
-    if (button === this._moreButton && button.isConnected && !button.disabled && !this._filter.trim() && !button.parentElement.querySelector('[role=alert]')
-      && !this.list().entry.stalled) button.click()
+    this.watchMore(() => !this._filter.trim() && !this.list().entry.stalled)
   }
 
   list() {
@@ -233,7 +178,7 @@ class RepositoryAgents extends LitElement {
     const key = `${repoId}`
     const ask = after => fetchRepositoryAgents(repoId, after ?? {}).then(checked)
     const entry = listRead(key, ask)
-    return { key, entry, more: () => readMore(key, entry, ask) }
+    return { key, entry, more: () => readOn(key, entry, ask) }
   }
 
   pick(agent) {
@@ -265,16 +210,12 @@ class RepositoryAgents extends LitElement {
         ${ready ? readGauge(pullsReadShare(entry), `${entry.pulls.length} pull request${entry.pulls.length === 1 ? '' : 's'} read`, entry.loadingMore) : nothing}
       </div>
       ${ready ? this.renderSessions(entry, shown, more, picked)
-        : entry.status === 'error' ? html`<div class="bundles-slide-placeholder is-error"><p role="alert">${entry.error}</p>
-            <button type="button" @click=${() => { sessionLists().delete(key); repaint() }}>Retry</button></div>`
-        : html`<div class="bundles-slide-placeholder" role="status">Reading what the agents did…</div>`}`
+        : readingBody(entry, 'Reading what the agents did…', () => { sessionLists().delete(key); repaint() })}`
   }
 
-  // Each agent's mark, and beside it what it did among the sessions read,
-  // each by its icon and count, more to come where its pages are left to
-  // read: pull requests', which a branch alone may wait for, or commits'.
-  // An agent shows only with a session among those read, and with no commit
-  // to the default branch without a pull request, no count of them.
+  // Each agent with a session among those read, its mark and what it did,
+  // each by its icon and count, "+" where pages are left to read: pull
+  // requests', which a branch alone may wait for, or commits'.
   renderStats(entry) {
     const left = { pulls: Boolean(entry.after?.pulls), branches: Boolean(entry.after?.pulls), commits: Boolean(entry.after?.commits) }
     const shown = agent => entry.sessions.some(session => session.agents.includes(agent))
@@ -283,7 +224,7 @@ class RepositoryAgents extends LitElement {
       return html`<span class="agent-stats" role="group" aria-label=${agentName(agent)}>
         <span class=${`agent-mark is-${agent}`}>${agentIcon(agent)}</span>
         ${STATS.filter(([kind]) => stats[kind] > 0).map(([kind, glyph, one, many]) => {
-          const count = `${stats[kind].toLocaleString('en-US')}${left[kind] ? '+' : ''}`
+          const count = `${number(stats[kind])}${left[kind] ? '+' : ''}`
           const name = `${count} ${stats[kind] === 1 && !left[kind] ? one : many}`
           return html`<span class="agent-stat" role="img" aria-label=${name} data-tooltip=${name}>${glyph}${count}</span>`
         })}
@@ -296,55 +237,39 @@ class RepositoryAgents extends LitElement {
     return html`<div class="issues-scroll">
       ${shown.length > 0 ? html`<ol class="issues-grid" aria-label="Sessions">${shown.map(session => this.renderSession(session))}</ol>`
         : html`<p class="history-note">${entry.sessions.length > 0 && this._filter.trim() ? `None of the ${what} read match.` : `No ${what} among those read.`}</p>`}
-      ${entry.more || entry.moreError ? html`<div class="history-more issues-more">
-        ${entry.moreError ? html`<span role="alert">${entry.moreError}</span>` : nothing}
-        <button type="button" ?disabled=${entry.loadingMore} @click=${() => { entry.stalled = false; more() }}>${entry.loadingMore ? 'Reading…' : 'More'}</button>
-      </div>` : nothing}
+      ${moreButton(entry, () => { entry.stalled = false; more() }, 'More', 'history-more issues-more')}
     </div>`
   }
 
-  // A session clicked, its card or title, opens its popup; a pull request
-  // or issue of it, that one's (dialogs/repository-item-dialog.js). Held
-  // with a key, or another button, a link opens as one does; a click on a
-  // commit opens it on GitHub.
+  // A session clicked, its card or title, opens its popup; a pull request or
+  // issue of it, that one's; a commit opens on GitHub.
   openSession(event, session) {
-    if (!plainClick(event) || event.target?.closest?.('.agent-chip.is-commit')) return
-    event.preventDefault()
-    openRepositoryItemDialog({ repository: { ...this.repository, repo: this.repo ?? this.repository.repo }, target: { session } })
+    if (!event.target?.closest?.('.agent-chip.is-commit')) this.openPopup(event, { session })
   }
 
-  openItem(event, number, preview) {
-    if (!plainClick(event)) return
-    event.preventDefault()
-    event.stopPropagation()
-    openRepositoryItemDialog({ repository: { ...this.repository, repo: this.repo ?? this.repository.repo }, target: { number, preview } })
+  openItem(event, itemNumber, preview) {
+    if (this.openPopup(event, { number: itemNumber, preview })) event.stopPropagation()
   }
 
-  // A tile: its agents' marks, a rail beside its lines, each one alone: its
-  // title, of two at most, opening its popup (where it ran, as a link); its
-  // author, a user, none for an agent's own account, its marks saying who it
-  // is; age, how many tasks (where its pull requests' and commits' chips
-  // don't count them all) and lines, those of a single task beside its chip;
-  // its pull requests, commits and
-  // issues, those that fit, each with how many follow it, seen only past the
-  // last of them shown (report.css); and its branch.
+  // A tile: its agents' marks, a rail beside its lines: its title, opening
+  // its popup (where it ran, as a link); its author, none for an agent's own
+  // account; its age and lines, a single task's beside its chip; its pull
+  // requests, commits and issues, those that fit, each with how many follow
+  // it, seen only past the last shown (report.css); and its branch.
   renderSession(session) {
     const repo = this.repo ?? this.repository.repo
     const link = sessionLink(session, repo)
     const time = session.updatedAt == null ? null : new Date(session.updatedAt)
     const author = session.authors.find(login => !commitAgent(login))
     const tasks = session.pulls.length + session.commits.length
-    // How many tasks, said only where its chips, its pull requests' and its
-    // commits', don't count them all.
-    const counted = tasks !== session.pulls.length + session.commits.length
     const age = time ? html`<time datetime=${time.toISOString()}>${compactTime(session.updatedAt)}</time>` : nothing
-    const size = session.additions || session.deletions ? html`<span class="issue-diff"><span class="is-added">+${session.additions.toLocaleString('en-US')}</span>
-      <span class="is-deleted">−${session.deletions.toLocaleString('en-US')}</span></span>` : nothing
+    const size = session.additions || session.deletions ? html`<span class="issue-diff"><span class="is-added">+${number(session.additions)}</span>
+      <span class="is-deleted">−${number(session.deletions)}</span></span>` : nothing
     const single = tasks === 1
     const meta = [
       author ? html`<span class="issue-author">${githubUser(author)}</span>` : nothing,
       single ? nothing : age,
-      tasks === 0 ? html`<span>no pull request</span>` : counted ? html`<span>${tasks} tasks</span>` : nothing,
+      tasks === 0 ? html`<span>no pull request</span>` : nothing,
       single ? nothing : size,
     ].filter(part => part !== nothing)
     const chips = [
