@@ -104,6 +104,20 @@ type Side = { integrity: string; files: () => Promise<NpmPackageFile[]> }
 // A delta's key: the integrities of the version it is against, or none, and
 // of the version.
 export const deltaKey = (base: string | null, other: string) => `${base ?? '(empty)'}\0${other}`
+// The same of two public versions by their names and versions (`(empty)`
+// for none), as npm never gives one other files: its key in
+// npmVersionDeltaStore.
+export const versionDeltaKey = (name: string, version: string, otherName: string, otherVersion: string) =>
+  `${name}@${version}\0${otherVersion === '(empty)' ? '(empty)' : `${otherName}@${otherVersion}`}`
+// Those of `keys` (versionDeltaKey) kept, by key.
+export async function keptVersionDeltas(keys: string[], kept: KeptStore<NpmDelta>): Promise<Map<string, NpmDelta>> {
+  const found = new Map<string, NpmDelta>()
+  for (const [key, row] of keys.length > 0 ? await kept.readMany([...new Set(keys)]) : []) {
+    const known = deltaOf(row.value)
+    if (known) found.set(key, known)
+  }
+  return found
+}
 
 // The delta of `other` (its integrity, and how to read its files) against
 // `base`, or none, as held, else shared with one asked before it, else

@@ -138,6 +138,7 @@ The score is out of 100, with four levels:
 - A private version's unpacked files, pretty-printed copies and rename diffs are never kept.
 - A private package's publish times and risk records never reach the database or any cache shared between instances; risk records stay in the instance's memory.
 - Compare's line counts are kept in the database for private versions too, keyed by the tarballs' integrities alone, with no name or content.
+- A public version's line counts against its base, as a team's Dependencies tab shows them, are also kept by the two versions' names for a month, so they're shown without asking npm again.
 - A private package's name is never sent to Socket or OSV: both are asked only about packages npm answers for anonymously.
 - A private package has no provenance lookup, no Socket report and no download tier.
 - The publisher is shown by npm account, never by email.

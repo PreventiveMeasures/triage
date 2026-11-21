@@ -24,6 +24,7 @@
 import { state } from '#client/index.js'
 import { fetchPullDependencies, fetchPullDependenciesOf } from './client-managed.js'
 import { knowGithubUsers } from './github-users.js'
+import { seedNpmDeltas } from './npm-delta.js'
 import { isPatchPath } from '../../common/managed/npm-packages.js'
 
 const KEEP_MS = 5 * 60_000
@@ -244,6 +245,8 @@ function answered(told, entry) {
   let failure = told instanceof Error ? told : null
   if (!failure) {
     try {
+      // The lines its versions change, counted already, held before its rows ask for them (npm-delta.js).
+      if (Array.isArray(told?.deltas)) seedNpmDeltas(told.deltas)
       // The app's users it names kept, where it tells them: one telling none forgets none.
       const answer = checked(told?.users ? knowGithubUsers(told) : told)
       return { status: 'ready', until: Date.now() + (answer.pending ? PENDING_MS : KEEP_MS), ...answer }

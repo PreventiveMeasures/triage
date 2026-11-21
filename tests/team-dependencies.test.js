@@ -951,3 +951,21 @@ test('drafts hidden, their dependencies not read, till "Drafts" is switched on; 
     routes.length = 0
   }
 })
+
+test('a pull request read alone, into another branch, holds the lines its versions change that its answer tells, its rows asking none', async () => {
+  TEAM.push(22)
+  branches[22] = { cut: false, review: { ...terms, unreviewed: 0 }, lockfiles: [dir()] }
+  pulls[22] = { items: [pull(1, { base: 'next' })], more: false, defaultBranch: 'main' }
+  answers.set('22#1', { number: 1, cut: false, review: terms, lockfiles: [dir({ added: [wants('counted-alone')] })],
+    deltas: [['counted-alone', '1.0.0', '(empty)', { additions: 9, deletions: 0, typeless: null, binary: false }]] })
+  Object.assign(state, { managedSession: { id: 'alone-deltas', role: 'triage' }, teamDependenciesTab: 'pulls', teamDependenciesAllBranches: true })
+  try {
+    await read(shown([repo(22, 'org/a')]))
+    assert.deepEqual(asked.dependencies.at(-1).slice(0, 2), [22, 1])
+    assert.equal(npmDelta('counted-alone', '1.0.0', '(empty)').additions, 9, 'held as its answer told it')
+  } finally {
+    answers.clear()
+    Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest', teamDependenciesAllBranches: false })
+    routes.length = 0
+  }
+})

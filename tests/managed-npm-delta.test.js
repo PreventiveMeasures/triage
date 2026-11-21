@@ -36,7 +36,7 @@ async function fixture(t) {
       writeHead(status, headers) { this.status = status; this.headers = headers }, end(value) { this.body = JSON.parse(value); this.writableEnded = true } })
     await handler(req, res)
     return res
-  }, { lines })
+  }, { lines, db })
 }
 const delta = (name, version, otherVersion) => `/api/npm/delta?${new URLSearchParams({ name, version, otherVersion })}`
 
@@ -201,4 +201,22 @@ test('a delta asked again while where it is kept is still being looked in shares
   looks[1]?.(null)
   assert.equal((await again).additions, 1)
   assert.deepEqual([looks.length, read], [1, ['sha512-four']], 'looked for once, its files read once')
+})
+
+test('several versions\' lines, each of two public versions kept by their names and versions too, for a team\'s Dependencies to tell without asking npm; a private one\'s not', async t => {
+  const send = await fixture(t)
+  withToken(t)
+  registry(t, [packageOf('lib', '1.0.0', versions[0]), packageOf('lib', '1.1.0', versions[1]), { ...packageOf('@corp/lib', '1.1.0', versions[1]), private: true }])
+  const { npmVersionDeltaStore } = await import('../server-managed/npm-kept.ts')
+  const { keptVersionDeltas, versionDeltaKey } = await import('../server-managed/npm-delta.ts')
+  const kept = keys => keptVersionDeltas(keys, npmVersionDeltaStore(send.db))
+  const keys = [versionDeltaKey('lib', '1.1.0', 'lib', '1.0.0'), versionDeltaKey('lib', '1.1.0', 'lib', '(empty)'), versionDeltaKey('@corp/lib', '1.1.0', '@corp/lib', '(empty)')]
+  assert.equal((await kept(keys)).size, 0)
+  const told = byAsked((await send.lines(deltas([['lib', '1.1.0', '1.0.0'], ['lib', '1.1.0', '(empty)'], ['@corp/lib', '1.1.0', '(empty)']]), 'admin')).lines)
+  const found = await kept(keys)
+  assert.deepEqual(found.get(keys[0]), { additions: told['lib@1.1.0 1.0.0'].additions, deletions: told['lib@1.1.0 1.0.0'].deletions,
+    typeless: told['lib@1.1.0 1.0.0'].typeless, binary: told['lib@1.1.0 1.0.0'].binary }, 'as told')
+  assert.ok(found.has(keys[1]), 'against none too')
+  assert.equal(told['@corp/lib@1.1.0 (empty)'].additions, 5, 'a private one counted for its reader')
+  assert.ok(!found.has(keys[2]), 'but not kept by its name')
 })
