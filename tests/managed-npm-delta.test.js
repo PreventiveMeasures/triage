@@ -106,6 +106,26 @@ test('several versions\' lines in one request, each as GET delta answers it, as 
   assert.equal((await send.lines(deltas(asked), null)).status, 401)
 })
 
+test('several versions\' lines each against a version of another package, as the host may name a review\'s base; a private one\'s to its readers alone', async t => {
+  const send = await fixture(t)
+  withToken(t)
+  registry(t, [packageOf('fork', '1.1.0', versions[1]), packageOf('lib', '1.0.0', versions[0]), packageOf('lib', '1.1.0', versions[1]),
+    { ...packageOf('@corp/lib', '1.0.0', versions[0]), private: true }])
+  const asked = [['fork', '1.1.0', '1.0.0', null, 'lib'], ['fork', '1.1.0', '1.0.0', null, '@corp/lib'], ['fork', '1.1.0', '1.0.0', null, 'fork']]
+  const told = lines => Object.fromEntries(lines.map(line => [`${line.otherName ?? line.name}@${line.otherVersion}`, line]))
+  const answer = told((await send.lines(deltas(asked))).lines)
+  const same = (await send(delta('lib', '1.1.0', '1.0.0'))).body
+  assert.deepEqual(answer['lib@1.0.0'], { ...same, name: 'fork', otherName: 'lib' }, 'counted as the same package\'s two versions are, of the other package\'s named')
+  assert.deepEqual(answer['@corp/lib@1.0.0'], { name: 'fork', version: '1.1.0', otherVersion: '1.0.0', otherName: '@corp/lib', error: 'package-not-found', status: 404 },
+    'a private one refused a reader without access to it')
+  assert.deepEqual([answer['fork@1.0.0'].error, answer['fork@1.0.0'].otherName], ['package-not-found', undefined], 'its own package named so, as none is')
+  assert.equal(told((await send.lines(deltas(asked), 'admin')).lines)['@corp/lib@1.0.0'].additions, 3, 'counted for one with it')
+  for (const bad of [[['fork', '1.1.0', '(empty)', null, 'lib']], [['fork', '1.1.0', '1.0.0', null, 'Not A Name']], [['fork', '1.1.0', '1.0.0', 'x', 'lib']],
+    [['fork', '1.1.0', '1.0.0', null]]]) {
+    assert.equal((await send.lines(deltas(bad))).status, 400, JSON.stringify(bad))
+  }
+})
+
 test('a binary file added, removed or changed is told of, one moved as it was not; one kept before binary files were told of worked out again', async () => {
   const { npmDelta } = await import('../server-managed/npm-delta.ts')
   const side = (integrity, files) => ({ integrity, files: () => Promise.resolve(Object.entries(files).map(([path, bytes]) => ({ path, bytes: Buffer.from(bytes) }))) })

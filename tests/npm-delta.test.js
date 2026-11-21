@@ -156,3 +156,27 @@ test('a patched version\'s lines are asked with where its patch is, held apart f
   assert.deepEqual([npmDelta('pat', '1.0.0', '1.0.0', patch).additions, npmDelta('pat', '1.0.0', '1.0.0').additions], [3, 0])
   pending[0].resolve()
 })
+
+test('a version\'s lines against another package\'s version, as the host may name its base, are asked with its name, held apart from its own package\'s, its tooltip naming it', async () => {
+  asked.length = 0
+  pending.length = 0
+  const patch = { hash: 'c'.repeat(64), repoId: 7, commit: 'b'.repeat(40), path: 'patches/@fork__ms.patch' }
+  const forked = Object.assign(new Delta(), { name: '@fork/ms', version: '3.0.0', base: '2.1.3', baseName: 'ms' })
+  forked._watch()
+  near.get(forked)(true)
+  forked.render()
+  npmDelta('@fork/ms', '3.0.0', '2.1.3')
+  npmDelta('@fork/ms', '3.0.0', '2.1.3', patch, 'ms')
+  await frame()
+  assert.deepEqual(asked, [[['@fork/ms', '3.0.0', '2.1.3', null, 'ms'], ['@fork/ms', '3.0.0', '2.1.3'], ['@fork/ms', '3.0.0', '2.1.3', patch, 'ms']]])
+  pending[0].tell({ name: '@fork/ms', version: '3.0.0', otherVersion: '2.1.3', otherName: 'ms', additions: 7, deletions: 2, typeless: null })
+  pending[0].tell({ name: '@fork/ms', version: '3.0.0', otherVersion: '2.1.3', additions: 1, deletions: 1, typeless: null })
+  pending[0].tell({ name: '@fork/ms', version: '3.0.0', otherVersion: '2.1.3', otherName: 'ms', patchHash: patch.hash, additions: 9, deletions: 2, typeless: null })
+  assert.deepEqual([npmDelta('@fork/ms', '3.0.0', '2.1.3', null, 'ms').additions, npmDelta('@fork/ms', '3.0.0', '2.1.3').additions,
+    npmDelta('@fork/ms', '3.0.0', '2.1.3', patch, 'ms').additions], [7, 1, 9])
+  const text = templateText(forked.render())
+  assert.match(text, /data-tooltip=Lines it adds and removes, against ms@2\.1\.3 /u)
+  assert.match(text, /<span class="compare-tip-label">Against<\/span><span>ms@2\.1\.3<\/span>/u)
+  pending[0].resolve()
+  forked._unwatch()
+})
