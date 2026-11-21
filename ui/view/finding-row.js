@@ -17,7 +17,7 @@
 import { unsafeCSS } from 'lit'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { installShadowTooltipListener } from './tooltip.js'
-import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
+import { NearViewport } from './lazy-render.js'
 import { groupKey } from './group.js'
 import { tableRowClasses, tableRowInnerTemplate } from './render-finding.js'
 import rowCSS from './finding-row.css'
@@ -37,7 +37,7 @@ const MANAGED_HOST_CLASSES = [
   'selected',
 ]
 
-class FindingRow extends StateElement {
+class FindingRow extends NearViewport(StateElement) {
   static properties = {
     group: { attribute: false },
     selected: { type: Boolean },
@@ -45,9 +45,8 @@ class FindingRow extends StateElement {
 
   static styles = [unsafeCSS(fileIconsCSS), unsafeCSS(reportButtonCSS), unsafeCSS(marksCSS), unsafeCSS(rowCSS), unsafeCSS(actionsCSS), unsafeCSS(tabsCSS)]
 
-  // Whether the content is (to be) rendered, as `<finding-card>`'s.
-  _near = false
-  _watching = false
+  // Always waits for the viewport (NearViewport).
+  lazy = true
 
   constructor() {
     super()
@@ -84,42 +83,12 @@ class FindingRow extends StateElement {
     // Asked on every connect: a re-sort or a view-mode switch detaches and
     // re-inserts rows (StateElement disposing the autorun), and the answer
     // decides whether one renders again or drops back to its shell.
-    this._watching = true
-    watchNearViewport(this, (near) => this._onNear(near))
+    this._watchNear(this)
   }
 
   disconnectedCallback() {
     this.removeEventListener('click', this._onClick)
-    if (this._watching) {
-      unwatchNearViewport(this)
-      this._watching = false
-    }
     super.disconnectedCallback()
-  }
-
-  // As `<finding-card>`'s: in range renders (re-registering the autorun)
-  // and stops watching; out of range on a reconnect drops to the shell.
-  _onNear(near) {
-    if (near) {
-      if (this._watching) {
-        unwatchNearViewport(this)
-        this._watching = false
-      }
-      this._near = true
-      this.requestUpdate()
-    } else if (this._near) {
-      this._near = false
-      this.requestUpdate()
-    }
-  }
-
-  // Render now, in range or not, for the deep-link reveal that scrolls to
-  // the row at its real height. `sync` performs the update before
-  // returning, as `<finding-card>`'s does.
-  ensureRendered({ sync = false } = {}) {
-    if (!this._near) this._onNear(true)
-    if (sync && this.isConnected && this.isUpdatePending) this.performUpdate()
-    return this.updateComplete
   }
 
   _onClick = (e) => {

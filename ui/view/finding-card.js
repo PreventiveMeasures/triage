@@ -8,7 +8,7 @@
 import { unsafeCSS } from 'lit'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { installShadowTooltipListener } from './tooltip.js'
-import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
+import { NearViewport } from './lazy-render.js'
 import { groupKey } from './group.js'
 import { findingCardClasses, findingCardInnerTemplate } from './render-finding.js'
 import { revealCitedLines } from './reveal-cited.js'
@@ -31,7 +31,7 @@ const MANAGED_HOST_CLASSES = [
   'multi-case',
 ]
 
-class FindingCard extends StateElement {
+class FindingCard extends NearViewport(StateElement) {
   static properties = {
     group: { attribute: false },
     inGroup: { type: Boolean, attribute: 'in-group', reflect: true },
@@ -46,13 +46,6 @@ class FindingCard extends StateElement {
   // Shared with table rows (tabs), the export preview (Prism tokens) and
   // the prose dialogs (quotes and alerts).
   static styles = [unsafeCSS(fileIconsCSS), unsafeCSS(reportButtonCSS), unsafeCSS(marksCSS), unsafeCSS(cardCSS), unsafeCSS(quoteCSS), unsafeCSS(actionsCSS), unsafeCSS(tabsCSS), unsafeCSS(codeTokensCSS), unsafeCSS(managedCommentCSS)]
-
-  // Whether a lazy card's body is rendered (_onNear); not reactive, as the
-  // flip requests its own update.
-  _near = false
-  // What the observer watches for it, kept to unwatch: a detached card can
-  // no longer find its wrapper.
-  _watched = null
 
   constructor() {
     super()
@@ -105,48 +98,12 @@ class FindingCard extends StateElement {
       // The flat list's `.flat-group` wrapper has the box while skipped
       // (`content-visibility`). Asked afresh on every connect: a keyed
       // `repeat` moves a card by reinserting it, perhaps far from view.
-      this._watched = this.closest('.flat-group') ?? this
-      watchNearViewport(this._watched, (near) => this._onNear(near))
+      this._watchNear(this.closest('.flat-group') ?? this)
       return
     }
     // Rendered again on every reconnect, so StateElement registers a fresh
     // autorun where Lit, `group` unchanged, wouldn't update.
     if (this.hasUpdated) this.requestUpdate()
-  }
-
-  disconnectedCallback() {
-    if (this._watched) {
-      unwatchNearViewport(this._watched)
-      this._watched = null
-    }
-    super.disconnectedCallback()
-  }
-
-  // In range: the body rendered (on a reconnect, its autorun registered
-  // again) and kept, unwatched, while connected. Out of range on a
-  // reconnect: back to the shell, so a sort costs no more than the viewport.
-  _onNear(near) {
-    if (near) {
-      if (this._watched) {
-        unwatchNearViewport(this._watched)
-        this._watched = null
-      }
-      this._near = true
-      this.requestUpdate()
-    } else if (this._near) {
-      this._near = false
-      this.requestUpdate()
-    }
-  }
-
-  // The body rendered now, in range or not, for print and the deep-link
-  // reveal; resolves once it is in the DOM. `sync` performs the update on
-  // the spot: a `beforeprint` handler can't await, and the browser may
-  // snapshot as it returns.
-  ensureRendered({ sync = false } = {}) {
-    if (this.lazy && !this._near) this._onNear(true)
-    if (sync && this.isConnected && this.isUpdatePending) this.performUpdate()
-    return this.updateComplete
   }
 }
 

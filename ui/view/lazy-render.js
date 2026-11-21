@@ -12,7 +12,7 @@
 //
 // Whoever registers says which element to watch (the flat list's
 // `.flat-group` wrapper carries the box, finding-card.js) and is called
-// with `near` on every change.
+// with `near` on every change; NearViewport below is the elements' side.
 
 const MARGIN = '100% 0px'
 
@@ -113,4 +113,50 @@ export function unwatchNearViewport(target) {
   if (!rec) return
   rec.io?.unobserve(target)
   watched.delete(target)
+}
+
+// The gate as a Lit element's (`<finding-card>`, `<finding-row>`): `_near`
+// says whether its body is rendered, `lazy` whether it waits at all. In
+// range, the body renders (on a reconnect, its autorun registered again)
+// and is kept, unwatched, while connected; out of range on a reconnect, it
+// is back to the shell, so a sort costs no more than the viewport.
+export const NearViewport = (Base) => class extends Base {
+  // Not reactive: each flip requests its own update.
+  _near = false
+  // What the observer watches (`_watchNear`), kept to unwatch: a detached
+  // element can no longer find its wrapper.
+  _watched = null
+
+  _watchNear(target) {
+    this._watched = target
+    watchNearViewport(target, (near) => this._onNear(near))
+  }
+
+  _unwatchNear() {
+    if (!this._watched) return
+    unwatchNearViewport(this._watched)
+    this._watched = null
+  }
+
+  disconnectedCallback() {
+    this._unwatchNear()
+    super.disconnectedCallback()
+  }
+
+  _onNear(near) {
+    if (near) this._unwatchNear()
+    else if (!this._near) return
+    this._near = near
+    this.requestUpdate()
+  }
+
+  // The body rendered now, in range or not, for print and the deep-link
+  // reveal; resolves once it is in the DOM. `sync` performs the update on
+  // the spot: a `beforeprint` handler can't await, and the browser may
+  // snapshot as it returns.
+  ensureRendered({ sync = false } = {}) {
+    if (this.lazy && !this._near) this._onNear(true)
+    if (sync && this.isConnected && this.isUpdatePending) this.performUpdate()
+    return this.updateComplete
+  }
 }
