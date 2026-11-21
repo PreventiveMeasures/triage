@@ -198,11 +198,18 @@ function layout(node, x, y, w, h, depth, out) {
   const iw = w - PAD * 2
   const ih = h - headH - PAD
   if (iw < MIN_RENDER || ih < MIN_RENDER) return
-  const kids = [...node.children.values()].toSorted((a, b) => b.value - a.value)
-  for (const p of squarify(kids, { x: ix, y: iy, w: iw, h: ih })) {
-    layout(p.node, p.x, p.y, p.w, p.h, depth + 1, out)
+  layoutChildren(node, { x: ix, y: iy, w: iw, h: ih }, depth + 1, out)
+}
+
+// A node's children, largest first, squarified into `rect` and placed
+// (layout) at `depth`.
+function layoutChildren(node, rect, depth, out) {
+  for (const p of squarify(largestFirst(node), rect)) {
+    layout(p.node, p.x, p.y, p.w, p.h, depth, out)
   }
 }
+
+const largestFirst = node => [...node.children.values()].toSorted((a, b) => b.value - a.value)
 
 // Percent of the bundle: whole from 10%, one decimal from 1%, two below, so
 // small files don't all read "0%".
@@ -590,10 +597,9 @@ class BundleTreemap extends LitElement {
     const total = this._meta.total || 1
     const arcs = []
     const add = (node, a0, a1, depth) => {
-      const kids = [...node.children.values()].toSorted((a, b) => b.value - a.value)
       const span = a1 - a0
       let a = a0
-      for (const k of kids) {
+      for (const k of largestFirst(node)) {
         const sweep = span * (k.value / node.value)
         const rIn = r0 + (depth - 1) * thick
         const rOut = rIn + thick
@@ -632,12 +638,7 @@ class BundleTreemap extends LitElement {
     const sunburst = this._mode === 'sunburst'
     const ready = this._status === 'ok' && focus && focus.children && this._w > 0 && this._h > 0
     const cells = []
-    if (ready && !sunburst) {
-      const kids = [...focus.children.values()].toSorted((a, b) => b.value - a.value)
-      for (const p of squarify(kids, { x: 0, y: 0, w: this._w, h: this._h })) {
-        layout(p.node, p.x, p.y, p.w, p.h, 1, cells)
-      }
-    }
+    if (ready && !sunburst) layoutChildren(focus, { x: 0, y: 0, w: this._w, h: this._h }, 1, cells)
     const { prefix } = this._meta
     // What is on screen: the focused subtree's, none before the tree stands.
     const curFiles = focus ? focus.count : 0

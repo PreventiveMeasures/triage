@@ -96,18 +96,13 @@ export function renderLinksView(badge = nothing) {
   // The index subscriber repaints as reports become available or change.
   ensureBundleFindingsIndexed().catch(() => {})
   const { name, groups, skipped } = open
-  const linkedIds = new Set()
+  const linkedIds = new Set(groups.flat())
   const holders = new Set()
   let located = 0
-  for (const group of groups) {
-    for (const id of group) {
-      if (linkedIds.has(id)) continue
-      linkedIds.add(id)
-      const reports = reportsForFindingId(id)
-      if (reports.length === 0) continue
-      located++
-      for (const r of reports) holders.add(r)
-    }
+  for (const id of linkedIds) {
+    const reports = reportsForFindingId(id)
+    if (reports.length > 0) located++
+    for (const r of reports) holders.add(r)
   }
   return html`<div class="links-view">
     ${open.managedId ? html`<div class="meta-row"><button type="button" class="report-button" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-deduplication' } }))}>‹ Deduplication</button></div>` : nothing}

@@ -400,14 +400,11 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
   // The matched findings by severity, and by the OPFS report each came from,
   // a finding counting toward every report it appears in.
   const issueSummary = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
-  let issueTotal = 0
+  const matched = [...bundleFindingsByFile(state.bundleDetails?.fileHashes, 'issues').values()].flat()
   const reportCounts = new Map()
-  for (const findings of bundleFindingsByFile(state.bundleDetails?.fileHashes, 'issues').values()) {
-    for (const f of findings) {
-      if (issueSummary[f.severity] !== undefined) issueSummary[f.severity]++
-      issueTotal++
-      for (const name of reportsForFinding(f.fileHash, f)) reportCounts.set(name, (reportCounts.get(name) ?? 0) + 1)
-    }
+  for (const f of matched) {
+    if (issueSummary[f.severity] !== undefined) issueSummary[f.severity]++
+    for (const name of reportsForFinding(f.fileHash, f)) reportCounts.set(name, (reportCounts.get(name) ?? 0) + 1)
   }
   const reports = [...reportCounts.keys()].toSorted()
   const issueChips = SEVERITIES
@@ -450,7 +447,7 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
         </dl>
         ${exportsCol ?? nothing}
       </div>
-      ${issueTotal > 0 ? html`<div class="bundles-issue-summary tree-count-chips">${issueChips}</div>` : nothing}
+      ${matched.length > 0 ? html`<div class="bundles-issue-summary tree-count-chips">${issueChips}</div>` : nothing}
       ${summaryExtra}
     </div>
     <div class="bundles-overview-columns">
