@@ -738,10 +738,12 @@ function codeHistoryNav(codeHistory) {
 // The board's `buckets` (key → groups, board order) back the same-column
 // rail beside the modal (`focusKey`'s, the open card's), docked to the
 // screen's right edge from 1400px up, and its header's picker, the way
-// across to another bucket. Fullscreen (persisted, state.ts) stretches the
-// modal over everything but the rail and swaps the card for the focus
-// workbench; the history / expand / close cluster then moves to the card
-// pane's corner.
+// across to another bucket. The rail draws a screen at a time
+// (view/kanban-rail.js): a column runs to thousands of cards. Its card
+// renderer is a new function each render, so the cards drawn repaint with
+// the board. Fullscreen (persisted, state.ts) stretches the modal over
+// everything but the rail and swaps the card for the focus workbench; the
+// history / expand / close cluster then moves to the card pane's corner.
 function kanbanDetailTemplate(focusGroup, buckets = null, focusKey = null, preview = null) {
   if (!focusGroup && !preview) return nothing
   const groupSt = focusGroup ? groupState(focusGroup) : {}
@@ -802,9 +804,6 @@ function kanbanDetailTemplate(focusGroup, buckets = null, focusKey = null, previ
             })}
           </select></span>${navTemplate(KANBAN_NAV, idx < 0 ? items.length : `${idx + 1} / ${items.length}`, idx === 0, idx === items.length - 1)}
       </div>
-      <!-- Drawn a screen at a time (view/kanban-rail.js): a column runs to
-           thousands of cards. The card renderer is a new function each
-           render, so the cards drawn repaint with the board. -->
       <kanban-rail
         class="kanban-detail-side-body"
         .items=${items}
@@ -875,11 +874,7 @@ const KANBAN_COLUMNS = [
 // `groupStates` holds the rollups renderImpl read this render.
 function kanbanBody(filtered, selectedGroup, groupStates) {
   const buckets = new Map(KANBAN_COLUMNS.map((c) => [c.key, []]))
-  const stateOf = (g) => {
-    let st = groupStates.get(g)
-    if (!st) groupStates.set(g, st = groupState(g))
-    return st
-  }
+  const stateOf = (g) => groupStates.get(g) ?? groupStates.set(g, groupState(g)).get(g)
   // A triage state no column claims has no column.
   for (const g of filtered) buckets.get(stateOf(g).commonTriage ?? 'untriaged')?.push(g)
   // A stale key (a renamed bucket) degrades to the normal board.
