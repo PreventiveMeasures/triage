@@ -19,7 +19,7 @@ import { StateElement, html } from '@rray/frontend/state-element'
 import { installShadowTooltipListener } from './tooltip.js'
 import { NearViewport } from './lazy-render.js'
 import { groupKey } from './group.js'
-import { tableRowClasses, tableRowInnerTemplate } from './render-finding.js'
+import { ROW_HOST_CLASSES, tableRowClasses, tableRowInnerTemplate } from './render-finding.js'
 import rowCSS from './finding-row.css'
 import marksCSS from './finding-marks.css'
 import tabsCSS from './finding-tabs.css'
@@ -29,13 +29,7 @@ import actionsCSS from './finding-actions.css'
 
 // Every class this component might put on the host, so a toggle removes
 // one that no longer applies.
-const MANAGED_HOST_CLASSES = [
-  'is-critical',
-  'mark-red', 'mark-blue', 'mark-green', 'mark-gray',
-  'has-conflict',
-  'triage-inprogress', 'triage-fixed', 'triage-invalid', 'triage-deleted', 'triage-ignored',
-  'selected',
-]
+const MANAGED_HOST_CLASSES = [...ROW_HOST_CLASSES, 'selected']
 
 class FindingRow extends NearViewport(StateElement) {
   static properties = {

@@ -849,7 +849,7 @@ function focusBody(filtered, selectedGroup) {
           <span class="label">Up next</span>${navTemplate(FOCUS_NAV, `${focusedIdx + 1} / ${filtered.length}`, focusedIdx === 0, focusedIdx === filtered.length - 1)}
         </div>
         <div class="focus-sidebar-body">
-          ${repeat(filtered, (g) => groupKey(g), (g) => kanbanCardTemplate(g, {
+          ${repeat(filtered, groupKey, (g) => kanbanCardTemplate(g, {
             variant: 'focus',
             active: groupKey(g) === groupKey(selectedGroup),
           }))}
@@ -909,7 +909,7 @@ function kanbanBody(filtered, selectedGroup, groupStates) {
           <div class="kanban-column-body">
             ${items.length === 0
               ? html`<div class="kanban-empty">No ${c.label.toLowerCase()} findings.</div>`
-              : repeat(items, (g) => groupKey(g), (g, index) => kanbanCardTemplate(g, {
+              : repeat(items, groupKey, (g, index) => kanbanCardTemplate(g, {
                   active: groupKey(g) === state.kanbanPopoverGid,
                   expandedTrackLast: (index + 1) % KANBAN_COLUMNS.length === 0,
                   groupSt: stateOf(g),
@@ -938,7 +938,7 @@ function groupedBody(filtered) {
           <span>${fileLink(probe, findingRepoTarget(probe))}</span>
           <span class="count">${items.length}</span>
         </div>
-        <div class="file-body">${repeat(items, (g) => groupKey(g), (g) => findingCardPlaceholder(g, { lazy: true }))}</div>
+        <div class="file-body">${repeat(items, groupKey, (g) => findingCardPlaceholder(g, { lazy: true }))}</div>
       </div>`
   })}`
 }
@@ -949,7 +949,7 @@ function groupedBody(filtered) {
 // both for groups with duplicates (.multi-case, styles/print.css).
 function flatBody(filtered) {
   const items = flatOrder(filtered)
-  return html`${repeat(items, (g) => groupKey(g), (g) => {
+  return html`${repeat(items, groupKey, (g) => {
     const p = activeTabFor(g)
     const lineLinkTpl = lineLink(p, findingRepoTarget(p))
     const meta = formatRunMeta(p)
@@ -1348,28 +1348,25 @@ function renderImpl() {
   }
   // The bundles list paints from `state.bundles` (cached by the sidebar).
   // The last bundle deleted between renders drops back to the findings.
+  if (state.currentView === 'bundles' && !state.bundles?.length) state.currentView = 'findings'
   if (state.currentView === 'bundles') {
-    if ((state.bundles ?? []).length === 0) {
-      state.currentView = 'findings'
-    } else {
-      if (bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile)) ensureBundleSources().catch(() => {})
-      const slot = ensureReportSlot('bundles-slot')
-      litRender(renderBundlesList(state.bundles), slot)
-      const details = state.bundleDetails
-      const bundleOpen = state.selectedBundle && details && (details.json || details.bundle)
-      if (bundleOpen && state.bundleDetailsTab === 'graph') renderBundleGraph(details)
-      // The terminal, in its tab or the Code tab's pane: attaching is
-      // idempotent per bundle, so tab flips keep the running shell.
-      if (bundleOpen && !details.metadataOnly
-          && (state.bundleDetailsTab === 'terminal' || state.bundleDetailsTab === 'code' && state.bundleCodeTerminal)) {
-        const terminalSlot = document.querySelector('#bundle-terminal-slot')
-        if (terminalSlot) attachTerminal(terminalSlot, state.bundleDetails)
-      }
-      showReport()
-      const { npm, repository } = state.bundles.find(entry => entry.integrity === state.selectedBundle) ?? {}
-      document.title = npm ? `DeepView — ${npm.name}@${npm.version}` : repository ? `DeepView — ${repositoryCodeName(repository)}` : 'DeepView — bundles'
-      return
+    if (bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile)) ensureBundleSources().catch(() => {})
+    const slot = ensureReportSlot('bundles-slot')
+    litRender(renderBundlesList(state.bundles), slot)
+    const details = state.bundleDetails
+    const bundleOpen = state.selectedBundle && details && (details.json || details.bundle)
+    if (bundleOpen && state.bundleDetailsTab === 'graph') renderBundleGraph(details)
+    // The terminal, in its tab or the Code tab's pane: attaching is
+    // idempotent per bundle, so tab flips keep the running shell.
+    if (bundleOpen && !details.metadataOnly
+        && (state.bundleDetailsTab === 'terminal' || state.bundleDetailsTab === 'code' && state.bundleCodeTerminal)) {
+      const terminalSlot = document.querySelector('#bundle-terminal-slot')
+      if (terminalSlot) attachTerminal(terminalSlot, state.bundleDetails)
     }
+    showReport()
+    const { npm, repository } = state.bundles.find(entry => entry.integrity === state.selectedBundle) ?? {}
+    document.title = npm ? `DeepView — ${npm.name}@${npm.version}` : repository ? `DeepView — ${repositoryCodeName(repository)}` : 'DeepView — bundles'
+    return
   }
   // The optional local/E2E scan surface; its host owns navigation and transport.
   if (state.currentView === 'scan' && customElements.get('local-scan-page')) {

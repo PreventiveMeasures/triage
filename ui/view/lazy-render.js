@@ -30,13 +30,8 @@ let batchQueued = false
 const scrollerCache = new WeakMap()
 
 function isScroller(el) {
-  let v = scrollerCache.get(el)
-  if (v === undefined) {
-    const oy = getComputedStyle(el).overflowY
-    v = oy === 'auto' || oy === 'scroll' || oy === 'overlay'
-    scrollerCache.set(el, v)
-  }
-  return v
+  if (!scrollerCache.has(el)) scrollerCache.set(el, ['auto', 'scroll', 'overlay'].includes(getComputedStyle(el).overflowY))
+  return scrollerCache.get(el)
 }
 
 // The nearest ancestor that scrolls vertically, crossing shadow
@@ -58,19 +53,13 @@ export function scrollRootOf(el) {
 }
 
 function onEntries(entries) {
-  for (const entry of entries) {
-    watched.get(entry.target)?.cb(entry.isIntersecting)
-  }
+  for (const entry of entries) watched.get(entry.target)?.cb(entry.isIntersecting)
 }
 
 function observerFor(root) {
   const key = root ?? document
-  let io = observers.get(key)
-  if (!io) {
-    io = new IntersectionObserver(onEntries, { root, rootMargin: MARGIN, threshold: 0 })
-    observers.set(key, io)
-  }
-  return io
+  if (!observers.has(key)) observers.set(key, new IntersectionObserver(onEntries, { root, rootMargin: MARGIN, threshold: 0 }))
+  return observers.get(key)
 }
 
 // Start calling `cb(near)` for `target`: first with the observer's initial

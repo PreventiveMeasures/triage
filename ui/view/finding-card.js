@@ -10,7 +10,7 @@ import { StateElement, html } from '@rray/frontend/state-element'
 import { installShadowTooltipListener } from './tooltip.js'
 import { NearViewport } from './lazy-render.js'
 import { groupKey } from './group.js'
-import { findingCardClasses, findingCardInnerTemplate } from './render-finding.js'
+import { ROW_HOST_CLASSES, findingCardClasses, findingCardInnerTemplate } from './render-finding.js'
 import { revealCitedLines } from './reveal-cited.js'
 import cardCSS from './finding-card.css'
 import quoteCSS from '../styles/md-quote.css'
@@ -22,14 +22,7 @@ import actionsCSS from './finding-actions.css'
 import codeTokensCSS from '../styles/code-tokens.css'
 import managedCommentCSS from './managed-comment.css'
 
-const MANAGED_HOST_CLASSES = [
-  'finding',
-  'is-critical',
-  'mark-red', 'mark-blue', 'mark-green', 'mark-gray',
-  'has-conflict',
-  'triage-inprogress', 'triage-fixed', 'triage-invalid', 'triage-deleted', 'triage-ignored',
-  'multi-case',
-]
+const MANAGED_HOST_CLASSES = ['finding', ...ROW_HOST_CLASSES, 'multi-case']
 
 class FindingCard extends NearViewport(StateElement) {
   static properties = {

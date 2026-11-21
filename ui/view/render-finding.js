@@ -981,6 +981,11 @@ export function findingCardInnerTemplate(g, opts = {}) {
   `
 }
 
+// Every class tableRowClasses can give a host, for the hosts to toggle off
+// one that no longer applies.
+export const ROW_HOST_CLASSES = ['is-critical', 'mark-red', 'mark-blue', 'mark-green', 'mark-gray', 'has-conflict',
+  'triage-inprogress', 'triage-fixed', 'triage-invalid', 'triage-deleted', 'triage-ignored']
+
 // A row host's classes, but `selected`, which its `selected` property owns.
 export function tableRowClasses(g) {
   const groupSt = groupState(g)
