@@ -29,10 +29,11 @@
 // reaches not is marked (!). Each list shows those reviewed already first,
 // those marked last (prioritized).
 import { html, nothing, svg } from 'lit'
+import { styleMap } from './style-map.js'
 import { StateElement } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 import { fetchTeamDependencies } from './client-managed.js'
-import { UNSUPPORTED_WHY, addedVersions, checked, heldPullDependencies, passedByComments, pullDependencies, readsDependencies, reviewFailures, reviewOf, seedPullDependencies,
+import { UNSUPPORTED_WHY, addedVersions, checked, heldPullDependencies, isPending, passedByComments, pullDependencies, readsDependencies, reviewFailures, reviewOf, seedPullDependencies,
   subscribePullDependencies, unreviewedVersions, versionKey } from './pull-dependencies.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { icon } from './repository-tiles.js'
@@ -479,6 +480,31 @@ function deps(pull) {
     : nothing}</span>`
 }
 
+// How far Stasis is with what the stasis.config.json files `answers` hold
+// to reach (`[repoId, answer]` each, a pull request's or a default branch's):
+// each build once, by its repository, file and commit, done where any answer
+// tells it made, as one Stasis kept is at once, though the rest of its
+// directory is still to be made; an answer telling none of its builds, its
+// directory's head's alone. Shown by Stasis's mark, a bar and the count.
+function stasisProgress(answers) {
+  const builds = new Map()
+  for (const [repoId, answer] of answers) {
+    for (const dir of answer?.lockfiles ?? []) {
+      const told = Array.isArray(dir.builds) ? dir.builds : isPending(dir) ? [{ commit: answer.head ?? '', built: false }] : []
+      for (const { commit, built } of told) {
+        const key = `${repoId}\0${dir.paths[0]}\0${commit}`
+        builds.set(key, builds.get(key) === true || built === true)
+      }
+    }
+  }
+  const done = [...builds.values()].filter(Boolean).length, total = builds.size
+  const said = `Stasis is working out what their stasis.config.json entries reach: ${done.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} builds made. Those waiting are asked again as it makes them.`
+  return html`<p class="team-deps-quiet team-deps-building" role="status" data-tooltip=${said}><img class="team-deps-stasis" src="./stasis.svg" alt="Stasis">
+    <span class="team-deps-progress" role="progressbar" aria-label="Stasis builds made" aria-valuemin="0" aria-valuemax=${total} aria-valuenow=${done}><span
+      style=${styleMap({ width: `${total ? done / total * 100 : 0}%` })}></span></span>
+    <span class="team-deps-progress-n">${done.toLocaleString('en-US')}/${total.toLocaleString('en-US')}</span></p>`
+}
+
 // Where a pull request's versions' patches are read: its repository, at the
 // commit its lockfiles were read at (versionRow).
 const readAt = pull => ({ repoId: pull.repo.repoId, head: pull.entry.head ?? null })
@@ -717,7 +743,7 @@ class TeamDependencies extends StateElement {
       ${tab === 'reviews' ? withCompare(() => html`<dependency-review-list .session=${state.managedSession} .team=${this.team}></dependency-review-list>`) : html`
       <div class="team-deps-bar">
         ${reading ? html`<p class="team-deps-quiet" role="status">Reading their pull requests…</p>`
-          : building ? html`<p class="team-deps-quiet" role="status">Stasis is still working out what some <code>stasis.config.json</code> entries reach; they are asked again as it does.</p>` : nothing}
+          : building ? stasisProgress([...pulls.map(({ repo, entry }) => [repo.repoId, entry]), ...reviewed.map(({ repo, read }) => [repo.repoId, read.branch])]) : nothing}
         ${failed.length === 1 ? html`<p class="team-deps-quiet" data-tooltip=${failed[0]} role="alert">${failed[0]}</p>` : failed.length > 1
           ? html`<p class="team-deps-quiet" role="alert" data-tooltip=${failed.join('\n')} .tooltipContent=${html`<div class="compare-tip">
             <div class="compare-tip-head">Couldn’t be read</div>

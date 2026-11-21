@@ -189,15 +189,17 @@ test('a stasis.config.json is told as a directory of a pull request\'s dependenc
   assert.deepEqual(asked.toSorted(), [head, base].toSorted(), 'both asked for at once')
   assert.deepEqual(held, [[head, ['app/pnpm-lock.yaml']], [base, ['pnpm-lock.yaml']]], 'each commit\'s versions as the lockfiles in its directory or above lock them there')
   const gone = { name: 'gone', version: '1.0.0', source: 'registry', unlocked: true }
-  assert.deepEqual(dir, { paths: [config], more: 0, moreLocked: 0,
+  const both = [{ commit: head, built: true }, { commit: base, built: true }]
+  assert.deepEqual(dir, { paths: [config], builds: both, more: 0, moreLocked: 0,
     added: [gone, { ...locked('ms', '2.1.3'), was: ['2.1.2'] }, { ...locked('tool', '1.0.0', { patchHash: PATCH, patchDir: 'app' }), was: ['1.0.0'] }],
     locked: [locked('ms', '2.1.3'), locked('kept', '1.0.0'), locked('tool', '1.0.0', { patchHash: PATCH, patchDir: 'app' }), gone] },
   'a version newly patched is new; one the lockfile locks that nothing reaches, not told; one no lockfile laying it out locks, told so')
   const branch = await stasisDirectory(config, null, head, read, lockedAt)
-  assert.deepEqual([branch.added, branch.locked], [[], dir.locked], 'a default branch\'s, of no base, adds none')
+  assert.deepEqual([branch.added, branch.locked, branch.builds], [[], dir.locked, [{ commit: head, built: true }]], 'a default branch\'s, of no base, adds none, its head\'s build alone')
   asked.length = 0
   const unbased = await stasisDirectory(config, base, head, read, lockedAt, true)
-  assert.deepEqual([asked, unbased.added.map(pkg => [pkg.name, pkg.was ?? null]), unbased.locked], [[head], [['gone', null], ['kept', null], ['ms', null], ['tool', null]], dir.locked],
+  assert.deepEqual([asked, unbased.added.map(pkg => [pkg.name, pkg.was ?? null]), unbased.locked, unbased.builds],
+    [[head], [['gone', null], ['kept', null], ['ms', null], ['tool', null]], dir.locked, [{ commit: head, built: true }]],
     'a pull request\'s read without its base: that never built, every version at the head new')
 
   // Reviewed as a lockfile's directory is: by its patch, one unlocked failing it.
@@ -209,15 +211,17 @@ test('a stasis.config.json is told as a directory of a pull request\'s dependenc
   assert.deepEqual(answer.lockfiles[0].unsupported, [{ name: 'gone', version: '1.0.0', source: 'registry', unsupported: 'unlocked' }])
   assert.deepEqual([answer.review.toReview, answer.review.unreviewed, answer.review.unsupported], [2, 1, 1])
 
-  // Still to be built, either of them: told so, the other asked for all the same.
+  // Still to be built, either of them: told so, the other asked for all the same, each told made or not.
   for (const unbuilt of [head, base]) {
     asked.length = 0
     const waiting = await stasisDirectory(config, base, head, commit => read(commit).then(known => commit === unbuilt ? pending : known), lockedAt)
-    assert.deepEqual([waiting, asked.length], [{ paths: [config], error: 'stasis-pending' }, 2], unbuilt)
+    assert.deepEqual([waiting, asked.length], [{ paths: [config], builds: both.map(one => ({ ...one, built: one.commit !== unbuilt })), error: 'stasis-pending' }, 2], unbuilt)
   }
   const failing = (commit, failure) => stasisDirectory(config, base, head, one => read(one).then(known => one === commit ? { status: 'failed', ...failure } : known), lockedAt)
-  assert.deepEqual(await failing(head, { error: 'config-invalid', transient: false }), { paths: [config], error: 'stasis-failed', detail: 'config-invalid' })
-  assert.deepEqual(await failing(base, { error: 'github-rate-limited', transient: true }), { paths: [config], error: 'stasis-failed', detail: 'github-rate-limited' }, 'GitHub failing its merge base\'s')
+  assert.deepEqual(await failing(head, { error: 'config-invalid', transient: false }), { paths: [config], builds: both, error: 'stasis-failed', detail: 'config-invalid' },
+    'a failed one done with')
+  assert.deepEqual(await failing(base, { error: 'github-rate-limited', transient: true }), { paths: [config], builds: both, error: 'stasis-failed', detail: 'github-rate-limited' },
+    'GitHub failing its merge base\'s')
   const baseless = await failing(base, { error: 'config-invalid', transient: false })
   assert.deepEqual(baseless.added.map(pkg => [pkg.name, pkg.was]), [['gone', undefined], ['kept', undefined], ['ms', undefined], ['tool', undefined]],
     'a merge base that couldn\'t be built of its own reaches nothing: every version at the head is new')

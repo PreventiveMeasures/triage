@@ -123,7 +123,7 @@ A pull request is read where it changes a lockfile or a `stasis.config.json`, as
 
 A build can take minutes, so no answer waits for one:
 
-- it is asked for the first time an answer finds it missing at a commit, once that answer's review is known, and built behind it; the answer says Stasis is still building (**Stasis building…**) and fails nothing yet; the page asks again every 30 seconds;
+- it is asked for the first time an answer finds it missing at a commit, once that answer's review is known, and built behind it; the answer says Stasis is still building (**Stasis building…**) and fails nothing yet; the page asks again every 30 seconds; the Dependencies tab shows Stasis's mark, a bar and how many of the builds its answers read are made (`3/7`), each once, one already kept made at once;
 - builds are made one at a time, in the worker bundle creation uses, and give way to a bundle being created;
 - the next build is the one of highest priority waiting: one of a `stasis.config.json` whose directory has a selected lockfile, by how many versions that lockfile adds in the pull request that want reviews, so the pull requests where Stasis can spare the most reviews come first; the rest, and the default branch's, after, the one asked for last first;
 - a build that ends within a minute of the first of a run is followed at once by the next; after a longer one, or one that found the worker busy, the next starts when the page asks again (every 30 seconds while it shows one); one not asked for in 2 minutes is dropped;

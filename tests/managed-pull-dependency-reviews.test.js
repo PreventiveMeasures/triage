@@ -960,13 +960,14 @@ test('a review holding to a stasis.config.json tells what its entries reach, of 
   const branch = () => send('/api/admin/repositories/branch-dependencies?repoId=1')
   const pending = (await branch()).body
   const none = { paths: [], added: [], more: 0, moreLocked: 0, unreviewed: [], moreUnreviewed: 0, unsupported: [], moreUnsupported: 0 }
-  assert.deepEqual(pending.lockfiles, [none, { paths: ['stasis.config.json'], error: 'stasis-pending' }], 'answered at once, the build not waited for; no lockfile held to')
+  assert.deepEqual(pending.lockfiles, [none, { paths: ['stasis.config.json'], builds: [{ commit: head, built: false }], error: 'stasis-pending' }],
+    'answered at once, the build not waited for, told not made; no lockfile held to')
   await built()
   assert.deepEqual(builds.map(({ input, github: repo, token }) => [input, repo, token]), [[{ repoId: 1, commit: head, config: 'stasis.config.json' }, 'org/repo', 'token']],
     'a default branch\'s head, said to be of no branch: Stasis asks its default branch first')
   const wanting = pkg => ({ ...pkg, source: 'registry', reviews: 0 })
   const ready = (await branch()).body
-  assert.deepEqual(ready.lockfiles, [none, { paths: ['stasis.config.json'], added: [], more: 0, moreLocked: 0,
+  assert.deepEqual(ready.lockfiles, [none, { paths: ['stasis.config.json'], builds: [{ commit: head, built: true }], added: [], more: 0, moreLocked: 0,
     unreviewed: [wanting({ name: 'ms', version: '2.1.3' }), wanting({ name: 'left-pad', version: '1.3.0' })], moreUnreviewed: 0, unsupported: [], moreUnsupported: 0 }],
   'what its entries reach, as package-lock.json locks them: neither `kept`, which nothing reaches, nor the git dependency')
   assert.deepEqual([ready.review.unreviewed, ready.review.unsupported, ready.review.lockfiles], [2, 0, scope])
@@ -975,12 +976,13 @@ test('a review holding to a stasis.config.json tells what its entries reach, of 
   // A pull request: what they reach at its head that they didn't at its merge base.
   await publish(db, users.alice, context('ms', '2.1.3', '2.1.2'), ['one'])
   const pull = () => send(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId: '1', number: '5', review: '1' })}`)
-  assert.deepEqual((await pull()).body.lockfiles, [{ paths: ['stasis.config.json'], error: 'stasis-pending' }], 'its merge base still to be built; its lockfile, held to by none, left out')
+  assert.deepEqual((await pull()).body.lockfiles, [{ paths: ['stasis.config.json'], builds: [{ commit: head, built: true }, { commit: mergeBase, built: false }], error: 'stasis-pending' }],
+    'its merge base still to be built, its head\'s kept told made; its lockfile, held to by none, left out')
   await built()
   assert.deepEqual(builds.map(({ input }) => [input.commit, input.branch]), [[head, undefined], [mergeBase, 'main']],
     'its head\'s kept already; its merge base said to be of its base\'s branch')
   const answer = (await pull()).body
-  assert.deepEqual(answer.lockfiles, [{ paths: ['stasis.config.json'], more: 0, moreLocked: 0,
+  assert.deepEqual(answer.lockfiles, [{ paths: ['stasis.config.json'], builds: [{ commit: head, built: true }, { commit: mergeBase, built: true }], more: 0, moreLocked: 0,
     added: [wanting({ name: 'left-pad', version: '1.3.0' }), { name: 'ms', version: '2.1.3', source: 'registry', was: ['2.1.2'], reviews: 1, reviewers: [by('alice')] }],
     unreviewed: [], moreUnreviewed: 0, unsupported: [], moreUnsupported: 0 }])
   assert.deepEqual([answer.review.toReview, answer.review.unreviewed, answer.review.unsupported], [1, 0, 0])
@@ -999,7 +1001,7 @@ test('a review holding to a stasis.config.json tells what its entries reach, of 
   assert.deepEqual((await branch()).body.lockfiles.map(dir => [dir.paths, dir.error ?? null]), [[['package-lock.json'], null], [['app/stasis.config.json'], 'stasis-pending']])
   await built()
   const failed = (await branch()).body
-  assert.deepEqual(failed.lockfiles[1], { paths: ['app/stasis.config.json'], error: 'stasis-failed', detail: 'config-invalid' })
+  assert.deepEqual(failed.lockfiles[1], { paths: ['app/stasis.config.json'], builds: [{ commit: head, built: true }], error: 'stasis-failed', detail: 'config-invalid' })
   assert.deepEqual(failed.lockfiles[0].unreviewed.map(pkg => pkg.name), ['kept', 'left-pad'], 'the lockfile\'s own, all it locks')
   assert.ok(failed.lockfiles[0].unreviewed.every(pkg => !Object.hasOwn(pkg, 'unreached')), 'none marked by one in another directory, nor by one not built')
 
