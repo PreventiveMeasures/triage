@@ -479,7 +479,7 @@ function deps(pull) {
   const count = value => value.toLocaleString('en-US'), reached = pull.toReview - pull.untold - alone
   const said = `${count(reached)} by Stasis, ${count(alone)} only lockfile${pull.untold > 0 ? `, ${count(pull.untold)} more not listed` : ''}`
   return html`<span class="team-deps-count">${count(pull.toReview)} ${pull.toReview === 1 ? 'dep' : 'deps'}${alone > 0
-    ? html` <span data-tooltip=${said}>(${count(reached)}${pull.untold > 0 ? '+' : ''} ${STASIS_MARK})</span>`
+    ? html`<span class="team-deps-reach" data-tooltip=${said}>(${count(reached)}${pull.untold > 0 ? '+' : ''} ${STASIS_MARK})</span>`
     : nothing}</span>`
 }
 
