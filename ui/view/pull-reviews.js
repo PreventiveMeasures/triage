@@ -1,12 +1,9 @@
-// An open pull request's reviews (server-managed/pull-reviews.ts), as the
-// code viewer's Pull requests tab draws them on its tile, a line of them
-// (repository-issues.js), and its popup lists them
-// (dialogs/repository-item-dialog.js): each reviewer by how their latest
-// review stands, dimmed where it was on an earlier commit than the latest;
-// Codex by its summary's code review, its security review named in the
-// popup; the open review threads, by the gravest of them; and whether the
-// latest commit has a review at all. The pull request's author's own replies
-// in its threads are none of its reviews.
+// An open pull request's reviews (server-managed/pull-reviews.ts), as its
+// tile's line (repository-issues.js) and its popup
+// (dialogs/repository-item-dialog.js) draw them: each reviewer by how their
+// latest review stands, dimmed where on an earlier commit; Codex by its
+// summary's code review (its security review in the popup); the open
+// threads by the gravest; and whether the latest commit has a review at all.
 import { html, nothing, svg } from 'lit'
 import { githubUser } from './github-users.js'
 import { COMMENT_ICON, REVIEWS, icon } from './repository-tiles.js'
@@ -37,8 +34,7 @@ const short = commit => commit.slice(0, 7)
 const date = at => new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 const plural = (count, noun, more = false) => `${count.toLocaleString('en-US')}${more ? '+' : ''} ${noun}${count === 1 && !more ? '' : 's'}`
 
-// Codex's mark: its code review's state, asked again or failed since
-// overriding it; null where its summary names none.
+// Codex's mark: its code review's state, unless asked again or failed since; null where none.
 function codexStanding(codex) {
   if (!codex) return null
   if (codex.failed) return CODEX.failed
@@ -46,9 +42,8 @@ function codexStanding(codex) {
   return CODEX[codex.code?.status] ?? null
 }
 
-// Each reviewer as their mark shows them: who, how their review stands,
-// the commit it was on, and whether that is the latest; Codex first, by its
-// summary's code review.
+// Each reviewer as their mark shows them: who, how their review stands, its
+// commit and whether that is stale; Codex first.
 function reviewStandings(reviews) {
   const codex = codexStanding(reviews.codex)
   const commit = reviews.codex?.code?.commit ?? null
@@ -61,16 +56,14 @@ function reviewStandings(reviews) {
   ]
 }
 
-// How many reviews and how many review requests more than those read, all
-// told: GitHub counts each apart, a reviewer perhaps in both, so they are
-// no count of reviewers.
+// The reviews and review requests past those read: GitHub counts each apart,
+// a reviewer perhaps in both, so they are no count of reviewers.
 const moreReviewers = reviews => (reviews.moreReviews ?? 0) + (reviews.moreRequests ?? 0)
 const moreSaid = reviews => [reviews.moreReviews > 0 ? plural(reviews.moreReviews, 'more review') : null,
   reviews.moreRequests > 0 ? plural(reviews.moreRequests, 'more review request') : null].filter(Boolean).join(' and ')
 
-// Whether a review is on the latest commit: one that reviewed it, or Codex,
-// done with it; null, unknown, where none read is but more reviews are than
-// were read, one of them perhaps on it (a request unread is none).
+// Whether a review is on the latest commit (a reviewer's, or Codex done with
+// it); null, unknown, where none read is but more reviews are unread.
 export function headReviewed(reviews) {
   if (!reviews.head) return true
   const codex = reviews.codex?.code
@@ -79,13 +72,11 @@ export function headReviewed(reviews) {
   return reviews.moreReviews > 0 ? null : false
 }
 
-// The gravest open thread's badge, as Codex draws it: P0 and P1 grave, P2
-// and P3 less so.
+// The gravest open thread's badge, as Codex draws it (P0–P3).
 const severity = level => level ? html`<span class=${`review-severity is-${level}`}>${level.toUpperCase()}</span>` : nothing
 
-// A tile's line of its reviews: a mark a reviewer, then its open threads,
-// then, where no review is on the latest commit, that it is unreviewed, and
-// where none read is, more unread, that it may be.
+// A tile's line of its reviews: a mark per reviewer, its open threads, and
+// where no review is on the latest commit, that it is unreviewed (or may be).
 export function reviewLine(reviews) {
   if (!reviews) return nothing
   const standings = reviewStandings(reviews)
@@ -107,8 +98,7 @@ export function reviewLine(reviews) {
   </span>`
 }
 
-// A commit a review was on, linked on GitHub where the repository is named
-// (`repo`), and whether it is the latest.
+// A commit a review was on, linked on GitHub where `repo` is named, and whether it is the latest.
 function onCommit(commit, head, repo) {
   if (!commit) return nothing
   const sha = html`<code>${short(commit)}</code>`
@@ -116,10 +106,9 @@ function onCommit(commit, head, repo) {
     commit === head ? ', the latest commit' : ', an earlier commit'}</span>`
 }
 
-// A popup's reviews: a row a reviewer, Codex's code and security reviews
-// a row each, how it stands, the agentic workflow (gh-aw) that posted it,
-// on which commit, when; then its open threads,
-// each linked to where it is on GitHub, and how many are resolved.
+// A popup's reviews: a row per reviewer and for each of Codex's code and
+// security reviews, how it stands, the agentic workflow (gh-aw) that posted
+// it, its commit and when; then its open threads, linked, and how many are resolved.
 export function reviewSections(reviews, repo) {
   if (!reviews) return nothing
   const { head, codex } = reviews

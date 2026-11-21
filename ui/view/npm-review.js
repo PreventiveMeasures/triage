@@ -213,8 +213,8 @@ export class NpmReview extends LitElement {
   _editorState(file) {
     let editor = this._canEdit ? this._editors.get(file) : null
     if (!editor) {
-      const edit = this._shownReview?.entries.find(row => row.file === file && row.status) ?? null
-      editor = { edit, revision: this._activeReview?.revision ?? null, comment: this._nonTextFiles.includes(file) ? '' : edit?.comment ?? '', status: this._nonTextFiles.includes(file) ? '' : edit?.status ?? '' }
+      const edit = this._shownReview?.entries.find(row => row.file === file && row.status) ?? null, nonText = this._nonTextFiles.includes(file)
+      editor = { edit, revision: this._activeReview?.revision ?? null, comment: nonText ? '' : edit?.comment ?? '', status: nonText ? '' : edit?.status ?? '' }
       if (this._canEdit) this._editors.set(file, editor)
     }
     return { ...editor, dirty: this._isDirty(file, editor) }
