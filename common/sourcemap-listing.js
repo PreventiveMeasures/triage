@@ -133,14 +133,21 @@ function renamesOf(text, run, names) {
   return [...renamed].join(', ')
 }
 
-// Rows of a listing, given up on past COPY_LIMIT characters.
+// Rows of a listing, given up on past COPY_LIMIT characters: as a row is
+// pushed, or as one is made where it may run past them (`fits`), a name
+// repeated at each of a run's segments.
 function listingRows() {
   const lines = []
   let length = 0
+  const fits = size => {
+    if (length + size > COPY_LIMIT) throw new RangeError(`Its listing would run past ${COPY_LIMIT.toLocaleString('en')} characters.`)
+  }
   return {
     lines,
+    fits,
     push(line) {
-      if ((length += line.length + 1) > COPY_LIMIT) throw new RangeError(`Its listing would run past ${COPY_LIMIT.toLocaleString('en')} characters.`)
+      fits(line.length + 1)
+      length += line.length + 1
       lines.push(line)
     },
   }
@@ -209,10 +216,12 @@ function runRows(map, run, { text, long, end, previous }) {
   const renamed = text === undefined ? '' : renamesOf(text, run, map.names)
   if (renamed !== '') out.push(`    renamed: ${clip(renamed)}`)
   const tokens = []
-  let column = previous
+  let column = previous, size = 7
   for (const segment of run) {
     const step = column === null ? `${segment[0]}` : signed(segment[0] - column)
-    tokens.push(segment.length === 1 ? step : `${step}:${segment[3]}${segment.length === 5 ? ` ${map.nameOf[segment[4]]}` : ''}`)
+    const token = segment.length === 1 ? step : `${step}:${segment[3]}${segment.length === 5 ? ` ${map.nameOf[segment[4]]}` : ''}`
+    out.fits(size += token.length + 1)
+    tokens.push(token)
     column = segment[0]
   }
   out.push(`      ${tokens.join(' ')}`)

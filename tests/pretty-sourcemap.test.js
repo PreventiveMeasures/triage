@@ -254,3 +254,10 @@ test('a gloss is read no further than it shows, however many runs map from its l
   assert.ok(performance.now() - started < 4000, 'each line glossed once, from its start alone')
   assert.match(listing, new RegExp(`^ {2}← a\\.ts \\+1 {2}${'x'.repeat(159)}…$`, 'mu'))
 })
+
+test('a listing is given up on before it makes a row past its limit, a name repeated at each segment of a run', () => {
+  const text = JSON.stringify({ version: 3, sources: ['a.ts'], sourcesContent: ['x'], names: ['n'.repeat(100_000)], mappings: encodeMappings([Array.from({ length: 1000 }, (_, i) => [i, 0, 0, 0, 0])]) })
+  assert.throws(() => listSourcemap(text), { name: 'RangeError', message: 'Its listing would run past 16,777,216 characters.' })
+  const fewer = JSON.stringify({ ...JSON.parse(text), mappings: encodeMappings([Array.from({ length: 100 }, (_, i) => [i, 0, 0, 0, 0])]) })
+  assert.equal(JSON.stringify(unlistSourcemap(listSourcemap(fewer).text)), fewer, 'as many as fit listed')
+})
