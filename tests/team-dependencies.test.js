@@ -177,7 +177,7 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
     'the reader\'s reviews of its versions to copy, as the server\'s host formats them')
   assert.doesNotMatch(cards.slice(1).join(''), /dependency-review-copy/u, 'none where it formats none')
   assert.doesNotMatch(cards[0], /vouched/u, 'one the reviewed dependencies pass not told')
-  assert.match(cards[0], /rej[^]*<npm-delta \.name=rej [^]*shared[^]*<npm-delta \.name=shared \.version=1\.0\.0 \.base=\(empty\) \.patch=><\/npm-delta>/u,
+  assert.match(cards[0], /rej[^]*<npm-delta \.name=rej [^]*shared[^]*<npm-delta \.name=shared \.version=1\.0\.0 \.base=\(empty\) \.baseName=shared \.patch=><\/npm-delta>/u,
     'the lines each wanting reviews changes, a new one\'s whole; the one reviewed there already first, the one another lists after its own')
   assert.match(cards[1], />b#6<[^]*class="team-deps-count">3 deps<[^]*and 3 more versions past those listed</u, 'one whose versions wanting reviews aren\'t listed kept')
   assert.doesNotMatch(cards[1], /<li>/u)
@@ -225,7 +225,7 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
   const patched = branch.split('<li>').find(row => row.includes('>pat<'))
   assert.match(patched, new RegExp(`href=/npm/pat@1\\.0\\.0/review\\?patch=${patch.hash}&repo=7&commit=${'f'.repeat(40)}&path=patches/pat%401\\.0\\.0\\.patch `, 'u'),
     'a patched one reviewed as patched, its patch read at the default branch\'s head')
-  assert.match(patched, new RegExp(`<span class="team-deps-patched">patched</span>\\s*<npm-delta \\.name=pat \\.version=1\\.0\\.0 \\.base=\\(empty\\) \\.patch=\\[object Object\\]></npm-delta>\\s*<span class="team-deps-elsewhere">a#9</span>`, 'u'),
+  assert.match(patched, new RegExp(`<span class="team-deps-patched">patched</span>\\s*<npm-delta \\.name=pat \\.version=1\\.0\\.0 \\.base=\\(empty\\) \\.baseName=pat \\.patch=\\[object Object\\]></npm-delta>\\s*<span class="team-deps-elsewhere">a#9</span>`, 'u'),
     'its lines counted as its patch changes it; its reviews of it as patched, those a pull request\'s comments make of the same patch told so')
   assert.match(patched, /<div class="team-deps-tip-name">[^]*?<span>pat@1\.0\.0<\/span><span class="team-deps-tip-patched">patched<\/span><\/div>/u, 'tagged patched')
   assert.match(patched, /<span class="compare-tip-label">Patch<\/span><span><code class="team-deps-tip-hash">a{64}<\/code><\/span><span class="compare-tip-label">Patch file<\/span><span>patches\/pat@1\.0\.0\.patch<\/span>/u,
@@ -684,15 +684,18 @@ test('however reviews fall across the pull requests adding a version, some pull 
   }
 })
 
-test('where the host names bases, a row reviews its version against the one it names, of its package or another, its lines counted against one of its own; whole where it names none', async () => {
+test('where the host names bases, a row reviews its version against the one it names, of its package or another, its lines counted against it; whole where it names none', async () => {
   const { versionRow } = await import('../ui/view/team-dependencies.js')
   const review = { required: 1, canReview: true, reviewedBases: true }
   const row = (pkg, more = review) => templateText(versionRow({ source: 'registry', version: '3.0.0', reviews: 0, ...pkg }, more, { added: true }))
-  assert.match(row({ name: 'ms', base: { name: 'ms', version: '2.0.0' } }), /href=\/npm\/ms@3\.0\.0\/review\/ms@2\.0\.0 [^]*<npm-delta \.name=ms \.version=3\.0\.0 \.base=2\.0\.0 \.patch=>/u)
+  assert.match(row({ name: 'ms', base: { name: 'ms', version: '2.0.0' } }), /href=\/npm\/ms@3\.0\.0\/review\/ms@2\.0\.0 [^]*<npm-delta \.name=ms \.version=3\.0\.0 \.base=2\.0\.0 \.baseName=ms \.patch=>/u)
   const forked = row({ name: '@fork/ms', base: { name: 'ms', version: '2.1.3' } })
   assert.match(forked, /href=\/npm\/@fork\/ms@3\.0\.0\/review\/ms@2\.1\.3 /u)
-  assert.doesNotMatch(forked, /<npm-delta/u, 'no lines counted against another package\'s')
-  assert.match(row({ name: 'ms', was: ['2.1.2'] }), /href=\/npm\/ms@3\.0\.0\/review [^]*\.base=\(empty\) \.patch=>/u, 'none named: whole, not against the version it was')
+  assert.match(forked, /<npm-delta \.name=@fork\/ms \.version=3\.0\.0 \.base=2\.1\.3 \.baseName=ms \.patch=>/u, 'its lines counted against another package\'s too')
+  const forkPatch = { hash: 'a'.repeat(64), path: 'patches/@fork__ms@3.0.0.patch' }
+  assert.match(templateText(versionRow({ source: 'registry', name: '@fork/ms', version: '3.0.0', reviews: 0, patch: forkPatch, base: { name: 'ms', version: '2.1.3' } }, review,
+    { repoId: 7, head: 'e'.repeat(40) })), /<npm-delta \.name=@fork\/ms \.version=3\.0\.0 \.base=2\.1\.3 \.baseName=ms \.patch=\[object Object\]>/u, 'a patched one\'s as patched')
+  assert.match(row({ name: 'ms', was: ['2.1.2'] }), /href=\/npm\/ms@3\.0\.0\/review [^]*\.base=\(empty\) \.baseName=ms \.patch=>/u, 'none named: whole, not against the version it was')
   assert.match(row({ name: 'ms', was: ['2.1.2'] }, { ...review, reviewedBases: undefined }), /href=\/npm\/ms@3\.0\.0\/review\/ms@2\.1\.2 /u, 'where the host names none')
 })
 

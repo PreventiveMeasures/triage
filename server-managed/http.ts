@@ -5132,17 +5132,19 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
   } finally { res.off('close', onClose) }
 }
 
-// GET /api/npm/deltas?versions=[[name, version, otherVersion, patch?], …]: the lines
-// each of up to MAX_ASKED_DELTAS versions changes against another, or
-// `(empty)`, as GET delta counts them, a patched one's as its pnpm patch
-// changes it (`patch`, `{ hash, repoId, commit, path? }`, read as Review
-// reads it, npmPatchOf), as lines of JSON as each is counted
-// (`{ name, version, otherVersion, patchHash?, …delta }`, or `{ name, version,
-// otherVersion, patchHash?, error, status }`), as a list's rows near the viewport ask
-// for them together (npm-delta.js), DELTAS_AT_ONCE at a time. Each read as
-// GET delta reads it, with the reader's access to its package, which is
-// checked again once it is counted: a private one's told only to a reader
-// who may still read it, none told to one whose session is gone.
+// GET /api/npm/deltas?versions=[[name, version, otherVersion, patch?, otherName?], …]:
+// the lines each of up to MAX_ASKED_DELTAS versions changes against another,
+// of its package or `otherName`'s, as the host may name a review's base
+// (reviewed-dependencies.ts `base`), or `(empty)`, as GET delta counts them,
+// a patched one's as its pnpm patch changes it (`patch`, `{ hash, repoId,
+// commit, path? }`, or null, read as Review reads it, npmPatchOf), as lines
+// of JSON as each is counted (`{ name, version, otherVersion, otherName?,
+// patchHash?, …delta }`, or the same with `error` and `status`), as a list's
+// rows near the viewport ask for them together (npm-delta.js),
+// DELTAS_AT_ONCE at a time. Each read as GET delta reads it, with the
+// reader's access to each package, which is checked again once it is
+// counted: a private one's told only to a reader who may still read it,
+// none told to one whose session is gone.
 const MAX_ASKED_DELTAS = 50
 const DELTAS_AT_ONCE = 2
 // A version as npmDelta takes it: its integrity, and its files, loaded as
@@ -5155,15 +5157,16 @@ async function handleNpmDeltas(req: IncomingMessage, res: ServerResponse, deps: 
   if (req.method !== 'GET') { send405(res, 'GET'); return }
   let asked: unknown = null
   try { asked = JSON.parse(params.get('versions') ?? '') } catch {}
-  const patchOf = (item: unknown[]) => item.length === 3 ? null : plainObject(item[3]) ? requestedPatch(item[3] as { hash: unknown }) : 'invalid'
-  if (!Array.isArray(asked) || asked.length === 0 || asked.length > MAX_ASKED_DELTAS || !asked.every(item => Array.isArray(item) && (item.length === 3 || item.length === 4)
-    && isNpmPackageName(item[0]) && isNpmPackageSpec(item[1]) && (item[2] === '(empty)' || isNpmPackageSpec(item[2])) && patchOf(item) !== 'invalid')) {
+  const patchOf = (item: unknown[]) => item[3] == null && item.length !== 4 ? null : plainObject(item[3]) ? requestedPatch(item[3] as { hash: unknown }) : 'invalid'
+  if (!Array.isArray(asked) || asked.length === 0 || asked.length > MAX_ASKED_DELTAS || !asked.every(item => Array.isArray(item) && item.length >= 3 && item.length <= 5
+    && isNpmPackageName(item[0]) && isNpmPackageSpec(item[1]) && (item[2] === '(empty)' || isNpmPackageSpec(item[2])) && patchOf(item) !== 'invalid'
+    && (item.length < 5 || (isNpmPackageName(item[4]) && item[2] !== '(empty)')))) {
     sendJson(res, 400, { error: 'bad-package' }); return
   }
-  const versions = (asked as unknown[][]).map(item => [...item.slice(0, 3), patchOf(item)] as [string, string, string, RequestedPatch | null])
+  const versions = (asked as unknown[][]).map(item => [...item.slice(0, 3), patchOf(item), item[4] ?? item[0]] as [string, string, string, RequestedPatch | null, string])
   // Each patch read once, by its hash.
   const patches = new Map<string, Promise<ReadPatch | Refusal>>()
-  const reader = await npmReader(deps, cookie, [...new Set(versions.map(([name]) => name))], { handed: true })
+  const reader = await npmReader(deps, cookie, [...new Set(versions.flatMap(([name, , , , otherName]) => [name, otherName]))], { handed: true })
   if (reader == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   const controller = new AbortController()
   res.once('close', () => { if (!res.writableEnded) controller.abort() })
@@ -5171,16 +5174,17 @@ async function handleNpmDeltas(req: IncomingMessage, res: ServerResponse, deps: 
   const kept = npmDeltaStore<NpmDelta>(deps.db, deps.config.debug), keptVersions = npmVersionStore(deps.db, deps.config.debug)
   const out = openLines(res)
   let stopped = false
-  await eachOf(versions, DELTAS_AT_ONCE, async ([name, version, otherVersion, patch]) => {
+  await eachOf(versions, DELTAS_AT_ONCE, async ([name, version, otherVersion, patch, otherName]) => {
     if (stopped || controller.signal.aborted) return
-    const asOne = { name, version, otherVersion, ...patch ? { patchHash: patch.hash } : {} }
-    let isPrivate = false, line: Record<string, unknown>
+    const asOne = { name, version, otherVersion, ...otherName === name ? {} : { otherName }, ...patch ? { patchHash: patch.hash } : {} }
+    // Of each package, whether it is private.
+    let isPrivate = false, line: Record<string, unknown>, oldPrivate = false
     try {
-      const privileged = canReadPrivateNpm(reader, name)
-      const together = otherVersion === '(empty)' ? keptVersions : readTogether(keptVersions, [{ name, version }, { name, version: otherVersion }])
-      const [doc, old] = await Promise.all([readNpmVersion(name, version, privileged, controller.signal, together).then(found),
-        otherVersion === '(empty)' ? null : readNpmVersion(name, otherVersion, privileged, controller.signal, together).then(found)])
-      isPrivate = doc.private || old?.private === true
+      const together = otherVersion === '(empty)' ? keptVersions : readTogether(keptVersions, [{ name, version }, { name: otherName, version: otherVersion }])
+      const [doc, old] = await Promise.all([readNpmVersion(name, version, canReadPrivateNpm(reader, name), controller.signal, together).then(found),
+        otherVersion === '(empty)' ? null : readNpmVersion(otherName, otherVersion, canReadPrivateNpm(reader, otherName), controller.signal, together).then(found)])
+      isPrivate = doc.private
+      oldPrivate = old?.private === true
       const patched = patch && await (patches.get(patch.hash) ?? patches.set(patch.hash, npmPatchOf(deps, cookie, patch)).get(patch.hash)!)
       const side = deltaSide(doc)
       line = patched && 'error' in patched ? { ...asOne, error: patched.error, status: patched.status } : { ...asOne, ...await npmDelta(old ? deltaSide(old) : null,
@@ -5192,9 +5196,9 @@ async function handleNpmDeltas(req: IncomingMessage, res: ServerResponse, deps: 
     }
     // A reader who lost their session, or their access to a private one,
     // while it was counted, is told nothing of it.
-    const current = await npmReader(deps, cookie, isPrivate ? [name] : [])
+    const current = await npmReader(deps, cookie, [...isPrivate ? [name] : [], ...oldPrivate ? [otherName] : []])
     if (current == null) { stopped = true; out.cut(); return }
-    if (isPrivate && !canReadPrivateNpm(current, name)) line = { ...asOne, error: 'package-not-found', status: 404 }
+    if ((isPrivate && !canReadPrivateNpm(current, name)) || (oldPrivate && !canReadPrivateNpm(current, otherName))) line = { ...asOne, error: 'package-not-found', status: 404 }
     if (!stopped && !await out.write(line)) stopped = true
   })
   if (!stopped) await out.end()

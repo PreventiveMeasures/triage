@@ -279,7 +279,7 @@ Each version is asked once per request, up to sixteen at once, and an answer may
 It receives the version as `lookup` does, is asked about each one `lookup` doesn't pass, as `lookup` is, and returns `{ name, version }`, an exact version of its own package or another's (a fork's original, say), or null for none.
 Once it is registered:
 
-- each version's row links its review against the version named, whole where none is, and counts its lines against it where it is of its own package;
+- each version's row links its review against the version named, whole where none is, and counts its lines against it, of its own package or another's, a patched one's as patched;
 - a review against the version named counts, as one against a version it replaced does;
 - a pull request into the default branch, where its review is on, is read without its merge base (no lockfile read there, no Stasis build), every unreviewed version its head locks its own, its review asked for or not (a closed one's popup then lists none); the branch's own state shows on the Dependencies tab's **Default branch**.
 

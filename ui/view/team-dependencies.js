@@ -418,9 +418,10 @@ function versionTip(pkg, review, { under, lacks, involved, here }) {
 // patch read of repository `repoId` at `head`, the commit its lockfiles were
 // read at, where it is told its file, else its page; a mark (`!`) where
 // its package manager alone asks for it (`unreached`); its review;
-// the lines it changes against the version it was, or whole, where it
-// wants reviews, a patched one's as its patch changes them, where its file
-// is told (npm-delta.js); the
+// the lines it changes against the version it is reviewed against, of its
+// package or another the host names, or whole, where it wants reviews, a
+// patched one's as its patch changes them, where its file is told
+// (npm-delta.js); the
 // reviews it lacks that others hold (`lacks`, standings), its row red,
 // its tooltip telling them; the pull requests reviewing it in their comments
 // (`elsewhere`), which count for them alone; the pull request listing it
@@ -443,8 +444,8 @@ export function versionRow(pkg, review, { others = [], adders = false, elsewhere
   const label = html`${sourcePackageIcon(pkg.ecosystem)}<span class="team-deps-name">${pkg.name}${pkg.version ? html`<span class="team-deps-version">@${pkg.version}</span>` : nothing}</span>
     ${pkg.patch ? html`<span class="team-deps-patched">patched</span>` : nothing}
     ${pkg.unreached ? html`<span class="team-deps-unreached" role="img" aria-label=${`Asked for ${UNREACHED_SAID}`}>!</span>` : nothing}
-    ${npm && (!pkg.patch || patch) && reviewOf(pkg, review) === 'wanted' && (!before || before.name === pkg.name)
-      ? html`<npm-delta .name=${pkg.name} .version=${pkg.version} .base=${before?.version ?? '(empty)'} .patch=${patch}></npm-delta>` : nothing}
+    ${npm && (!pkg.patch || patch) && reviewOf(pkg, review) === 'wanted'
+      ? html`<npm-delta .name=${pkg.name} .version=${pkg.version} .base=${before?.version ?? '(empty)'} .baseName=${before?.name ?? pkg.name} .patch=${patch}></npm-delta>` : nothing}
     ${reviewBadge(pkg, review)}
     ${under ? html`<span class="team-deps-under">${under}</span>` : nothing}
     ${lacking.length > 0 ? html`<span class="team-deps-lacks">${few(lacking)}</span>` : nothing}

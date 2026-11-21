@@ -1,6 +1,7 @@
 // The lines a version wanting reviews changes, beside its row in a list of
 // them (team-dependencies.js, dialogs/repository-item-dialog.js): against the
-// version it was (`base`), or, new, its whole package's (`(empty)`), a
+// version it was (`base`), of its package or another the host names a
+// review's base of (`baseName`), or, new, its whole package's (`(empty)`), a
 // patched one's as its pnpm patch changes it (`patch`, where it is read), as the
 // server counts them (GET /api/npm/deltas): `+x −y`, and, where declaration
 // files changed in types alone, which a reviewer may pass leaving them out,
@@ -52,20 +53,23 @@ const lines = told => count(told?.additions) === null || count(told?.deletions) 
 const ready = (all, told) => ({ status: 'ready', until: Number.POSITIVE_INFINITY, ...all, typeless: lines(told.typeless), binary: told.binary === true })
 const failed = error => ({ status: 'error', until: Date.now() + RETRY_MS, error })
 
-// A delta's key: its version's, its base's, and its patch's hash.
-const keyOf = (name, version, base, patchHash) => `${name}\0${version}\0${base}${patchHash ? `\0${patchHash}` : ''}`
-// Version `version` of package `name`'s delta against `base`, as `patch`
-// (`{ hash, repoId, commit, path }`) changes it where given, as held, else
-// asked: `{ status }`, 'loading', then 'ready' with `additions`,
-// `deletions`, `typeless` and `binary`, or 'error' with its `error`.
-export function npmDelta(name, version, base, patch = null) {
+// A delta's key: its version's, its base's (of another package, its name
+// before it), and its patch's hash.
+const keyOf = (name, version, base, patchHash, baseName = name) =>
+  `${name}\0${version}\0${baseName === name ? '' : `${baseName}@`}${base}${patchHash ? `\0${patchHash}` : ''}`
+// Version `version` of package `name`'s delta against `base`, of package
+// `baseName`, as `patch` (`{ hash, repoId, commit, path }`) changes it where
+// given, as held, else asked: `{ status }`, 'loading', then 'ready' with
+// `additions`, `deletions`, `typeless` and `binary`, or 'error' with its `error`.
+export function npmDelta(name, version, base, patch = null, baseName = name) {
   const data = sessionHeld()
-  const key = keyOf(name, version, base, patch?.hash)
+  const key = keyOf(name, version, base, patch?.hash, baseName)
   const entry = data.get(key)
   if (entry && Date.now() < entry.until) return entry
   const loading = { status: 'loading', until: Number.POSITIVE_INFINITY }
   data.set(key, loading)
-  asking.set(key, { asked: [name, version, base, ...patch ? [patch] : []], loading })
+  const asked = baseName === name ? [name, version, base, ...patch ? [patch] : []] : [name, version, base, patch, baseName]
+  asking.set(key, { asked, loading })
   if (!framed) {
     framed = true
     if (globalThis.requestAnimationFrame) requestAnimationFrame(askTogether)
@@ -136,7 +140,7 @@ function readOf(asked) {
   }
   return fetchNpmDeltas(asked.map(ask => ask.asked), told => {
     const all = lines(told)
-    settle(keyOf(told.name, told.version, told.otherVersion, told.patchHash), typeof told.error === 'string' ? failed(told.error)
+    settle(keyOf(told.name, told.version, told.otherVersion, told.patchHash, told.otherName ?? told.name), typeof told.error === 'string' ? failed(told.error)
       : all ? ready(all, told) : failed('The server answered with no lines.'))
   }).then(() => {
     for (const key of [...left.keys()]) settle(key, failed('The server answered with none of it.'))
@@ -159,7 +163,7 @@ export function reviewBase(pkg, review) {
 const counted = (additions, deletions) => html`<span class="is-added">+${additions.toLocaleString('en-US')}</span> <span class="is-deleted">−${deletions.toLocaleString('en-US')}</span>`
 
 class NpmDeltaElement extends LitElement {
-  static properties = { name: { attribute: false }, version: { attribute: false }, base: { attribute: false }, patch: { attribute: false } }
+  static properties = { name: { attribute: false }, version: { attribute: false }, base: { attribute: false }, baseName: { attribute: false }, patch: { attribute: false } }
 
   createRenderRoot() { return this }
 
@@ -167,7 +171,7 @@ class NpmDeltaElement extends LitElement {
     super()
     this._near = false
     // Drawn again as its own delta is read, or all may have changed.
-    this._notify = key => { if (this._near && (!key || key === keyOf(this.name, this.version, this.base ?? '(empty)', this.patch?.hash))) this.requestUpdate() }
+    this._notify = key => { if (this._near && (!key || key === this._key())) this.requestUpdate() }
   }
 
   connectedCallback() {
@@ -198,10 +202,15 @@ class NpmDeltaElement extends LitElement {
     unwatchNearViewport(this)
   }
 
+  // Its delta's key, and what it is against as it is told: the version, of
+  // another package named before it.
+  _key() { return keyOf(this.name, this.version, this.base ?? '(empty)', this.patch?.hash, this.baseName ?? this.name) }
+  _against() { return this.base && this.base !== '(empty)' ? `${this.baseName && this.baseName !== this.name ? `${this.baseName}@` : ''}${this.base}` : null }
+
   render() {
     if (!this._near || !this.name || !this.version) return nothing
-    const entry = npmDelta(this.name, this.version, this.base ?? '(empty)', this.patch ?? null)
-    const against = this.base && this.base !== '(empty)' ? `against ${this.base}` : 'the whole package'
+    const entry = npmDelta(this.name, this.version, this.base ?? '(empty)', this.patch ?? null, this.baseName ?? this.name)
+    const against = this._against() ? `against ${this._against()}` : 'the whole package'
     if (entry.status === 'loading') return html`<span class="npm-delta is-loading" aria-label="Counting its lines">…</span>`
     if (entry.status === 'error') {
       return html`<span class="npm-delta is-error" data-tooltip=${entry.error} .tooltipContent=${html`<div class="compare-tip">
@@ -211,7 +220,7 @@ class NpmDeltaElement extends LitElement {
     // added and removed, those but for declaration files changed in types
     // alone, and that binary files changed too.
     const tip = html`<div class="compare-tip"><div class="compare-tip-head">Lines changed</div>
-      <div class="compare-tip-rows"><span class="compare-tip-label">Against</span><span>${this.base && this.base !== '(empty)' ? this.base : 'none, the whole package'}</span>
+      <div class="compare-tip-rows"><span class="compare-tip-label">Against</span><span>${this._against() ?? 'none, the whole package'}</span>
         <span class="compare-tip-label">Added</span><span class="is-added">+${entry.additions.toLocaleString('en-US')}</span>
         <span class="compare-tip-label">Removed</span><span class="is-deleted">−${entry.deletions.toLocaleString('en-US')}</span>
         ${entry.typeless ? html`<span class="compare-tip-label">Types aside</span><span>${counted(entry.typeless.additions, entry.typeless.deletions)}</span>` : nothing}</div>
