@@ -49,49 +49,24 @@ export function loadManagedBundle() {
   return loadPromise
 }
 
-export async function probeSession(options) {
-  return (await loadManagedBundle()).probeSession(options)
-}
+// The managed module's `name`, called with `args` once it has loaded. The
+// proxies below are hoisted declarations: managed-pull-requests.js, which
+// this module imports, takes fetchFixes as it is evaluated.
+async function call(name, args) { return (await loadManagedBundle())[name](...args) }
+// And one whose answer names GitHub users, known as it arrives (github-users.js).
+function callKnowing(name, args) { return knowingGithubUsers(() => call(name, args)) }
 
-export async function probeTeams(options) {
-  return (await loadManagedBundle()).probeTeams(options)
-}
-
-export async function fetchManagedBundleCatalog(options) {
-  return (await loadManagedBundle()).fetchManagedBundleCatalog(options)
-}
-
-export async function fetchNpmPackage(name, version, options) {
-  return (await loadManagedBundle()).fetchNpmPackage(name, version, options)
-}
-
-export async function fetchRepositoryCode(repoId, ref, path, options) {
-  return (await loadManagedBundle()).fetchRepositoryCode(repoId, ref, path, options)
-}
-
-export async function fetchBrowsableRepositories(options) {
-  return (await loadManagedBundle()).fetchBrowsableRepositories(options)
-}
-
-export async function fetchRepositoryRefs(repoId, options) {
-  return (await loadManagedBundle()).fetchRepositoryRefs(repoId, options)
-}
-
-export async function fetchRepositoryContents(repoId, ref, path, options) {
-  return (await loadManagedBundle()).fetchRepositoryContents(repoId, ref, path, options)
-}
-
-export function fetchRepositoryHistory(repoId, ref, path, options) {
-  return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryHistory(repoId, ref, path, options))
-}
-
-export async function fetchRepositoryChanges(repoId, path, shas, options) {
-  return (await loadManagedBundle()).fetchRepositoryChanges(repoId, path, shas, options)
-}
-
-export async function fetchRepositoryTree(repoId, path, commit, options) {
-  return (await loadManagedBundle()).fetchRepositoryTree(repoId, path, commit, options)
-}
+export function probeSession(...args) { return call('probeSession', args) }
+export function probeTeams(...args) { return call('probeTeams', args) }
+export function fetchManagedBundleCatalog(...args) { return call('fetchManagedBundleCatalog', args) }
+export function fetchNpmPackage(...args) { return call('fetchNpmPackage', args) }
+export function fetchRepositoryCode(...args) { return call('fetchRepositoryCode', args) }
+export function fetchBrowsableRepositories(...args) { return call('fetchBrowsableRepositories', args) }
+export function fetchRepositoryRefs(...args) { return call('fetchRepositoryRefs', args) }
+export function fetchRepositoryContents(...args) { return call('fetchRepositoryContents', args) }
+export function fetchRepositoryHistory(...args) { return callKnowing('fetchRepositoryHistory', args) }
+export function fetchRepositoryChanges(...args) { return call('fetchRepositoryChanges', args) }
+export function fetchRepositoryTree(...args) { return call('fetchRepositoryTree', args) }
 
 // The first read an Activity view opening on `tab` makes, read ahead of it
 // (bundle-data.js prefetchActivity).
@@ -99,132 +74,38 @@ export async function prefetchActivity(repoId, tab, options) {
   (await loadManagedBundle()).prefetchActivity(repoId, tab, options)
 }
 
-export function fetchRepositoryAgents(repoId, options) {
-  return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryAgents(repoId, options))
-}
-
-export function fetchRepositoryIssues(repoId, kind, options) {
-  return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryIssues(repoId, kind, options))
-}
-
-export function fetchRepositoryItem(repoId, number, options) {
-  return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryItem(repoId, number, options))
-}
-
-export async function fetchPullDependencies(repoId, number, options) {
-  return (await loadManagedBundle()).fetchPullDependencies(repoId, number, options)
-}
-
-export async function fetchPullDependenciesOf(repoId, numbers, options) {
-  return (await loadManagedBundle()).fetchPullDependenciesOf(repoId, numbers, options)
-}
-
-export async function fetchBundleDependencyReview(id, options) {
-  return (await loadManagedBundle()).fetchBundleDependencyReview(id, options)
-}
-
-export async function fetchBundleValidation(id, options) {
-  return (await loadManagedBundle()).fetchBundleValidation(id, options)
-}
-
-export async function runBundleValidation(id, csrfToken, options) {
-  return (await loadManagedBundle()).runBundleValidation(id, csrfToken, options)
-}
-
-export async function fetchTeamDependencies(teamId, onLine, options) {
-  return (await loadManagedBundle()).fetchTeamDependencies(teamId, onLine, options)
-}
-export async function fetchNpmDeltas(versions, onLine, options) {
-  return (await loadManagedBundle()).fetchNpmDeltas(versions, onLine, options)
-}
-
-export function fetchRepositoryPulse(repoId, weeks, options) {
-  return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryPulse(repoId, weeks, options))
-}
-
-export function fetchRepositoryPulseItems(repoId, weeks, narrowing, options) {
-  return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryPulseItems(repoId, weeks, narrowing, options))
-}
-
-export async function fetchNpmVersions(name, options) {
-  return (await loadManagedBundle()).fetchNpmVersions(name, options)
-}
-
-export async function fetchNpmStats(name, options) {
-  return (await loadManagedBundle()).fetchNpmStats(name, options)
-}
-
-export async function fetchNpmAdvisories(name, options) {
-  return (await loadManagedBundle()).fetchNpmAdvisories(name, options)
-}
-
-export async function fetchNpmTags(name, version, options) {
-  return (await loadManagedBundle()).fetchNpmTags(name, version, options)
-}
-
-export async function fetchNpmRisk(name, version, otherVersion, options) {
-  return (await loadManagedBundle()).fetchNpmRisk(name, version, otherVersion, options)
-}
-
-export async function fetchNpmSocket(name, version, options) {
-  return (await loadManagedBundle()).fetchNpmSocket(name, version, options)
-}
-
-export async function fetchNpmProvenance(name, version, options) {
-  return (await loadManagedBundle()).fetchNpmProvenance(name, version, options)
-}
-
-export async function fetchPrettyBundleFile(id, path, hash, options) {
-  return (await loadManagedBundle()).fetchPrettyBundleFile(id, path, hash, options)
-}
-
-export async function fetchPrettyNpmFiles(name, version, onLine, options) {
-  return (await loadManagedBundle()).fetchPrettyNpmFiles(name, version, onLine, options)
-}
-
-export async function fetchPrettyNpmFile(name, version, path, hash, options) {
-  return (await loadManagedBundle()).fetchPrettyNpmFile(name, version, path, hash, options)
-}
-
-export async function fetchPrettyBundleChanges(id, other, onLine, options) {
-  return (await loadManagedBundle()).fetchPrettyBundleChanges(id, other, onLine, options)
-}
-
-export async function fetchPrettyNpmChanges(name, version, otherVersion, onLine, options) {
-  return (await loadManagedBundle()).fetchPrettyNpmChanges(name, version, otherVersion, onLine, options)
-}
-
-export async function fetchBundleRenameDiff(id, other, params, options) {
-  return (await loadManagedBundle()).fetchBundleRenameDiff(id, other, params, options)
-}
-
-export async function fetchNpmRenameDiff(name, version, otherVersion, params, options) {
-  return (await loadManagedBundle()).fetchNpmRenameDiff(name, version, otherVersion, params, options)
-}
-
-export async function fetchBundleRenameDiffs(id, other, onLine, options) {
-  return (await loadManagedBundle()).fetchBundleRenameDiffs(id, other, onLine, options)
-}
-
-export async function fetchNpmRenameDiffs(name, version, otherVersion, onLine, options) {
-  return (await loadManagedBundle()).fetchNpmRenameDiffs(name, version, otherVersion, onLine, options)
-}
-
-export async function fetchBundleTypeOnly(id, other, onLine, options) {
-  return (await loadManagedBundle()).fetchBundleTypeOnly(id, other, onLine, options)
-}
-
-export async function fetchNpmTypeOnly(name, version, otherVersion, onLine, options) {
-  return (await loadManagedBundle()).fetchNpmTypeOnly(name, version, otherVersion, onLine, options)
-}
-
-export async function fetchBundleComparison(id, other, options) {
-  return (await loadManagedBundle()).fetchBundleComparison(id, other, options)
-}
-
-export async function fetchNpmComparison(name, version, otherVersion, options) {
-  return (await loadManagedBundle()).fetchNpmComparison(name, version, otherVersion, options)
-}
+export function fetchRepositoryAgents(...args) { return callKnowing('fetchRepositoryAgents', args) }
+export function fetchRepositoryIssues(...args) { return callKnowing('fetchRepositoryIssues', args) }
+export function fetchRepositoryItem(...args) { return callKnowing('fetchRepositoryItem', args) }
+export function fetchPullDependencies(...args) { return call('fetchPullDependencies', args) }
+export function fetchPullDependenciesOf(...args) { return call('fetchPullDependenciesOf', args) }
+export function fetchBundleDependencyReview(...args) { return call('fetchBundleDependencyReview', args) }
+export function fetchBundleValidation(...args) { return call('fetchBundleValidation', args) }
+export function runBundleValidation(...args) { return call('runBundleValidation', args) }
+export function fetchTeamDependencies(...args) { return call('fetchTeamDependencies', args) }
+export function fetchNpmDeltas(...args) { return call('fetchNpmDeltas', args) }
+export function fetchRepositoryPulse(...args) { return callKnowing('fetchRepositoryPulse', args) }
+export function fetchRepositoryPulseItems(...args) { return callKnowing('fetchRepositoryPulseItems', args) }
+export function fetchNpmVersions(...args) { return call('fetchNpmVersions', args) }
+export function fetchNpmStats(...args) { return call('fetchNpmStats', args) }
+export function fetchNpmAdvisories(...args) { return call('fetchNpmAdvisories', args) }
+export function fetchNpmTags(...args) { return call('fetchNpmTags', args) }
+export function fetchNpmRisk(...args) { return call('fetchNpmRisk', args) }
+export function fetchNpmSocket(...args) { return call('fetchNpmSocket', args) }
+export function fetchNpmProvenance(...args) { return call('fetchNpmProvenance', args) }
+export function fetchPrettyBundleFile(...args) { return call('fetchPrettyBundleFile', args) }
+export function fetchPrettyNpmFiles(...args) { return call('fetchPrettyNpmFiles', args) }
+export function fetchPrettyNpmFile(...args) { return call('fetchPrettyNpmFile', args) }
+export function fetchPrettyBundleChanges(...args) { return call('fetchPrettyBundleChanges', args) }
+export function fetchPrettyNpmChanges(...args) { return call('fetchPrettyNpmChanges', args) }
+export function fetchBundleRenameDiff(...args) { return call('fetchBundleRenameDiff', args) }
+export function fetchNpmRenameDiff(...args) { return call('fetchNpmRenameDiff', args) }
+export function fetchBundleRenameDiffs(...args) { return call('fetchBundleRenameDiffs', args) }
+export function fetchNpmRenameDiffs(...args) { return call('fetchNpmRenameDiffs', args) }
+export function fetchBundleTypeOnly(...args) { return call('fetchBundleTypeOnly', args) }
+export function fetchNpmTypeOnly(...args) { return call('fetchNpmTypeOnly', args) }
+export function fetchBundleComparison(...args) { return call('fetchBundleComparison', args) }
+export function fetchNpmComparison(...args) { return call('fetchNpmComparison', args) }
 
 export async function openManagedShareDialog(team) {
   return (await loadManagedBundle()).openManagedShareDialog(team, '', state.managedSession)
@@ -257,38 +138,24 @@ export async function openFindingHistoryDialog(finding) {
   return managed.openFindingHistoryDialog({ finding, teamId, isCurrent })
 }
 
-export async function fetchReport(id) {
-  return (await loadManagedBundle()).fetchReport(id)
-}
+export function fetchReport(...args) { return call('fetchReport', args) }
+export function fetchReports(...args) { return call('fetchReports', args) }
+export function fetchTeamAnnotations(...args) { return call('fetchTeamAnnotations', args) }
 
-export async function fetchReports(ids) {
-  return (await loadManagedBundle()).fetchReports(ids)
-}
-
-export async function fetchTeamAnnotations(teamId, options) {
-  return (await loadManagedBundle()).fetchTeamAnnotations(teamId, options)
-}
-
+// Those of a team default to the one shown.
 export async function fetchReportTriage(id, teamId = state.currentManagedTeam, options) {
   return (await loadManagedBundle()).fetchReportTriage(id, teamId, options)
 }
-
-export async function fetchFixes(teamId, signal, reportId) {
-  return (await loadManagedBundle()).fetchFixes(teamId, signal, reportId)
-}
-
+export function fetchFixes(...args) { return call('fetchFixes', args) }
 export async function fetchReportComments(id, teamId = state.currentManagedTeam, options) {
   return (await loadManagedBundle()).fetchReportComments(id, teamId, options)
 }
-
 export async function saveReportComment(reportId, entry, csrfToken, teamId = state.currentManagedTeam) {
   return (await loadManagedBundle()).saveReportComment(reportId, entry, csrfToken, teamId)
 }
-
 export async function deleteReportComment(reportId, commentId, version, csrfToken, teamId = state.currentManagedTeam) {
   return (await loadManagedBundle()).deleteReportComment(reportId, commentId, version, csrfToken, teamId)
 }
-
 export async function pushReportTriage(id, entries, csrfToken, teamId = state.currentManagedTeam) {
   return (await loadManagedBundle()).pushReportTriage(id, entries, csrfToken, teamId)
 }
@@ -298,57 +165,23 @@ export async function login(loginPath) {
   return (await loadManagedBundle()).login(loginPath)
 }
 
-export async function logout(csrfToken) {
-  return (await loadManagedBundle()).logout(csrfToken)
-}
-
-export async function stopViewing(csrfToken) {
-  return (await loadManagedBundle()).stopViewing(csrfToken)
-}
-
-export async function fetchProfile(options) {
-  return (await loadManagedBundle()).fetchProfile(options)
-}
-
-export async function chooseProfileAccounts(choice, csrfToken, options) {
-  return (await loadManagedBundle()).chooseProfileAccounts(choice, csrfToken, options)
-}
-
-export async function unlinkGithubAccount(id, csrfToken, options) {
-  return (await loadManagedBundle()).unlinkGithubAccount(id, csrfToken, options)
-}
-
-export async function fetchBundleMetadata(id, options) {
-  return (await loadManagedBundle()).fetchBundleMetadata(id, options)
-}
-
-export async function fetchBundleContents(id, options) {
-  return (await loadManagedBundle()).fetchBundleContents(id, options)
-}
-
-export async function fetchTeamReports(teamId, options) { return (await loadManagedBundle()).fetchTeamReports(teamId, options) }
-export async function fetchTeamTrees(teamId, options) { return (await loadManagedBundle()).fetchTeamTrees(teamId, options) }
-
-export async function watchTeamFeed(teamId, options) {
-  return (await loadManagedBundle()).watchTeamFeed(teamId, options)
-}
+export function logout(...args) { return call('logout', args) }
+export function stopViewing(...args) { return call('stopViewing', args) }
+export function fetchProfile(...args) { return call('fetchProfile', args) }
+export function chooseProfileAccounts(...args) { return call('chooseProfileAccounts', args) }
+export function unlinkGithubAccount(...args) { return call('unlinkGithubAccount', args) }
+export function fetchBundleMetadata(...args) { return call('fetchBundleMetadata', args) }
+export function fetchBundleContents(...args) { return call('fetchBundleContents', args) }
+export function fetchTeamReports(...args) { return call('fetchTeamReports', args) }
+export function fetchTeamTrees(...args) { return call('fetchTeamTrees', args) }
+export function watchTeamFeed(...args) { return call('watchTeamFeed', args) }
 
 export async function fetchBundleAdvisories(id, teamId = state.currentManagedTeam, reason = '', repoAdvisories = false, details = false) {
   return (await loadManagedBundle()).fetchBundleAdvisories(id, teamId, reason, repoAdvisories, details)
 }
 
-export async function dependencyReviews(...args) {
-  return (await loadManagedBundle()).dependencyReviews(...args)
-}
-export async function myDependencyReviews(...args) {
-  return (await loadManagedBundle()).myDependencyReviews(...args)
-}
-export async function teamDependencyReviews(...args) {
-  return (await loadManagedBundle()).teamDependencyReviews(...args)
-}
-export async function discardDependencyReview(...args) {
-  return (await loadManagedBundle()).discardDependencyReview(...args)
-}
-export async function latestDependencyReview(...args) {
-  return (await loadManagedBundle()).latestDependencyReview(...args)
-}
+export function dependencyReviews(...args) { return call('dependencyReviews', args) }
+export function myDependencyReviews(...args) { return call('myDependencyReviews', args) }
+export function teamDependencyReviews(...args) { return call('teamDependencyReviews', args) }
+export function discardDependencyReview(...args) { return call('discardDependencyReview', args) }
+export function latestDependencyReview(...args) { return call('latestDependencyReview', args) }
