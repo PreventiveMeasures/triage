@@ -166,6 +166,7 @@ overrides:
   brotli>base64-js: '-'
 
 patchedDependencies:
+  '@rray/frontend@1.0.0': b4e4e5daf828cd9a6fc29f9e07fbea3f4ee14c8694d7afc10f8e72ca87876d62
   brotli@1.3.3: 2de9aaceea4f7e487950a927ea724dca824b568223f03ace67b8d7a27b66f732
 
 importers:
@@ -232,7 +233,7 @@ importers:
         version: 2.0.0-beta.3
       '@rray/frontend':
         specifier: ^1.0.0
-        version: 1.0.0
+        version: 1.0.0(patch_hash=b4e4e5daf828cd9a6fc29f9e07fbea3f4ee14c8694d7afc10f8e72ca87876d62)
       '@stylistic/stylelint-plugin':
         specifier: ^6.0.1
         version: 6.0.1(stylelint@18.0.0)
@@ -2202,7 +2203,7 @@ snapshots:
 
   '@preventive/vfs@1.1.0': {}
 
-  '@rray/frontend@1.0.0':
+  '@rray/frontend@1.0.0(patch_hash=b4e4e5daf828cd9a6fc29f9e07fbea3f4ee14c8694d7afc10f8e72ca87876d62)':
     dependencies:
       '@nx-js/observer-util': 4.2.2
       lit: 3.3.3

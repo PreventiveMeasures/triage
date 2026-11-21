@@ -505,7 +505,7 @@ test('the source viewer marks the line a search result opened, only in that bund
     bundleSourceFile: 'src/app.js', bundleDetails: { kind: 'stasis', integrity: entry.integrity, size: 123, bundle } })
   const marked = () => templates(renderBundlesList([entry]))
     .filter(part => part.strings.join('').includes('data-line='))
-    .filter(part => part.values[0].values[0]['is-target']).map(part => part.values[1])
+    .filter(part => /\bis-target\b/u.test(part.values[0])).map(part => part.values[1])
   for (const [target, lines] of [
     [{ bundle: entry.integrity, path: 'src/app.js', line: 2 }, [2]],
     [{ bundle: entry.integrity, path: 'src/other.js', line: 2 }, []],

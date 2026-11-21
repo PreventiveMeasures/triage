@@ -11,7 +11,7 @@ import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemo
 import { openImportConflictDialog, openSyncDownloadDialog } from './lazy-dialogs.js'
 // Up front, not in the dialogs' bundle (lazy-dialogs.js says why).
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
-import { dropZone, report } from './dom.js'
+import { dropZone, replaceReport, report } from './dom.js'
 import { clearMergedGroups, getRevalidationConflicts, getShownGroups, toGroup } from './group.js'
 import { configureDepsDir, hasRevalidateStamp, stampUpstreamFindings } from './format.js'
 import { reportCommit } from '../../common/repo-commit.js'
@@ -150,7 +150,7 @@ function closeSessionsExcept(keepIds) {
 // disconnect; rendering Lit's `nothing` at #report would leave them mounted.
 function showEmptyMainPane() {
   report.classList.remove('active')
-  report.replaceChildren()
+  replaceReport()
   dropZone.classList.remove('hidden')
   document.title = 'DeepView'
 }

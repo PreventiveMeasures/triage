@@ -10,7 +10,7 @@ import { openLocalContentImportDialog, openLocalTriageImportDialog, openObjstore
 import { resolveTriageConflicts } from './dialogs/triage-conflict-dialog.js'
 import { differingReports, isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
-import { dropZone, report } from './dom.js'
+import { dropZone, replaceReport, report, reportSlot } from './dom.js'
 import { SEVERITIES, canDropRevalidation, configureDependencyRepos, configureDepsDir, configureRevalidation, depsDirName, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, isRevalidation, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, revalidationShown, stampUpstreamFindings } from './format.js'
 import { activeTabFor, canEditTriage, canTriageFinding, clearMergedGroups, drawnTabs, findingRepoTarget, getMergedGroups, getRevalidationGroups, groupKey, groupState, primaryTab, triageEntry, triageScope, underlyingFindingsShown } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, hasSecurityContrast, isAppStackedGroup, isCrossContextGroup, modelOfFinding, priorityApplies, rangeApplies, repositoryFilterValues, runFiltersOffered, scopeRows, shouldLockConfirmed } from './filters.js'
@@ -1654,8 +1654,6 @@ export function render() {
   renderView(state.currentView)
 }
 
-// An empty slot div for #report, for Lit to render a view into.
-const reportSlot = (id) => Object.assign(document.createElement('div'), { id })
 
 // Reuse #report's single slot div across renders — replacing it with a
 // fresh one would wipe Lit's part-cache (it's keyed on the container
@@ -1667,7 +1665,7 @@ function ensureReportSlot(id) {
   let slot = document.querySelector(`#${id}`)
   if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
     slot = reportSlot(id)
-    report.replaceChildren(slot)
+    replaceReport(slot)
   }
   return slot
 }
@@ -2621,7 +2619,7 @@ function renderImpl() {
     if (!fHeader || !treeSlot || !report.contains(fHeader) || !report.contains(treeSlot)) {
       fHeader = reportSlot('header-slot')
       treeSlot = reportSlot('tree-view-slot')
-      report.replaceChildren(fHeader, treeSlot)
+      replaceReport(fHeader, treeSlot)
     }
     if (fHeader) litRender(headerTpl, fHeader)
     if (treeSlot) litRender(treeData ? renderTreeView(treeData, findingCounts) : loadingTemplate('files'), treeSlot)
@@ -2777,7 +2775,7 @@ function renderImpl() {
     wrapper.append(...(renderGraphInBody
       ? [reportSlot('findings-graph-slot')]
       : [reportSlot('toolbar-slot'), reportSlot('empty-state-slot'), reportSlot('findings-body-slot')]))
-    report.replaceChildren(headerSlot, wrapper)
+    replaceReport(headerSlot, wrapper)
   } else if (wrapper.className !== wrapperClass) {
     wrapper.className = wrapperClass
   }

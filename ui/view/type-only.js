@@ -12,6 +12,7 @@ import { prettyExtension } from '../../common/pretty-print.js'
 import { bundleFilesAsMap } from './bundle-sources.js'
 import { fetchBundleTypeOnly, fetchNpmTypeOnly } from './client-managed.js'
 import { renameDiffable } from './rename-diff.js'
+import { weakNotify } from './weak-notify.js'
 
 // Comparisons whose proofs are kept, the one read last last.
 const KEPT_COMPARISONS = 2
@@ -124,6 +125,6 @@ export function typeProof(base, other, path, { kind, basePath = path }, { before
   }
   comparisons.set(key, comparison)
   evict()
-  comparison.notify = notify
+  comparison.notify = weakNotify(notify)
   return comparison.files.get(pairOf(...sides))
 }
