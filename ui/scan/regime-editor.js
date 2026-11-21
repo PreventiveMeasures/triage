@@ -155,8 +155,7 @@ export class RegimeEditor extends LitElement {
     .mode-choice:hover span { background: var(--surface-active); }
     .mode-choice input:checked + span { color: var(--accent); background: rgb(from var(--accent) r g b / .1); box-shadow: inset 2px 0 var(--accent); font-weight: 600; }
     .mode-choice input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
-    button { border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); color: var(--text); background: var(--bg); font: inherit; font-size: .74rem; cursor: default; }
-    button { padding: .4rem .55rem; user-select: none; }
+    button { padding: .4rem .55rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); color: var(--text); background: var(--bg); font: inherit; font-size: .74rem; cursor: default; user-select: none; }
     button:hover:not(:disabled) { background: var(--surface-active); }
     button:disabled { opacity: .35; }
     .row-actions { position: relative; display: flex; align-items: center; align-self: stretch; min-height: 4.65rem; padding: .8rem 0 .25rem; }

@@ -1,13 +1,12 @@
-// The Actions tab of Manage → Repositories → Risk (repository-risk.js): a row
-// of each reference repositories' workflows make, resolved on GitHub, its
-// advisories among its findings, and of each thing their steps fetch or run
-// past a pin, each where it is used.
+// The Actions tab of repository risk (repository-risk.js): a row per
+// reference the workflows make, resolved on GitHub, its advisories among its
+// findings, and per thing their steps fetch or run past a pin.
 import { html, nothing } from 'lit'
 import { SEVERITIES } from '../../risk/files/stamps.js'
 import { encodePath } from '../view/bundle-origin-links.js'
 import { EXTERNAL_LINK_ICON } from '../view/advisory-parts.js'
 
-// What each finding is called, and what it says, beside what it found.
+// Each finding's label and what it says.
 const ACTION_FINDINGS = {
   'unpinned': ['Unpinned', 'By a tag or a branch, which its repository’s owner can point anywhere, not a full commit sha.'],
   'short-sha': ['Short sha', 'A short sha, which GitHub reads as a branch or tag named so too.'],
@@ -56,7 +55,6 @@ function findingLabel(finding) {
   return ACTION_FINDINGS[finding.id]?.[0] ?? finding.id
 }
 
-// What a finding found, as its tooltip tells it beside what it says.
 function findingDetail(finding) {
   const parts = []
   if (finding.id === 'advisory') parts.push(...advisoryRows(finding).map(([label, value]) => `${label}: ${value}`))
@@ -74,15 +72,10 @@ function findingDetail(finding) {
   return [ACTION_FINDINGS[finding.id]?.[1], ...parts.filter(Boolean)].filter(Boolean).join('\n')
 }
 
-// Where an advisory comes from, as upstream's advisories name its source.
 const ADVISORY_SOURCES = { osv: 'OSV', repository: 'The repository’s own GitHub advisories', registry: 'npm registry', packagist: 'Packagist', rubysec: 'RubySec' }
 const SEVERITY_SAID = { critical: 'Critical', high: 'High', moderate: 'Moderate', low: 'Low' }
-// An advisory's link, where it is to a page on the web.
 const advisoryHref = finding => typeof finding.url === 'string' && /^https:\/\//iu.test(finding.url) ? finding.url : null
-// What an advisory's tooltip tells of it, `[label, value]` each, but its
-// text, which its link has: what it is, where not a vulnerability; its
-// severity, as its source rates it, and CVSS score; its other ids; the range
-// it affects and the versions of it run here; its CWEs; and its source.
+// An advisory's tooltip rows `[label, value]` (its title is its link's).
 function advisoryRows(finding) {
   const severity = finding.malware ? 'Critical' : finding.unrated ? 'Unrated' : SEVERITY_SAID[finding.severity]
   return [finding.malware ? ['Kind', 'Malware, not a vulnerability'] : finding.informational ? ['Kind', finding.informational] : null,
@@ -96,8 +89,7 @@ function advisoryRows(finding) {
 const advisoryTip = finding => html`<div class="compare-tip"><div class="compare-tip-head">${finding.title ?? finding.advisory}</div>
   <div class="compare-tip-rows">${advisoryRows(finding).map(([label, value]) => html`<span class="compare-tip-label">${label}</span><span>${value}</span>`)}</div></div>`
 
-// What a step's finding is about, as its row is named: its package, its
-// image, its expression, or what it is.
+// What a step's finding is about, naming its row.
 function stepName(finding) {
   if (finding.id === 'fetched-package') return `${finding.tool} ${finding.name}${finding.spec ? `@${finding.spec}` : ''}`
   if (finding.id === 'unlocked-install') return finding.tool
@@ -112,10 +104,9 @@ function stepName(finding) {
   return findingLabel(finding)
 }
 
-// The workflows, actions and repositories' Actions a scan told, by its
-// lines: each repository's workflows listed, or why not, and its files by
-// path; each reference resolved, by key; and the rows of them all (rows),
-// built once for what is told.
+// What a scan's lines told: each repository's workflow listing (or why not)
+// and files by path, each reference resolved by key, and the rows built
+// once from them.
 export class ActionsState {
   constructor() {
     this.listed = new Map()
@@ -131,7 +122,6 @@ export class ActionsState {
     else if (line.type === 'action' && (!line.error || !this.actions.has(line.key))) this.actions.set(line.key, line)
   }
 
-  // What a repository no longer listed, or read again, told: forgotten.
   forget(repo) {
     this.listed.delete(repo)
     this.files.delete(repo)
@@ -142,13 +132,11 @@ export class ActionsState {
     return [...this.files.get(repo)?.values() ?? []]
   }
 
-  // How much is told, for a scan's parts to tell whether one went further:
-  // of references, those still named.
+  // How much is told, for a scan to see whether a part went further.
   told() {
     return this.listed.size + this.rows('actions').filter(row => row.line).length + [...this.files.values()].reduce((sum, files) => sum + files.size, 0)
   }
 
-  // Workflows listed and read, and references named and resolved.
   counts() {
     const named = this.rows('actions')
     return { workflows: [...this.listed.values()].reduce((sum, line) => sum + (line.paths?.length ?? 0), 0),
@@ -156,8 +144,8 @@ export class ActionsState {
       actions: named.length, resolved: named.filter(row => row.line).length }
   }
 
-  // The rows, each with where it is used (`usedIn`), its findings and the
-  // worst: the most severe first, then those failed, pending, clean.
+  // The rows, each with `usedIn`, its findings and the worst: the most
+  // severe first, then failed, pending, clean.
   #build() {
     const refs = new Map(), steps = new Map()
     const ref = key => refs.get(key) ?? refs.set(key, { key, kind: 'action', usedIn: [], local: [] }).get(key)
@@ -174,8 +162,8 @@ export class ActionsState {
         }
       }
     }
-    // What those resolved name in turn, of those named still: one only a
-    // repository forgotten named is no row.
+    // What those resolved name in turn; one only a forgotten repository
+    // named is no row.
     const named = [...refs.keys()]
     for (let at = 0; at < named.length; at++) {
       for (const key of this.actions.get(named[at])?.uses ?? []) {
@@ -184,9 +172,8 @@ export class ActionsState {
       }
     }
     for (const at of refs.values()) {
-      // A finding named more than once (by each workflow naming the
-      // reference) once, at its most severe; what it is about tells those
-      // of one line apart.
+      // A finding each workflow naming the reference repeats, once at its
+      // most severe; what it is about tells a line's apart.
       const seen = new Map()
       at.line = this.actions.get(at.key) ?? null
       for (const finding of [...at.local, ...at.line?.findings ?? []]) {
@@ -201,7 +188,6 @@ export class ActionsState {
       || b.findings.length - a.findings.length || (a.name ?? a.key).localeCompare(b.name ?? b.key))
   }
 
-  // The rows of `kind` (ACTION_KINDS) searched for.
   rows(kind, query = '') {
     this.built ??= this.#build()
     const text = query.trim().toLowerCase()
@@ -209,8 +195,7 @@ export class ActionsState {
   }
 }
 
-// What a reference is pinned to, as GitHub resolved it: its commit, and
-// the tags on it; null where it isn't resolved.
+// The commit GitHub resolved a reference to, and its tags; null unresolved.
 export function pinnedTo(line) {
   if (!line || line.error || !line.commit) return null
   const short = line.commit.slice(0, 7)
@@ -218,10 +203,9 @@ export function pinnedTo(line) {
   return line.at === 'sha' ? `${short}${tags}` : `${line.at} → ${short}${tags}`
 }
 
-// The findings' cell of a row: each by its severity, its tooltip saying what
-// it found, and where in a resolved reference's own code; an advisory's, by
-// its id linking to it, its tooltip telling it apart (advisoryTip), and its
-// title, where it has one, before its id in its plain text.
+// Each finding by its severity, its tooltip saying what it found (where in
+// a reference's own code); an advisory's by its id, linking to it, its title
+// first in its plain tooltip.
 export function findingsCell(findings) {
   return html`<ul class="risk-findings">${findings.map(finding => {
     const advisory = finding.id === 'advisory', href = advisory ? advisoryHref(finding) : null
@@ -232,7 +216,6 @@ export function findingsCell(findings) {
   })}</ul>`
 }
 
-// A reference's link on GitHub at the ref it names, its path in it.
 export function referenceHref({ uses, line }) {
   const ref = line?.commit ?? uses?.ref ?? line?.ref, repo = line?.repository?.fullName ?? uses?.repo ?? line?.repo
   return repo && ref ? githubHref(repo, ref, uses?.path ?? line?.path, line?.kind === 'workflow' || uses?.kind === 'workflow' ? 'blob' : 'tree') : null

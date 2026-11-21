@@ -62,11 +62,14 @@ export class ManagedLocalImport {
     host.addController(this)
   }
 
+  // Every window or document listener, `[target, type, listener]`.
+  listeners() {
+    return [[globalThis, 'focus', this.onChange], [globalThis, 'blur', this.onBlur], [globalThis, 'storage', this.onChange],
+      [globalThis.document, 'visibilitychange', this.onVisibilityChange]]
+  }
+
   hostConnected() {
-    globalThis.addEventListener('focus', this.onChange)
-    globalThis.addEventListener('blur', this.onBlur)
-    globalThis.addEventListener('storage', this.onChange)
-    globalThis.document?.addEventListener('visibilitychange', this.onVisibilityChange)
+    for (const [target, type, listener] of this.listeners()) target?.addEventListener(type, listener)
     this.connectSource()
   }
 
@@ -86,10 +89,7 @@ export class ManagedLocalImport {
     this.abort?.abort()
     this.unsubscribe?.()
     this.source = null
-    globalThis.removeEventListener('focus', this.onChange)
-    globalThis.removeEventListener('blur', this.onBlur)
-    globalThis.removeEventListener('storage', this.onChange)
-    globalThis.document?.removeEventListener('visibilitychange', this.onVisibilityChange)
+    for (const [target, type, listener] of this.listeners()) target?.removeEventListener(type, listener)
   }
 
   async refresh() {

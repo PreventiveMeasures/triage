@@ -370,7 +370,7 @@ export function fetchBundleValidation(id, { signal } = {}) {
   return request(validationUrl(id), BUNDLE_VALIDATION_ERRORS, json, signal)
 }
 export function runBundleValidation(id, csrfToken, { signal } = {}) {
-  return request(validationUrl(id), BUNDLE_VALIDATION_ERRORS, json.catch(() => null), signal, { method: 'POST', headers: { 'x-csrf-token': csrfToken } })
+  return request(validationUrl(id), BUNDLE_VALIDATION_ERRORS, response => response.json().catch(() => null), signal, { method: 'POST', headers: { 'x-csrf-token': csrfToken } })
 }
 
 // A team's Dependencies tab's, of those of its repositories `repoIds` names,
