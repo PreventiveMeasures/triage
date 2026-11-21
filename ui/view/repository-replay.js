@@ -11,13 +11,13 @@ import { LitElement, html, nothing, svg } from 'lit'
 import { fetchRepositoryChanges, fetchRepositoryTree } from './client-managed.js'
 import { activityPicker, activitySubtab, pickActivitySubtab, watchActivitySubtabs } from './repository-activity.js'
 import { githubOf, rereadHistory, revisionHistory, subjectLinks, unwatchHistories, watchHistories } from './repository-history.js'
-import { number, sessionKept, shownElements } from './activity-reads.js'
+import { modeButtons, number, sessionKept, shownElements } from './activity-reads.js'
 import { appUser, commitAgent, commitAuthors } from './github-users.js'
 import { CLAUDE_MARK_PATH, COPILOT_MARK_PATH, OPENAI_MARK_PATH } from './icons.js'
 import { GITHUB_AGENTS } from '../../common/managed/github-agents.ts'
 import { styleMap } from './style-map.js'
 import { BEAM_S, FADE_S, FILE_DOT, GLOW_S, IDLE_S, MAX_GAP, REMOVE_S, REPLAY_COUNTS, SPACE, advanceScene, assignColors, clusterRadius, createScene,
-  extensionOf, fileChanges, layoutScene, moveScene, playCommit, playTimes, playedCommits, sceneBounds, settleCommit, snapScene, treeChanges } from './replay-model.js'
+  extensionOf, fileChanges, layoutScene, moveScene, playCommit, playTimes, playable, playedCommits, sceneBounds, settleCommit, snapScene, treeChanges } from './replay-model.js'
 
 // How fast it plays, as the reader picks; the commits read of the server
 // first, so that it starts soon, and then at a time, as many as it answers.
@@ -27,6 +27,8 @@ const READ = 50
 // Kinds of files colored, as many as the lanes Commits draws in, in their
 // order; the rest Other's.
 const KINDS = 8
+// The colors it draws in besides the kinds', each read off a swatch of its own.
+const SWATCHES = ['background', 'text', 'muted', 'surface', 'added', 'modified', 'removed']
 // How near the canvas's edges the tree comes (clear of the day and commit
 // over and under it), the most zoom, the most files named at once, a maker's
 // disc and spacing, how often at most the tree is laid out again (a large
@@ -77,8 +79,7 @@ function replayOf(repository, count) {
 // files; undefined till they are read.
 const NO_FILES = { files: [], cut: false }
 const startCommit = replay => replay.commits[0]?.parents[0] ?? null
-const startKey = replay => `${replay.repoId}\0${replay.path}\0${startCommit(replay)}`
-const startOf = replay => startCommit(replay) ? treesRead.get(startKey(replay)) : NO_FILES
+const startOf = replay => startCommit(replay) ? treeOf(replay, startCommit(replay)) : NO_FILES
 
 // What a commit of a replay changes, its files' paths from the directory
 // shown, as read; undefined where it isn't yet. One whose files were more
@@ -252,14 +253,8 @@ const AGAIN_ICON = svg`<path d="M3.25 8a4.75 4.75 0 1 0 1.4-3.36M3.25 2.5v2.75H6
 // repository's full name (`repo`, repository-code.js repositoryFullName,
 // once known), which its commit line links to GitHub by.
 class RepositoryReplay extends Shown {
-  static properties = { repository: { attribute: false }, repo: { attribute: false } }
-
-  createRenderRoot() { return this }
-
   constructor() {
     super()
-    this.repository = null
-    this.repo = null
     this.replay = null
     this._frame = null
     this._last = 0
@@ -310,8 +305,7 @@ class RepositoryReplay extends Shown {
     if (!replay.commits) {
       const { entry, more } = revisionHistory(this.repository)
       if (entry.status !== 'ready') return
-      const playable = entry.commits.filter(commit => commit.parents.length <= 1 && Number.isFinite(commit.committedAt)).length
-      if (playable < replay.count && entry.more) {
+      if (entry.commits.filter(playable).length < replay.count && entry.more) {
         if (!entry.loadingMore && !entry.moreError) more()
         return
       }
@@ -438,8 +432,8 @@ class RepositoryReplay extends Shown {
     const swatches = this.querySelector('.replay-swatches')
     if (!swatches) return
     const color = name => getComputedStyle(swatches.querySelector(`.is-${name}`)).color
-    const colors = { background: color('background'), text: color('text'), muted: color('muted'), surface: color('surface'), added: color('added'), modified: color('modified'),
-      removed: color('removed'), kinds: Array.from({ length: KINDS }, (_, kind) => color(`kind-${kind}`)), font: getComputedStyle(this).fontFamily }
+    const colors = { ...Object.fromEntries(SWATCHES.map(name => [name, color(name)])), kinds: Array.from({ length: KINDS }, (_, kind) => color(`kind-${kind}`)),
+      font: getComputedStyle(this).fontFamily }
     // The files' colors as a pixel's bytes, red, green, blue and alpha, as
     // a canvas paints them, whatever the stylesheet names them in.
     const probe = Object.assign(document.createElement('canvas'), { width: 1, height: 1 }).getContext('2d', { willReadFrequently: true })
@@ -722,9 +716,7 @@ class RepositoryReplay extends Shown {
         inPart ? ', drawn in part: more files than are read' : ''}` : ''
     return html`<div class="history-bar">
         ${activityPicker('replay')}
-        <div class="history-modes" role="group" aria-label="Commits played">
-          ${REPLAY_COUNTS.map(count => html`<button type="button" aria-pressed=${String(replay.count === count)} @click=${() => this.pickCount(count)}>Last ${number(count)}</button>`)}
-        </div>
+        ${modeButtons('Commits played', REPLAY_COUNTS.map(count => [count, `Last ${number(count)}`]), replay.count, count => () => this.pickCount(count))}
         ${summary ? html`<span class="history-summary">${summary}</span>` : nothing}
       </div>
       <div class="replay-stage">
@@ -738,7 +730,7 @@ class RepositoryReplay extends Shown {
         ${this.renderStatus(replay, history, buffered)}
         ${this._hovered ? html`<div class="replay-tip" style=${styleMap({ left: `${this._hovered.x}px`, top: `${this._hovered.y}px` })}>${this._hovered.text}</div>` : nothing}
         <div class="replay-swatches" aria-hidden="true">
-          ${['background', 'text', 'muted', 'surface', 'added', 'modified', 'removed', ...Array.from({ length: KINDS }, (_, kind) => `kind-${kind}`)].map(name => html`<span class=${`is-${name}`}></span>`)}
+          ${[...SWATCHES, ...Array.from({ length: KINDS }, (_, kind) => `kind-${kind}`)].map(name => html`<span class=${`is-${name}`}></span>`)}
         </div>
       </div>
       ${this.renderControls(replay, total, buffered)}`
@@ -773,17 +765,12 @@ class RepositoryReplay extends Shown {
   // so far, what they change read, the next commit's; or why it can't play,
   // and a button to read again.
   renderStatus(replay, history, buffered) {
-    if (history?.entry.status === 'error') {
-      return html`<div class="replay-status is-error"><p role="alert">${history.entry.error}</p>
-        <button type="button" @click=${() => rereadHistory(history.key)}>Retry</button></div>`
-    }
-    if (replay.error) {
-      return html`<div class="replay-status is-error"><p role="alert">${replay.error}</p>
-        <button type="button" @click=${() => { replay.error = null; repaint() }}>Retry</button></div>`
-    }
-    if (history?.entry.status === 'ready' && history.entry.moreError) {
-      return html`<div class="replay-status is-error"><p role="alert">${history.entry.moreError}</p>
-        <button type="button" @click=${() => history.more()}>Retry</button></div>`
+    const [failed, retry] = history?.entry.status === 'error' ? [history.entry.error, () => rereadHistory(history.key)]
+      : replay.error ? [replay.error, () => { replay.error = null; repaint() }]
+      : history?.entry.status === 'ready' && history.entry.moreError ? [history.entry.moreError, () => history.more()] : []
+    if (retry) {
+      return html`<div class="replay-status is-error"><p role="alert">${failed}</p>
+        <button type="button" @click=${retry}>Retry</button></div>`
     }
     if (history) {
       const read = history.entry.status === 'ready' ? history.entry.commits.length : 0
@@ -811,9 +798,7 @@ class RepositoryReplay extends Shown {
         <input type="range" min="0" max=${total} step="1" .value=${String(replay.next)} aria-label="Commits played" ?disabled=${!ready}
           aria-valuetext=${`${number(replay.next)} of ${number(total)} commits`} @input=${event => this.seek(Number(event.target.value))}>
       </div>
-      <div class="history-modes" role="group" aria-label="Speed">
-        ${SPEEDS.map(speed => html`<button type="button" aria-pressed=${String(shownSpeed === speed)} @click=${() => this.pickSpeed(speed)}>${speedName(speed)}</button>`)}
-      </div>
+      ${modeButtons('Speed', SPEEDS.map(speed => [speed, speedName(speed)]), shownSpeed, speed => () => this.pickSpeed(speed))}
     </div>`
   }
 }

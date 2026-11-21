@@ -11,12 +11,12 @@ const DAY_MS = 86_400_000
 // How many of the latest commits Replay plays, as the reader picks.
 export const REPLAY_COUNTS = [100, 300, 1000]
 
-// The latest `count` commits with a time but merges (whose files their
-// other parents' commits change), oldest first, in historyOrder's order:
-// never a commit before its parent, whatever a clock off dates them.
-export function playedCommits(commits, count) {
-  return historyOrder(commits).filter(commit => commit.parents.length <= 1 && Number.isFinite(commit.committedAt)).slice(0, count).toReversed()
-}
+// Whether a commit plays: one with a time, but a merge (whose files its other
+// parents' commits change); and the latest `count` that do, oldest first, in
+// historyOrder's order: never a commit before its parent, whatever a clock
+// off dates them.
+export const playable = commit => commit.parents.length <= 1 && Number.isFinite(commit.committedAt)
+export const playedCommits = (commits, count) => historyOrder(commits).filter(playable).slice(0, count).toReversed()
 
 // When each commit plays, in seconds at 1×: a day apart DAY_SECONDS, but
 // MIN_GAP to MAX_GAP, quiet spells skipped as Gource's --auto-skip-seconds.
@@ -294,30 +294,22 @@ function packSiblings(circles) {
   pack: for (let i = 3; i < circles.length; i++) {
     const circle = circles[i]
     besides(head.c, tail.c, circle)
-    // The nearest disc on the chain it is on, ahead or behind, if any.
+    // The nearest disc on the chain it is on, ahead or behind, if any: the
+    // chain cut short to it, and it set again.
     let ahead = tail.next, aheadBy = tail.c.r, behind = head.previous, behindBy = head.c.r
     do {
-      if (aheadBy <= behindBy) {
-        if (overlaps(ahead.c, circle)) {
-          tail = ahead
-          head.next = tail
-          tail.previous = head
-          i--
-          continue pack
-        }
-        aheadBy += ahead.c.r
-        ahead = ahead.next
-      } else {
-        if (overlaps(behind.c, circle)) {
-          head = behind
-          head.next = tail
-          tail.previous = head
-          i--
-          continue pack
-        }
-        behindBy += behind.c.r
-        behind = behind.previous
+      const forth = aheadBy <= behindBy
+      const link = forth ? ahead : behind
+      if (overlaps(link.c, circle)) {
+        if (forth) tail = link
+        else head = link
+        head.next = tail
+        tail.previous = head
+        i--
+        continue pack
       }
+      if (forth) [aheadBy, ahead] = [aheadBy + ahead.c.r, ahead.next]
+      else [behindBy, behind] = [behindBy + behind.c.r, behind.previous]
     } while (ahead !== behind.next)
     // On none: between the two it is beside, and the pair nearest the middle
     // those the next goes beside.
@@ -332,7 +324,7 @@ function packSiblings(circles) {
   }
 }
 
-// `c` set beside `a` and `b`, touching both.
+// `c` set beside `a` and `b`, touching both: from the one it is nearer.
 function besides(b, a, c) {
   const [dx, dy] = [b.x - a.x, b.y - a.y]
   const apart = dx * dx + dy * dy
@@ -341,15 +333,10 @@ function besides(b, a, c) {
     return
   }
   const toA = (a.r + c.r) ** 2, toB = (b.r + c.r) ** 2
-  if (toA > toB) {
-    const along = (apart + toB - toA) / (2 * apart)
-    const across = Math.sqrt(Math.max(0, toB / apart - along * along))
-    ;[c.x, c.y] = [b.x - along * dx - across * dy, b.y - along * dy + across * dx]
-  } else {
-    const along = (apart + toA - toB) / (2 * apart)
-    const across = Math.sqrt(Math.max(0, toA / apart - along * along))
-    ;[c.x, c.y] = [a.x + along * dx - across * dy, a.y + along * dy + across * dx]
-  }
+  const [from, way, near, far] = toA > toB ? [b, -1, toB, toA] : [a, 1, toA, toB]
+  const along = (apart + near - far) / (2 * apart)
+  const across = Math.sqrt(Math.max(0, near / apart - along * along))
+  ;[c.x, c.y] = [from.x + way * along * dx - across * dy, from.y + way * along * dy + across * dx]
 }
 
 const overlaps = (a, b) => {
@@ -438,8 +425,7 @@ const SEPARATE_ROUNDS = 60
 const SLACK = 0.5
 function relax(own, trees) {
   const set = trees.filter(tree => tree.x !== undefined)
-  for (const tree of trees) {
-    if (tree.x !== undefined) continue
+  for (const tree of trees.filter(item => item.x === undefined)) {
     roomFor(tree, own, set)
     set.push(tree)
   }
@@ -452,23 +438,19 @@ function relax(own, trees) {
       ;[tree.x, tree.y] = [Math.cos(angle) * need, Math.sin(angle) * need]
       moved = true
     }
-    const swept = trees.toSorted((a, b) => a.x - a.r - (b.x - b.r))
-    for (const [at, one] of swept.entries()) {
-      for (let next = at + 1; next < swept.length && swept[next].x - swept[next].r < one.x + one.r; next++) {
-        const other = swept[next]
-        const need = one.r + other.r
-        const [dx, dy] = [other.x - one.x, other.y - one.y]
-        if (Math.abs(dy) >= need - SLACK) continue
-        const apart = Math.hypot(dx, dy)
-        if (apart >= need - SLACK) continue
-        const angle = apart > 1e-6 ? Math.atan2(dy, dx) : keyAngle(other.child.name)
-        // Each pushed by the other's share of their two discs' room.
-        const [oneShare, otherShare] = [other.r ** 2, one.r ** 2].map(share => share / (one.r ** 2 + other.r ** 2) * (need - apart))
-        ;[one.x, one.y] = [one.x - Math.cos(angle) * oneShare, one.y - Math.sin(angle) * oneShare]
-        ;[other.x, other.y] = [other.x + Math.cos(angle) * otherShare, other.y + Math.sin(angle) * otherShare]
-        moved = true
-      }
-    }
+    nearPairs(trees, 0, (one, other) => {
+      const need = one.r + other.r
+      const [dx, dy] = [other.x - one.x, other.y - one.y]
+      if (Math.abs(dy) >= need - SLACK) return
+      const apart = Math.hypot(dx, dy)
+      if (apart >= need - SLACK) return
+      const angle = apart > 1e-6 ? Math.atan2(dy, dx) : keyAngle(other.child.name)
+      // Each pushed by the other's share of their two discs' room.
+      const [oneShare, otherShare] = [other.r ** 2, one.r ** 2].map(share => share / (one.r ** 2 + other.r ** 2) * (need - apart))
+      ;[one.x, one.y] = [one.x - Math.cos(angle) * oneShare, one.y - Math.sin(angle) * oneShare]
+      ;[other.x, other.y] = [other.x + Math.cos(angle) * otherShare, other.y + Math.sin(angle) * otherShare]
+      moved = true
+    })
     if (!moved) return
   }
 }
@@ -488,19 +470,22 @@ function roomFor(tree, own, set) {
     }
   }
   for (const other of set) touching(own, other)
-  const swept = set.toSorted((a, b) => a.x - a.r - (b.x - b.r))
-  for (const [at, one] of swept.entries()) {
-    for (let next = at + 1; next < swept.length && swept[next].x - swept[next].r < one.x + one.r + 2 * tree.r; next++) {
-      const other = swept[next]
-      if (Math.hypot(other.x - one.x, other.y - one.y) < one.r + other.r + 2 * tree.r) touching(one, other)
-    }
-  }
+  nearPairs(set, 2 * tree.r, (one, other) => { if (Math.hypot(other.x - one.x, other.y - one.y) < one.r + other.r + 2 * tree.r) touching(one, other) })
   const angle = keyAngle(tree.child.name)
   if (set.length === 0) spots.push({ x: Math.cos(angle) * (own.r + tree.r), y: Math.sin(angle) * (own.r + tree.r) })
   let best = null
   for (const spot of spots) if (free(spot) && (!best || Math.hypot(spot.x, spot.y) < Math.hypot(best.x, best.y))) best = spot
   const beyond = Math.max(own.r, ...set.map(other => Math.hypot(other.x, other.y) + other.r)) + tree.r
   ;[tree.x, tree.y] = best ? [best.x, best.y] : [Math.cos(angle) * beyond, Math.sin(angle) * beyond]
+}
+
+// Each two of `circles` less than `reach` apart along x, as they are when
+// reached, the one further left first.
+function nearPairs(circles, reach, each) {
+  const swept = circles.toSorted((a, b) => a.x - a.r - (b.x - b.r))
+  for (const [at, one] of swept.entries()) {
+    for (let next = at + 1; next < swept.length && swept[next].x - swept[next].r < one.x + one.r + reach; next++) each(one, swept[next])
+  }
 }
 
 // Everything `dt` seconds nearer where it sits: directories toward their
