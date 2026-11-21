@@ -153,20 +153,11 @@ function listingRows() {
   }
 }
 
-function header(out, value, generated, { lines, reason }) {
-  out.push('# A source map listed: each of its keys in order, a value to a line; a list an item to a line, below its key;')
-  out.push('# sourcesContent a text at each ┌, a line to a line (│ as written, ┊ as JSON, for a character that shows as another or none);')
-  out.push('# mappings decoded: @ a line of the generated file; ← the source line the segments below map from, as lines on from the')
-  out.push('# last mapped in that source, ″ the one above, ∅ none; each segment its column (+ past the one before), source column, name.')
-  if (lines) {
-    out.push(generated ? `# Glossed (@ ‹) with ${gloss(generated.path)}, whose sourceMappingURL names this map.` : '# No file beside it whose sourceMappingURL names this map, to gloss it with.')
-    const segments = lines.reduce((sum, line) => sum + line.length, 0)
-    const mapped = lines.filter(line => line.some(segment => segment.length > 1)).length
-    const withText = value.sources.filter((_, i) => typeof value.sourcesContent?.[i] === 'string').length
-    out.push(`# Sources: ${value.sources.length} (${withText} with text) · names: ${value.names?.length ?? 0} · segments: ${segments} · lines: ${lines.length}, ${mapped} mapped.`)
-  } else if (reason) {
-    out.push(`# Its mappings are shown as written: ${reason}`)
-  }
+// What a listing says above its values: the file its mappings are glossed
+// with, or why they are shown as written.
+function header(out, generated, { lines, reason }) {
+  if (lines) out.push(`# Generated: ${generated ? gloss(generated.path) : 'no file beside it names this map'}`)
+  else if (reason) out.push(`# Mappings shown as written: ${reason}`)
 }
 
 function textRows(out, head, items, sources) {
@@ -264,7 +255,7 @@ function mappingsRows(out, head, value, lines, generated) {
 // file (`{ path, text }`) or none. Throws a RangeError past COPY_LIMIT.
 export function sourcemapListing(value, generated) {
   const mappings = decoded(value), out = listingRows()
-  header(out, value, generated, mappings)
+  header(out, generated, mappings)
   for (const key of Object.keys(value)) {
     const head = `${literal(key)}: `, item = value[key]
     if (key === 'mappings' && mappings.lines) mappingsRows(out, head, value, mappings.lines, generated)

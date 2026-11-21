@@ -23,6 +23,7 @@ import { fetchPrettyBundleChanges, fetchPrettyBundleFile, fetchPrettyNpmChanges,
 import { npmFileReadabilityRead } from './file-readability.js'
 import { renameDiffable } from './rename-diff.js'
 import { aborted, evict, failureOf, limiter, retrier, retryable, teller, touch } from './server-asks.js'
+import { weakNotify } from './weak-notify.js'
 
 // The pretty-print toggles' icon, for the Code tab's bar and Compare's.
 export const PRETTY_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 2.5c-1.4 0-2 .6-2 2v1.6c0 .9-.5 1.6-1.5 1.9 1 .3 1.5 1 1.5 1.9v1.6c0 1.4.6 2 2 2M10.5 2.5c1.4 0 2 .6 2 2v1.6c0 .9.5 1.6 1.5 1.9-1 .3-1.5 1-1.5 1.9v1.6c0 1.4-.6 2-2 2"/></svg>`
@@ -353,7 +354,7 @@ export function comparedCopy(base, other, side, path, content, notify) {
     return made
   })
   if (content !== bundleFilesAsMap(details).get(path)) return { status: 'error', message: MISMATCH, retry: false }
-  comparison.notify = notify
+  comparison.notify = weakNotify(notify)
   return comparison.copies.get(`${side}\0${path}`) ?? comparison.rest ?? (comparison.ended ? fileCopy(details, path, content, notify) : { status: 'loading' })
 }
 

@@ -102,13 +102,12 @@ test('a source map is listed key by key, its texts line by line and its mappings
     '}',
     '',
   ].join('\n'))
-  assert.match(text, /^# Glossed \(@ ‹\) with lib\/index\.js, whose sourceMappingURL names this map\.$/mu)
-  assert.match(text, /^# Sources: 1 \(1 with text\) · names: 3 · segments: 8 · lines: 5, 3 mapped\.$/mu)
+  assert.deepEqual(text.split('\n').filter(row => row.startsWith('# ')), ['# Generated: lib/index.js'], 'its head the file it is glossed with alone')
   assert.equal(JSON.stringify(unlistSourcemap(text)), mapOf())
   assert.throws(() => unlistSourcemap(text.slice(0, -1)), { message: 'Its listing ends with no line end.' })
   assert.throws(() => unlistSourcemap(`${text}x\n`), { message: /^Its listing's row \d+ names no key\.$/u })
   const alone = listSourcemap(mapOf()).text
-  assert.match(alone, /^# No file beside it whose sourceMappingURL names this map, to gloss it with\.$/mu)
+  assert.match(alone, /^# Generated: no file beside it names this map$/mu)
   assert.match(alone, /\n@\n@\n {2}← index\.ts \+0 {2}export function add/u, 'its lines unglossed with no file')
 })
 
@@ -174,7 +173,7 @@ test('a map is listed only where its listing reads back to its text, and its map
   refused(JSON.stringify({ version: 3, sections: [{ offset: { line: 0, column: 0 }, map: JSON.parse(mapOf()) }] }), /^It is an index map/u)
   const asWritten = (fields, why) => {
     const text = mapOf(fields), { text: listing } = listSourcemap(text)
-    assert.match(listing, new RegExp(`^# Its mappings are shown as written: ${why}`, 'mu'))
+    assert.match(listing, new RegExp(`^# Mappings shown as written: ${why}`, 'mu'))
     assert.match(listing, new RegExp(`^"mappings": ${RegExp.escape(JSON.stringify(JSON.parse(text).mappings))}$`, 'mu'))
     assert.equal(JSON.stringify(unlistSourcemap(listing)), text)
   }

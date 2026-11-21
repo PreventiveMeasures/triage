@@ -573,6 +573,11 @@ function plainSource(content) {
   return parts
 }
 
+// A line's gutter row with no finding on it, as most are: a template of its
+// own, its class a plain string and no whitespace between its tags, as a
+// file has one for each of its lines, each held as long as the file is shown.
+const gutterRow = (row, ln, link) => html`<div class=${row} data-line=${ln}><span class="bundle-source-dot-placeholder"></span><span class="bundle-source-lineno-num" data-bundle-source-line=${link}>${ln}</span></div>`
+
 // The source viewer's lines: a gutter, a row a line, beside one `<pre>` of
 // the whole source, so prism's highlighted HTML, whose tokens may span lines,
 // goes in as it is; the two share a line height to stay level. A line's
@@ -615,21 +620,18 @@ function renderBundleSourceLines(content, path, details, lineFindings, matchLine
       ${guard([lineCount, dots, findingIdx, matchLines, lineLinks, targetLine, targetEnd], () => Array.from({ length: lineCount }, (_, i) => {
         const ln = i + 1
         const entries = lineFindings.get(ln)
-        const sev = entries ? _topSeverityOf(entries.map((e) => e.f)) : null
-        const isActive = entries && findingIdx != null
-          && entries.some((e) => e.idx === findingIdx)
-        return html`<div class=${classMap({ 'bundle-source-lineno-row': true, 'is-match': matchLines?.has(ln) ?? false, 'is-target': targetLine != null && ln >= targetLine && ln <= targetEnd })} data-line=${ln}>
-          ${entries
-            ? html`<button
+        const row = `bundle-source-lineno-row${matchLines?.has(ln) ? ' is-match' : ''}${targetLine != null && ln >= targetLine && ln <= targetEnd ? ' is-target' : ''}`
+        const link = lineLinks ? ln : nothing
+        if (!entries) return gutterRow(row, ln, link)
+        const sev = _topSeverityOf(entries.map((e) => e.f))
+        const isActive = findingIdx != null && entries.some((e) => e.idx === findingIdx)
+        return html`<div class=${row} data-line=${ln}><button
                 type="button"
                 class=${classMap({ 'bundle-source-dot': true, [`sev-${sev}`]: true, active: isActive })}
                 data-bundle-source-finding=${entries[0].idx}
                 data-tooltip=${`${entries.length} ${entries.length === 1 ? 'issue' : 'issues'} on line ${ln}`}
                 aria-label=${`${entries.length} issues on line ${ln}`}
-              ></button>`
-            : html`<span class="bundle-source-dot-placeholder"></span>`}
-          <span class="bundle-source-lineno-num" data-bundle-source-line=${lineLinks ? ln : nothing}>${ln}</span>
-        </div>`
+              ></button><span class="bundle-source-lineno-num" data-bundle-source-line=${link}>${ln}</span></div>`
       }))}
     </aside>
     <pre class="bundle-source-code" tabindex="-1" aria-label=${path}><code class=${lang ? `language-${lang}` : ''}>${typeof highlighted === 'string'

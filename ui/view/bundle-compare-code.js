@@ -46,6 +46,7 @@ import { fileMetaTags, metaSentences } from './bundle-compare-meta.js'
 import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
 import './bundle-code-splitter.js'
 import { CODE_MODE_ICON, COLLAPSE_DIRS_ICON, COPY_ICON, FILES_MODE_ICON, NEXT_ICON, PREV_ICON } from './lit-icons.js'
+import { readKept, trimKept } from './kept-entries.js'
 
 const KINDS = [
   { kind: 'changed', label: 'Modified', letter: 'M' },
@@ -184,8 +185,12 @@ const readsSaid = reads => `Renamed names are hidden, though the file reads ${re
 // sides were pretty-printed.
 export const modelKey = (path, pretty, settings = prefs) => `${path}\0${settings.ignoreWhitespace}\0${settings.ignoreRenames && renamable(path)}\0${!!settings.markRenames}\0${pretty}`
 
-// `${integrity}\0${path}` → the text colored and its highlighted lines, or
-// null when Prism has no grammar for it or it is too large to color.
+// By side (its integrity), the sides compared last, KEPT_HIGHLIGHT_SIDES of
+// them, each drawn again at once: `${path}` (and the copy it is of) → the
+// text colored and its highlighted lines, or null when Prism has no grammar
+// for it or it is too large to color. Each side's are many times its files'
+// size, so those of comparisons left are let go.
+const KEPT_HIGHLIGHT_SIDES = 6
 const highlightCache = new Map()
 const highlightPending = new Set()
 // Each line's drawn code, by its side's lines array and line, so a redraw
@@ -1293,15 +1298,17 @@ export class BundleCompareCode extends LitElement {
     if (!text) return null
     const lang = langForPath(path, stasisFormat(details, path), text)
     if (!lang) return null
-    const key = `${details.integrity}\0${path}${copy ? `\0${copy}` : ''}`
-    const kept = highlightCache.get(key)
+    const file = `${path}${copy ? `\0${copy}` : ''}`, key = `${details.integrity}\0${file}`
+    const kept = readKept(highlightCache, details.integrity)?.get(file)
     if (kept?.text === text) return kept.lines
     if (!highlightPending.has(key)) {
       highlightPending.add(key)
       void (async () => {
         const markup = await highlight(text, lang)
         const lines = typeof markup === 'string' ? splitHighlightedLines(markup) : null
-        highlightCache.set(key, { text, lines: lines?.length === text.split('\n').length ? lines : null })
+        const side = readKept(highlightCache, details.integrity) ?? highlightCache.set(details.integrity, new Map()).get(details.integrity)
+        side.set(file, { text, lines: lines?.length === text.split('\n').length ? lines : null })
+        trimKept(highlightCache, KEPT_HIGHLIGHT_SIDES)
         highlightPending.delete(key)
         if (this.isConnected) this.requestUpdate()
       })()

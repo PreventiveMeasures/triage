@@ -16,6 +16,7 @@ import { modeButtons, number, sessionKept, shownElements } from './activity-read
 import { appUser, commitAgent, commitAuthors } from './github-users.js'
 import { CLAUDE_MARK_PATH, COPILOT_MARK_PATH, OPENAI_MARK_PATH } from './icons.js'
 import { GITHUB_AGENTS } from '../../common/managed/github-agents.ts'
+import { readKept, trimKept } from './kept-entries.js'
 import { styleMap } from './style-map.js'
 import { BEAM_S, FADE_S, FILE_DOT, GLOW_S, IDLE_S, MAX_GAP, REMOVE_S, REPLAY_COUNTS, SPACE, advanceScene, assignColors, clusterRadius, createScene,
   extensionOf, fileChanges, layoutScene, moveScene, playCommit, playTimes, playable, playedCommits, sceneBounds, settleCommit, snapScene, treeChanges } from './replay-model.js'
@@ -46,11 +47,15 @@ const SQUARE_DOT = 1.8
 const END_S = 2
 const STATUS = new Set(['A', 'M', 'D', 'R'])
 
+// The replays played last, KEPT_REPLAYS of them, and those shown, each to
+// play on from where it was; what their commits change, and their trees, with them.
+const KEPT_REPLAYS = 2
+const replays = new Map()
 const changesRead = new Map()
 const cutCommits = new Set()
 const treesRead = new Map()
 const images = new Map()
-const sessionReplays = sessionKept(new Map(), changesRead, cutCommits, treesRead)
+const sessionReplays = sessionKept(replays, changesRead, cutCommits, treesRead)
 const { Shown, shown: shownReplays, repaint } = shownElements(LitElement)
 // How many commits, as its route's sub-tab names them (repository-activity.js),
 // the last 300 where it names none; and how fast, as the reader last picked.
@@ -66,12 +71,22 @@ const reducedMotion = () => globalThis.matchMedia?.('(prefers-reduced-motion: re
 function replayOf(repository, count) {
   const { repoId, commit, path } = repository
   const key = `${repoId}\0${commit}\0${path}\0${count}`
-  const held = sessionReplays().get(key)
+  const held = readKept(sessionReplays(), key)
   if (held) return held
   const replay = { key, repoId, path, count, commits: null, times: [], reading: false, treeReading: false, error: null, counted: '', counts: new Map(),
     colors: new Map(), people: null, scene: createScene(), clock: 0, next: 0, playing: false, waiting: false, ended: false, started: false }
   sessionReplays().set(key, replay)
+  trimKept(replays, KEPT_REPLAYS, kept => [...shownReplays].some(element => element.replay === kept), dropReplay)
   return replay
+}
+
+// A replay let go, with what its commits change and their trees, where no
+// replay kept is of its directory.
+function dropReplay(key, replay) {
+  replays.delete(key)
+  if ([...replays.values()].some(kept => kept.repoId === replay.repoId && kept.path === replay.path)) return
+  const prefix = `${replay.repoId}\0${replay.path}\0`
+  for (const read of [changesRead, treesRead, cutCommits]) for (const of of [...read.keys()]) if (of.startsWith(prefix)) read.delete(of)
 }
 
 // The commit a replay starts from: its first commit's parent, the files it

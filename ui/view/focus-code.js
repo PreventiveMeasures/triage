@@ -10,14 +10,43 @@ import { bundleFilesAsMap, bundlePackageDirs, bundlePackageRepos, bundleSourcesA
 import { bundleSourceImports, sourceLinkResolver } from '../../common/bundle-source-links.js'
 import { controlMarkup } from './control-chars.js'
 import { historyFor } from './focus-code-history.js'
+import { readKept, trimKept } from './kept-entries.js'
 import { lineRange } from './format.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
 import { render } from './render.js'
 import { report } from './dom.js'
 import { revealCitedLines } from './reveal-cited.js'
 
-// integrity → { sources, packageFiles, packageDirs, imports, formats, loading, error }
+// integrity → { sources, packageFiles, packageDirs, imports, formats, loading, error }:
+// the bundles read last, KEPT_BUNDLE_SOURCES of them, each holding all its
+// files, those still loading and those shown kept too, however many; one let
+// go is read again once asked.
+const KEPT_BUNDLE_SOURCES = 4
 const sourcesCache = new Map()
+// The bundles the last pass of reads read (a render's: those its previews and
+// panel show), and those the pass under way reads.
+let shownSources = new Set()
+let showingSources = null
+function readSources(integrity) {
+  if (!showingSources) {
+    showingSources = new Set()
+    queueMicrotask(() => {
+      shownSources = showingSources
+      showingSources = null
+    })
+  }
+  showingSources.add(integrity)
+  return readKept(sourcesCache, integrity)
+}
+// Past KEPT_BUNDLE_SOURCES, the least recently read let go, its files' colors
+// with it; none shown, which a repaint would read again at once.
+function trimSources() {
+  const held = (entry, integrity) => entry.loading || shownSources.has(integrity) || showingSources?.has(integrity)
+  trimKept(sourcesCache, KEPT_BUNDLE_SOURCES, held, integrity => {
+    sourcesCache.delete(integrity)
+    for (const key of [...highlightCache.keys()]) if (key.startsWith(`${integrity}\0`)) highlightCache.delete(key)
+  })
+}
 
 // integrity\0file → prism's HTML, or null for a language it can't
 // highlight; filled asynchronously, as first asked for.
@@ -47,8 +76,10 @@ function kickHighlight(integrity, file, content, format, resolveString, cache = 
   pending.add(key)
   ;(async () => {
     const html = await prismHighlight(content, lang, resolveString)
-    cache.set(key, typeof html === 'string' ? controlMarkup(html) : null)
     pending.delete(key)
+    // Not of a bundle let go meanwhile, which would hold it for none.
+    if (cache === highlightCache && !sourcesCache.has(integrity)) return
+    cache.set(key, typeof html === 'string' ? controlMarkup(html) : null)
     repaintCode()
   })()
 }
@@ -69,6 +100,7 @@ async function loadSources(integrity) {
   } catch (err) {
     sourcesCache.set(integrity, { sources: null, loading: false, error: err.message })
   }
+  trimSources()
   // Rendered on a fresh microtask, outside the await chain, whose Lit diff
   // could commit before the panel sees the cache and stay on "Loading…";
   // the tick tells observer-util's readers. The cited lines revealed on the
@@ -224,7 +256,7 @@ function managedSource(reportId, file, kick) {
 export function bundleSource(integrity, file, { kick = true, reportId = null } = {}) {
   if (reportId) return managedSource(reportId, file, kick)
   if (isManagedUiMode()) return null
-  const cached = sourcesCache.get(integrity)
+  const cached = readSources(integrity)
   if (!cached) {
     if (!kick) return null
     // loadSources marks it loading at once, so a sibling call doesn't load it twice.

@@ -11,7 +11,7 @@ import { openLocalContentImportDialog, openLocalTriageImportDialog, openObjstore
 import { resolveTriageConflicts } from './dialogs/triage-conflict-dialog.js'
 import { differingReports, isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
-import { dropZone, report } from './dom.js'
+import { dropZone, replaceReport, report, reportSlot } from './dom.js'
 import { SEVERITIES, canDropRevalidation, configureDependencyRepos, configureDepsDir, configureRevalidation, depsDirName, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, isRevalidation, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, revalidationShown, stampUpstreamFindings } from './format.js'
 import { activeTabFor, canEditTriage, canTriageFinding, clearMergedGroups, drawnTabs, findingRepoTarget, getMergedGroups, getRevalidationGroups, groupKey, groupState, primaryTab, triageEntry, triageScope, underlyingFindingsShown } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, hasSecurityContrast, isAppStackedGroup, isCrossContextGroup, modelOfFinding, priorityApplies, rangeApplies, repositoryFilterValues, runFilterValue, runFiltersOffered, scopeRows, shouldLockConfirmed } from './filters.js'
@@ -984,17 +984,14 @@ export function render() {
   renderView(state.currentView)
 }
 
-// An empty slot div for #report, for Lit to render a view into.
-const reportSlot = (id) => Object.assign(document.createElement('div'), { id })
-
 // #report's slot divs, reused across renders: Lit's part cache is keyed on
 // the container, so a fresh div would rebuild the whole DOM every render
 // (scroll lost, layout flashing). Replaced only on arrival from another view.
 function ensureReportSlots(...ids) {
   let slots = ids.map((id) => document.querySelector(`#${id}`))
   if (slots.some((slot) => !slot || !report.contains(slot)) || report.firstElementChild !== slots[0]) {
-    slots = ids.map(reportSlot)
-    report.replaceChildren(...slots)
+    slots = ids.map((id) => reportSlot(id))
+    replaceReport(...slots)
   }
   return slots
 }
@@ -1671,8 +1668,8 @@ function renderImpl() {
   if (!headerSlot || !report.contains(headerSlot) || !wrapper?.querySelector(`:scope > #${shape.at(-1)}`)) {
     headerSlot = reportSlot('header-slot')
     wrapper = Object.assign(document.createElement('div'), { className: wrapperClass })
-    wrapper.append(...shape.map(reportSlot))
-    report.replaceChildren(headerSlot, wrapper)
+    wrapper.append(...shape.map((id) => reportSlot(id)))
+    replaceReport(headerSlot, wrapper)
   } else if (wrapper.className !== wrapperClass) {
     wrapper.className = wrapperClass
   }

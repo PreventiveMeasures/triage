@@ -2,12 +2,15 @@
 // renderRepositoryCodeOpening): its files as its commit's tree lists them,
 // each by its bytes (GET /api/admin/repositories/tree), drawn as an opened
 // directory's are (bundle-treemap.js) with none of their text read; where
-// the listing leaves files out, it says so.
+// the listing leaves files out, it says so. Kept for the session that read
+// it, the last KEPT_TREES directories read, each a whole commit's listing at most.
 import { LitElement, html, nothing } from 'lit'
 import { fetchRepositoryTree } from './client-managed.js'
 import { number, readingBody, sessionKept, shownElements } from './activity-reads.js'
+import { readKept, trimKept } from './kept-entries.js'
 import './bundle-treemap.js'
 
+const KEPT_TREES = 4
 const sessionTrees = sessionKept(new Map())
 const { Shown, repaint } = shownElements(LitElement)
 
@@ -18,7 +21,7 @@ const { Shown, repaint } = shownElements(LitElement)
 function treeRead({ repoId, commit, path }) {
   const key = `${repoId}\0${commit}\0${path}`
   const trees = sessionTrees()
-  const held = trees.get(key)
+  const held = readKept(trees, key)
   if (held) return held
   const loading = { key, status: 'loading' }
   trees.set(key, loading)
@@ -35,7 +38,10 @@ function treeRead({ repoId, commit, path }) {
     if (trees.get(key) !== loading) return
     if (err?.name === 'AbortError') trees.delete(key)
     else trees.set(key, { key, status: 'error', error: err?.message || 'Its files could not be read.' })
-  }).finally(repaint)
+  }).finally(() => {
+    trimKept(trees, KEPT_TREES, read => read.status === 'loading')
+    repaint()
+  })
   return loading
 }
 
