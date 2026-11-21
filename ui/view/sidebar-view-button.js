@@ -22,9 +22,10 @@ const REPOSITORIES_ICON = html`<svg viewBox="0 0 16 16" width="14" height="14" f
   <path d="M12 6a6 6 0 0 1-6 6"/>
 </svg>`
 
+// Each kind is also the view it shows.
 const KIND = {
-  packages:     { title: 'Show packages',     icon: PACKAGES_ICON,     view: 'packages' },
-  repositories: { title: 'Show repositories', icon: REPOSITORIES_ICON, view: 'repositories' },
+  packages:     { title: 'Show packages',     icon: PACKAGES_ICON },
+  repositories: { title: 'Show repositories', icon: REPOSITORIES_ICON },
 }
 
 class SidebarViewButton extends StateElement {
@@ -45,10 +46,9 @@ class SidebarViewButton extends StateElement {
     if (this.count === 0) return nothing
     const config = kindConfig('sidebar-view-button', KIND, this.kind)
     if (!config) return nothing
-    const active = state.currentView === config.view
     return html`<button
       type="button"
-      class=${classMap({ 'sidebar-view-btn': true, active })}
+      class=${classMap({ 'sidebar-view-btn': true, active: state.currentView === this.kind })}
       aria-label=${config.title}
     >${config.icon}<span class="view-btn-count">${this.count}</span></button>`
   }

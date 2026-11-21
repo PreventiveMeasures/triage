@@ -1728,6 +1728,9 @@ document.addEventListener('managed-repository-code-open', event => {
   }
 })
 
+// The protocol fields of a server found unavailable or standalone.
+const STANDALONE = { serverMode: 'standalone', serverModeConfig: null, serverModeSelection: null }
+
 // Cold-start mode detection. With nothing cached we don't yet know the server's
 // protocol — and a managed server has no WS plane whose connect frame would
 // tell us — so GET /api/config to learn it up front and feed the same
@@ -1764,19 +1767,15 @@ async function detectServerModeIfUnknown() {
   setLandingModePending(!hasStandaloneProbeHint())
   const probe = probeStartupServerInfo()
   const info = await waitForServerInfo(probe, hasStandaloneProbeHint() ? 0 : 3000)
+  if (info && info !== 'standalone') return applyServerInfo(info)
   // A sync frame or another tab may have confirmed the mode while pending.
   // Adopt it into state as well: the initial e2e default is not confirmation.
   const confirmed = readCachedServerInfo()
-  if (confirmed) {
-    return info && info !== 'standalone' ? applyServerInfo(info) : applyServerInfo(confirmed, { runtime: false })
-  }
-  if (info && info !== 'standalone') return applyServerInfo(info)
+  if (confirmed) return applyServerInfo(confirmed, { runtime: false })
   // Unknown or unavailable server: open local data with synchronization off.
   // Do not cache a guessed protocol or modify any saved sync preferences.
   if (info === 'standalone') rememberStandaloneProbe()
-  state.serverMode = 'standalone'
-  state.serverModeConfig = null
-  state.serverModeSelection = null
+  Object.assign(state, STANDALONE)
   setLocalMode(info === null)
   setSyncForceDisabled(true)
   setLandingModePending(false)
@@ -1791,10 +1790,7 @@ async function detectServerModeIfUnknown() {
       if (latest === 'standalone') {
         rememberStandaloneProbe()
         if (forcedManagedReturn) {
-          forcedManagedReturn.serverMode = 'standalone'
-          forcedManagedReturn.serverModeConfig = null
-          forcedManagedReturn.serverModeSelection = null
-          forcedManagedReturn.localMode = false
+          Object.assign(forcedManagedReturn, STANDALONE, { localMode: false })
           return undefined
         }
         setLocalMode(false)
