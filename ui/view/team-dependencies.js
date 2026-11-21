@@ -451,6 +451,15 @@ const CHEVRON = icon(svg`<path d="m6 4 4 4-4 4"/>`)
 // GitHub's mark, before each pull request a tooltip names.
 const GITHUB_ICON = appMarkup(GITHUB_ICON_SVG)
 
+// The rows of its masonry grid a card spans: as many as it is tall, with
+// the gap under it, of its list's rows (`grid-auto-rows`); none where it
+// isn't in one.
+export function masonrySpan(card) {
+  const row = card.isConnected ? parseFloat(getComputedStyle(card.parentElement).gridAutoRows) : Number.NaN
+  if (!(row > 0)) return
+  card.style.gridRowEnd = `span ${Math.max(1, Math.ceil((card.getBoundingClientRect().height + (parseFloat(getComputedStyle(card).marginBottom) || 0)) / row))}`
+}
+
 class TeamDependencies extends StateElement {
   static properties = { repositories: { attribute: false }, team: { attribute: false }, _open: { state: true } }
 
@@ -478,6 +487,20 @@ class TeamDependencies extends StateElement {
   // where none wants reviews once all is read, giving way to the first.
   updated() {
     if (this._shown && this._shown !== state.teamDependenciesTab) this.pick(this._shown, { push: false })
+    this._pack()
+  }
+
+  // Its pull requests' cards packed as masonry (team-deps-pulls.is-masonry),
+  // each spanning rows as it is tall, spanned anew as it grows or shrinks;
+  // those it no longer shows let go.
+  _pack() {
+    if (!globalThis.ResizeObserver) return
+    this._masonry ??= new ResizeObserver(entries => { for (const { target } of entries) masonrySpan(target) })
+    this._masonry.disconnect()
+    for (const list of this.querySelectorAll('.team-deps-pulls')) {
+      list.classList.add('is-masonry')
+      for (const card of list.children) this._masonry.observe(card)
+    }
   }
 
   toggle(key) {
@@ -499,6 +522,7 @@ class TeamDependencies extends StateElement {
     this._unsubscribe?.()
     showing.delete(this)
     stopUnshown()
+    this._masonry?.disconnect()
   }
 
   open(event, { repo, item }) {

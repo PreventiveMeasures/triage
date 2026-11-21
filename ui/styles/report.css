@@ -1977,11 +1977,16 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   /* What the red rows are, in their color. */
   & > .team-deps-key { color: var(--critical); }
 }
-/* The pull requests' cards side by side in their order, each a column a
-   little wider than its versions', however many it lists. */
+/* The pull requests' cards side by side in their order, each a column at
+   least 26rem wide, however many versions it lists, as many columns as
+   fit; once measured, packed as masonry (team-dependencies.js masonrySpan):
+   rows of 4px, each card spanning as many as it takes with its gap under it,
+   so it sits under the shortest column's last, in the room a taller one
+   beside it leaves. */
 .team-deps-pulls {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 32rem), 1fr));
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 26rem), 1fr));
   align-items: start; gap: .5rem .625rem; margin: 0; padding: 0; list-style: none;
+  &.is-masonry { grid-auto-rows: 4px; row-gap: 0; & > .team-deps-pull { margin-bottom: .5rem; } }
 }
 .team-deps-pull {
   min-width: 0; padding: .4375rem .75rem .3125rem;
@@ -2012,6 +2017,9 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 .team-deps-versions {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 30rem), 1fr)); column-gap: 1.5rem;
   margin: .25rem 0 0; padding: 0; list-style: none;
+  /* A pull request's own one column, however wide its card: the cards'
+     columns alone change with the width. */
+  .team-deps-pull & { grid-template-columns: minmax(0, 1fr); }
 }
 .team-deps-row {
   display: flex; align-items: center; gap: .5rem; min-width: 0;
@@ -2084,6 +2092,7 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 }
 .team-deps-pulls.is-covered {
   gap: .25rem .625rem;
+  &.is-masonry { row-gap: 0; & > .team-deps-pull { margin-bottom: .25rem; } }
   /* Where any has reviews to copy, room for it on the rest, so their tags line up. */
   &:has(dependency-review-copy) .team-deps-pull-top:not(:has(dependency-review-copy))::after { content: ''; flex: none; width: 1.1rem; }
 }

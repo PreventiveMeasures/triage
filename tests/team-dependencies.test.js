@@ -734,3 +734,15 @@ test('a version its pull request\'s comments alone pass, where the host reads th
     assert.match(card, /2 reviews of 2 required, in its comments, not yet in the reviewed dependencies/u)
   } finally { dependencies['7#11'] = was }
 })
+
+test('its pull requests\' cards packed as masonry: each spanning as many of its list\'s rows as it is tall, with the gap under it; none out of a list', async t => {
+  const { masonrySpan } = await import('../ui/view/team-dependencies.js')
+  const list = { style: {} }
+  const card = (height, more = {}) => ({ isConnected: true, parentElement: list, style: {}, getBoundingClientRect: () => ({ height }), marginBottom: '8px', ...more })
+  const had = globalThis.getComputedStyle
+  globalThis.getComputedStyle = element => element === list ? { gridAutoRows: '4px' } : { marginBottom: element.marginBottom }
+  t.after(() => { globalThis.getComputedStyle = had })
+  const [tall, short, gapless, gone] = [card(300), card(1), card(10, { marginBottom: '' }), card(300, { isConnected: false })]
+  for (const one of [tall, short, gapless, gone]) masonrySpan(one)
+  assert.deepEqual([tall, short, gapless, gone].map(one => one.style.gridRowEnd), ['span 77', 'span 3', 'span 3', undefined])
+})
