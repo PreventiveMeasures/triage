@@ -9,8 +9,8 @@ import { html, nothing, unsafeCSS } from 'lit'
 import { buildRawReportsExportGzip, buildWorkspaceExportBundle } from '#client/index.js'
 import { downloadBlob } from '../dom.js'
 import { dialogTabs } from '../header-tabs.js'
-import { AppDialog, openAppDialog, rejectStacked } from './app-dialog.js'
-import { field, onEnter, secretInput } from './shared.js'
+import { openAppDialog, rejectStacked } from './app-dialog.js'
+import { PasswordDialog, onEnter } from './shared.js'
 import shareCSS from './dialog-share.css'
 import tabsCSS from './dialog-tabs.css'
 
@@ -21,18 +21,10 @@ const TABS = [
 
 const count = (list) => (Array.isArray(list) ? list.length : 0)
 
-class WorkspaceExportDialog extends AppDialog {
-  static styles = [...AppDialog.styles, unsafeCSS(shareCSS), unsafeCSS(tabsCSS)]
+class WorkspaceExportDialog extends PasswordDialog {
+  static styles = [...PasswordDialog.styles, unsafeCSS(shareCSS), unsafeCSS(tabsCSS)]
 
-  static properties = {
-    _tab: { state: true },
-    _password: { state: true },
-    _confirm: { state: true },
-    _noPassword: { state: true },
-    _includeBundleBytes: { state: true },
-    _busy: { state: true },
-    _error: { state: true },
-  }
+  static properties = { _tab: { state: true }, _noPassword: { state: true }, _includeBundleBytes: { state: true } }
 
   // The typed password, and the workspace (its private key) the open helper set.
   static secrets = { _password: '', _confirm: '', workspace: null }
@@ -40,12 +32,8 @@ class WorkspaceExportDialog extends AppDialog {
   constructor() {
     super()
     this._tab = 'workspace'
-    this._password = ''
-    this._confirm = ''
     this._noPassword = false
     this._includeBundleBytes = false
-    this._busy = false
-    this._error = ''
   }
 
   // Unmounting the password fields drops what was typed in them.
@@ -62,8 +50,6 @@ class WorkspaceExportDialog extends AppDialog {
     if (tab !== 'workspace') this._forgetPassword()
   }
 
-  _onPasswordInput = (e) => { this._password = e.target.value; this._error = '' }
-  _onConfirmInput = (e) => { this._confirm = e.target.value; this._error = '' }
   _onNoPasswordToggle = (e) => {
     this._noPassword = e.target.checked
     this._error = ''
@@ -80,31 +66,24 @@ class WorkspaceExportDialog extends AppDialog {
     return this._noPassword || (this._password.length > 0 && this._password === this._confirm)
   }
 
-  _onExport = async () => {
+  // Once cancelled, nothing downloads.
+  _onExport = () => {
     if (!this._canExport()) return
     if (!this.workspace) {
       this._error = 'No workspace selected.'
       return
     }
-    const tab = this._tab
-    this._busy = true
-    this._error = ''
-    try {
-      const { blob, filename } = tab === 'raw'
-        ? await buildRawReportsExportGzip(this.workspace)
-        : await buildWorkspaceExportBundle(this.workspace, {
-          password: this._noPassword ? undefined : this._password,
-          includeBundleBytes: this._includeBundleBytes,
-        })
-      // PBKDF2 takes a while: once cancelled, nothing downloads.
-      if (this._settled) return
+    const { workspace, _tab: tab } = this
+    const build = tab === 'raw'
+      ? () => buildRawReportsExportGzip(workspace)
+      : () => buildWorkspaceExportBundle(workspace, {
+        password: this._noPassword ? undefined : this._password,
+        includeBundleBytes: this._includeBundleBytes,
+      })
+    void this._attempt(build, ({ blob, filename }) => {
       downloadBlob(blob, filename)
       this._finish({ ok: true, tab })
-    } catch (err) {
-      if (!this._settled) this._error = err?.message ?? String(err)
-    } finally {
-      this._busy = false
-    }
+    })
   }
 
   _onKeydown = onEnter(this._onExport)
@@ -112,7 +91,6 @@ class WorkspaceExportDialog extends AppDialog {
   _workspacePanel() {
     const mismatch = this._password && this._confirm && this._password !== this._confirm
     const bundleCount = count(this.workspace?.bundles)
-    const password = (label, name, value, input) => field(label, secretInput({ name, value, input, keydown: this._onKeydown, disabled: this._noPassword }))
     return html`
       <p class="nwd-note ui-hint">
         The export file carries this workspace's reports, triage state,
@@ -121,8 +99,7 @@ class WorkspaceExportDialog extends AppDialog {
         password ensures only those with the password can attach the
         workspace after download.
       </p>
-      ${password('Password', 'dv-export-pw', this._password, this._onPasswordInput)}
-      ${password('Confirm password', 'dv-export-pw-confirm', this._confirm, this._onConfirmInput)}
+      ${this.newPasswordFields('dv-export-pw', this._noPassword)}
       <label class="wsl-optout">
         <input
           type="checkbox"

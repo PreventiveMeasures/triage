@@ -1,13 +1,9 @@
 // A tile of the code viewer's Issues, Pull requests or Agents tab
-// (repository-issues.js, repository-agents.js), opened in a popup over it, as
-// a kanban card opens: an issue or pull request with what its tile shows and
-// more, read as it opens (GET /api/admin/repositories/item), its description,
-// what it closes or what closed it, a pull request's commits, files and who
-// merged it, and, where it changes a lockfile, the package versions new to
-// its lockfiles, open, merged or closed (pull-dependencies.js); or an agent's
-// session, its pull requests, commits, issues and branches. An issue or pull
-// request it names opens in its place, Back returning; each, and a commit or
-// branch, is a link to GitHub, and a session to where it ran.
+// (repository-issues.js, repository-agents.js) in a popup, as a kanban card
+// opens: an issue or pull request, read as it opens (GET
+// /api/admin/repositories/item), with the package versions new to a pull
+// request's lockfiles (pull-dependencies.js); or an agent's session. An issue
+// or pull request it names opens in its place, Back returning.
 import { html, nothing, unsafeCSS } from 'lit'
 import { autorun } from '@rray/frontend/state-management'
 import { state as clientState } from '#client/index.js'
@@ -35,14 +31,14 @@ const date = at => at == null ? '' : new Date(at).toLocaleDateString('en-US', { 
 const plural = (count, noun) => `${count.toLocaleString('en-US')} ${noun}${count === 1 ? '' : 's'}`
 const external = (href, label, primary = false) => href
   ? html`<a class=${primary ? 'primary' : ''} href=${href} target="_blank" rel="noopener noreferrer">${label}</a>` : nothing
-// Where a package version new to a lockfile is from, but npm's registry, and
-// why a directory's lockfiles couldn't tell what they add.
+const codes = paths => paths.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)
+const andMore = n => n > 0 ? html`<p class="repo-item-quiet">and ${n.toLocaleString('en-US')} more</p>` : nothing
+// Where a version is from, but npm's registry; why lockfiles couldn't be read.
 const SOURCES = { mirror: 'mirror', git: 'git', tarball: 'tarball', file: 'file' }
 const LOCKFILE_ERRORS = { 'lockfile-unreadable': 'A lockfile here couldn’t be read', 'lockfile-unsupported': 'Bun’s lockfile here isn’t read', 'github-not-found': 'GitHub has none of a lockfile here at a commit compared' }
 
-// Each issue or pull request a popup read, by the session, the repository
-// and its number, `{ item, at }`: a popup opening on one read less than
-// ITEM_FRESH_MS ago shows it as read, none read again; those older let go.
+// What popups read, `{ item, at }` by session, repository and number: one read
+// less than ITEM_FRESH_MS ago isn't read again; older ones are let go.
 const ITEM_FRESH_MS = 60_000
 const readItems = new Map()
 const itemKey = (repoId, number) => `${clientState.managedSession?.id}\0${clientState.managedSession?.role}\0${repoId}\0${number}`
@@ -58,13 +54,11 @@ class RepositoryItemDialog extends AppDialog {
     this._controller = new AbortController()
   }
 
-  // The target the helper set, shown from the first render, which the
-  // dialog opens on (AppDialog.firstUpdated).
-  // Drawn again as what is known of the repository's issues and pull
-  // requests changes (repository-items.js), a list reading one of them since.
+  // Redrawn as the shown pull request's dependencies are read, and as what is
+  // known of the repository's items changes (repository-items.js). The
+  // helper's target is opened here, so the first render shows it.
   connectedCallback() {
     super.connectedCallback()
-    // Drawn again as the pull request shown has its dependencies read, or all may have changed.
     this._unsubscribe = subscribePullDependencies(pull => {
       if (!pull || (pull.repoId === this.repository?.repoId && pull.number === this._trail.at(-1)?.number)) this.requestUpdate()
     })
@@ -77,9 +71,9 @@ class RepositoryItemDialog extends AppDialog {
   disconnectedCallback() { this._controller.abort(); this._unsubscribe?.(); this._unobserve?.(); super.disconnectedCallback() }
   focusInitial() { this.renderRoot.querySelector('.repo-item-body')?.focus() }
 
-  // Shows `target`, an issue or pull request (`{ number, preview }`, the
-  // preview what its tile knew) or a session (`{ session }`), over the one
-  // shown, reading an issue or pull request not read yet.
+  // Shows `target` over the one shown: an issue or pull request
+  // (`{ number, preview }`, what its tile knew), read if not yet, or a
+  // session (`{ session }`).
   open(target) {
     this._trail = [...this._trail, target]
     if (target.number == null || this._items.has(target.number)) return
@@ -93,7 +87,7 @@ class RepositoryItemDialog extends AppDialog {
     this._items = new Map(this._items).set(number, { status: 'loading' })
     fetchRepositoryItem(repoId, number, { signal: this._controller.signal }).then(
       item => {
-        // Known as the latest read of it, where none later is, for its tile.
+        // Its tile learns it too, unless a later read is known.
         knowItems(repoId, [item], readAtOf(item))
         for (const [key, { at }] of readItems) if (Date.now() - at >= ITEM_FRESH_MS) readItems.delete(key)
         readItems.set(itemKey(repoId, number), { item, at: Date.now() })
@@ -123,16 +117,10 @@ class RepositoryItemDialog extends AppDialog {
     </dialog>`
   }
 
-  // An issue or pull request: its state, title and number; who opened it
-  // when, its labels, a pull request's branches, size, commits and files,
-  // review and checks, and each of its reviews and open threads
-  // (pull-reviews.js); what it closes or what closed it; the package versions
-  // new to a pull request's lockfiles; its description.
   renderItem({ number, preview }) {
     const held = this._items.get(number)
-    // As read latest, by its popup or a list (repository-items.js), what a
-    // list reads none of (whether it changes a lockfile, a closed one's) as
-    // its popup read it.
+    // The latest read, by a popup or a list (repository-items.js), over what
+    // only the popup reads (whether it changes a lockfile, a closed one's).
     const known = knownItem(this.repository.repoId, number)?.item
     const item = known ? { ...preview, ...held?.item, ...known } : held?.item ?? preview ?? null
     const kind = item?.kind ?? 'issues'
@@ -171,12 +159,9 @@ class RepositoryItemDialog extends AppDialog {
     return [heading, body, external(href, 'Open on GitHub', true)]
   }
 
-  // The package versions new to a pull request's lockfiles, by the lockfiles
-  // of each directory, as they are read; none where it changes no lockfile
-  // after all.
-  // An open one's with their review, where its repository's is in effect,
-  // and the reader's reviews of its versions to copy, where the server's host
-  // formats them.
+  // Nothing where it changes no lockfile after all. An open one's come with
+  // their review, where its repository's is in effect, and the reader's
+  // reviews to copy, where the server's host formats them.
   renderDependencies(number, open) {
     const entry = pullDependencies(this.repository.repoId, number, open)
     if (entry.status === 'ready' && entry.lockfiles.length === 0 && !entry.cut) return nothing
@@ -187,14 +172,10 @@ class RepositoryItemDialog extends AppDialog {
       ? html`<dependency-review-copy .text=${entry.formatted} .label=${'Copy your dependency reviews'}></dependency-review-copy>` : nothing}</h4>${body}</section>`
   }
 
-  // Each directory's lockfiles and the package versions new to them, those of
-  // packages new to them first, or why they couldn't tell; that none is,
-  // where none is; and where lockfiles were left unread, it changing more
-  // files or directories than are read. A stasis.config.json its review
-  // holds to is one too, of what its entries reach, or that Stasis still
-  // works it out. Where its review is in effect, its
-  // terms first, then what fails it, where anything does, and the other
-  // versions its lockfiles lock wanting reviews last, apart, where any does.
+  // Per directory, the versions new to its lockfiles (new packages first) or
+  // why they couldn't tell; a stasis.config.json the review holds to counts
+  // as one, of what its entries reach. A review's terms and failures lead,
+  // and the other versions wanting reviews come last, apart.
   renderAdded(entry) {
     const { lockfiles, cut, review } = entry
     const told = lockfiles.filter(dir => dir.error || dir.added.length > 0)
@@ -202,70 +183,56 @@ class RepositoryItemDialog extends AppDialog {
     return html`${review ? html`${this.renderReviewTerms(review)}${this.renderFailures(reviewFailures(entry), review)}` : nothing}
       ${told.length === 0 && lockfiles.length > 0 ? html`<p class="repo-item-quiet">None: every version its lockfiles lock, they locked before.</p>` : nothing}
       ${told.map(dir => html`<div class="repo-item-lockfiles">
-        <p>${dir.paths.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}</p>
+        <p>${codes(dir.paths)}</p>
         ${isPending(dir) ? html`<p class="repo-item-quiet" role="status">Stasis is still working out what its entries reach, which can take a few minutes. It is asked again as it does.</p>`
           : dir.error === 'stasis-failed' ? html`<p class="repo-item-quiet" role="alert">Stasis couldn’t work out what its entries reach (${dir.detail ?? 'build-failed'}).</p>`
           : dir.error ? html`<p class="repo-item-quiet" role="alert">${LOCKFILE_ERRORS[dir.error] ?? 'These lockfiles couldn’t be read'}${dir.detail ? `: ${dir.detail}` : '.'}</p>`
           : html`<ul>${dir.added.toSorted((a, b) => Number(Boolean(a.was)) - Number(Boolean(b.was))).map(pkg => html`<li>${this.renderPackage(pkg, review, false, entry.head)}</li>`)}</ul>
-            ${dir.more > 0 ? html`<p class="repo-item-quiet">and ${dir.more.toLocaleString('en-US')} more</p>` : nothing}`}
+            ${andMore(dir.more)}`}
       </div>`)}
       ${others?.count > 0 ? html`<details class="repo-item-unreviewed"><summary>${others.count.toLocaleString('en-US')} on the base branch</summary>
         <ul>${others.versions.map(pkg => html`<li>${this.renderPackage(pkg, review, true, entry.head)}</li>`)}</ul>
-        ${others.count > others.versions.length ? html`<p class="repo-item-quiet">and ${(others.count - others.versions.length).toLocaleString('en-US')} more</p>` : nothing}
+        ${andMore(others.count - others.versions.length)}
       </details>` : nothing}
       ${cut ? html`<p class="repo-item-quiet">It changes more files, or lockfiles in more directories, than are read; those past them aren’t told.</p>` : nothing}`
   }
 
-  // What leaves a review's versions wanting reviews: the baseline commit's,
-  // which need none, where they couldn't be read, or some of its lockfiles
-  // (`baselineUnread`, the first few named); and those the server's
-  // reviewed dependencies didn't answer for. By how many reviewers its
-  // comments review its versions, which count while it is open, where
-  // reviews count otherwise too (`byComments` not), or that they couldn't
-  // be read. The lockfiles it holds to, where not every one.
+  // What leaves versions wanting reviews: an unread baseline commit (or some
+  // of its lockfiles, the first few named), versions the server's reviewed
+  // dependencies didn't answer for. Comment reviews are noted only where
+  // reviews count otherwise too (`byComments` not).
   renderReviewTerms({ unasked, baselineError, baselineUnread = [], commentReviews, commentsFailed, byComments, lockfiles }) {
     const named = baselineUnread.slice(0, 5)
     return html`${baselineError ? html`<p class="repo-item-quiet" role="alert">The versions its lockfiles locked at that commit couldn’t be read (${baselineError}), so every version wants its reviews.</p>` : nothing}
-      ${named.length > 0 ? html`<p class="repo-item-quiet" role="alert">At that commit, ${named.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}${baselineUnread.length > named.length
+      ${named.length > 0 ? html`<p class="repo-item-quiet" role="alert">At that commit, ${codes(named)}${baselineUnread.length > named.length
         ? ` and ${(baselineUnread.length - named.length).toLocaleString('en-US')} more` : ''} couldn’t be read, so the versions ${baselineUnread.length === 1 ? 'it' : 'they'} locked want reviews.</p>` : nothing}
       ${unasked ? html`<p class="repo-item-quiet" role="alert">The server’s reviewed dependencies didn’t answer for ${plural(unasked, 'version')}, so ${unasked === 1 ? 'it wants' : 'they want'} reviews.</p>` : nothing}
       ${commentReviews && !byComments ? html`<p class="repo-item-quiet">Reviews in its comments by ${plural(commentReviews, 'reviewer')} count too while it is open.</p>` : nothing}
       ${commentsFailed ? html`<p class="repo-item-quiet" role="alert">Its comments couldn’t be read for reviews, so none of theirs count.</p>` : nothing}
       ${lockfiles ? html`<p class="repo-item-quiet">${lockfiles.mode === 'include' ? 'Only these lockfiles are reviewed: ' : 'These lockfiles aren’t reviewed: '}${lockfiles.paths.length === 0 ? 'none'
-        : lockfiles.paths.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}.</p>` : nothing}`
+        : codes(lockfiles.paths)}.</p>` : nothing}`
   }
 
-  // What fails a review (reviewFailures), where anything does: each version
-  // its lockfiles lock that can't be reviewed, with why, and that not every
-  // lockfile it changes was read, where one wasn't.
+  // reviewFailures: versions that can't be reviewed, and lockfiles left unread.
   renderFailures(failed, review) {
     if (!failed) return nothing
     const { versions, count, unread, unchecked, cut } = failed
     return html`<div class="repo-item-failed" role="alert">
       ${count > 0 ? html`<p>Its review fails: ${plural(count, 'version')} its lockfiles lock can’t be reviewed, as only npm’s registry’s, locked with an integrity, are.</p>
         <ul>${versions.map(pkg => html`<li>${this.renderPackage(pkg, review, true)}</li>`)}</ul>
-        ${count > versions.length ? html`<p class="repo-item-quiet">and ${(count - versions.length).toLocaleString('en-US')} more</p>` : nothing}` : nothing}
+        ${andMore(count - versions.length)}` : nothing}
       ${unread.length > 0 || unchecked > 0 || cut ? html`<p>Its review fails: not every lockfile it changes was read${unchecked > 0
         ? `, and they lock ${plural(unchecked, 'version')} past those checked` : ''}.</p>` : nothing}
     </div>`
   }
 
-  // A package version new to a lockfile: its name and version, and the
-  // versions of it the lockfile locked before, where it tells them; npm's opening in the app's npm viewer, a new version compared with
-  // the highest other version it was (none for a version that was installed
-  // from elsewhere alone, which a comparison of versions can't show), or,
-  // where its review is in effect and the reader reviews, reviewed against
-  // it, one that can be, a patched one as patched, against the version it
-  // patches where that was one, its patch alone, its patch read at `head`,
-  // the commit its lockfiles were read at, where it is told its patch's
-  // file, against the one the host names in place of those it was
-  // (npm-delta.js reviewBase); its review; whether only devDependencies need it, whether
-  // it is patched; and where one not of npm's registry is from; and, one of
-  // npm's registry wanting reviews, the lines it changes against the version
-  // it is reviewed against, of its package or another the host names, or
-  // whole, a patched one's as its patch changes them (npm-delta.js). Another its lockfiles lock
-  // (`other`), wanting reviews or failing them, by its version alone,
-  // reviewed whole.
+  // A version new to a lockfile, opening in the app's npm viewer where it is
+  // npm's: reviewed where the review is in effect and the reader reviews,
+  // against its base (npm-delta.js reviewBase: the version it was, or one the
+  // host names), a patched one as patched, its patch read at `head`, the
+  // commit its lockfiles were read at; else compared with the version it was.
+  // One wanting reviews shows the lines it changes (npm-delta.js). `other`:
+  // another version its lockfiles lock, by its version alone, reviewed whole.
   renderPackage(pkg, review = null, other = false, head = null) {
     const { name, version, source, from, dev, was } = pkg
     const npm = (source === 'registry' || source === 'mirror') && version
@@ -287,10 +254,7 @@ class RepositoryItemDialog extends AppDialog {
     return href ? html`<a class="repo-item-row" href=${href} target="_blank" rel="noopener noreferrer">${label}</a>` : html`<span class="repo-item-row">${label}</span>`
   }
 
-  // A version's review, where its pull request's is in effect: that it can't
-  // be reviewed, and why; none needed, its repository's lockfiles having
-  // locked it at the commit reviewed since; passed by the server's reviewed
-  // dependencies; passed, with how many reviews; or wanting them.
+  // A version's review, where its pull request's is in effect.
   renderReview(pkg, review) {
     const state = reviewOf(pkg, review)
     if (state === 'unsupported') return html`<span class="repo-item-review is-failed" data-tooltip=${UNSUPPORTED_WHY[pkg.unsupported]}>can’t review</span>`
@@ -306,8 +270,7 @@ class RepositoryItemDialog extends AppDialog {
     return html`<span class=${`repo-item-review is-${state}`} data-tooltip=${told}>${state === 'passed' ? CHECKS.success[1] : nothing}${pkg.reviews}/${review.required}</span>`
   }
 
-  // The issues or pull requests (`kind`) an item or session names, each
-  // opening in its place, and how many more GitHub has.
+  // The issues or pull requests (`kind`) named, and how many more GitHub has.
   renderLinked(title, kind, items, more = 0) {
     if (!items?.length && !more) return nothing
     return html`<section class="repo-item-section"><h4>${title}</h4>${items?.length ? html`<ul>${items.map(linked => {
@@ -320,9 +283,6 @@ class RepositoryItemDialog extends AppDialog {
     })}</ul>` : nothing}${more > 0 ? html`<p class="repo-item-quiet">${items?.length ? 'and ' : ''}${more.toLocaleString('en-US')} more, on GitHub</p>` : nothing}</section>`
   }
 
-  // A session: its agents' marks and title; who, when, its state, tasks and
-  // size; its pull requests and issues, opening in its place, its commits
-  // and branches, on GitHub.
   renderSession(session) {
     const repo = this.repository.repo
     const [stateClass, stateName] = SESSION_STATES[session.state] ?? SESSION_STATES.branch

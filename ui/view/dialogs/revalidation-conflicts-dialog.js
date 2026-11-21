@@ -18,13 +18,6 @@ const FIELD_LABELS = {
 class RevalidationConflictsDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(severityCSS), unsafeCSS(fileIconCSS), unsafeCSS(conflictsCSS)]
 
-  static properties = { conflicts: { attribute: false } }
-
-  constructor() {
-    super()
-    this.conflicts = []
-  }
-
   render() {
     return html`<dialog aria-labelledby="revalidation-conflicts-title" @close=${this._onClose}>
       <header>

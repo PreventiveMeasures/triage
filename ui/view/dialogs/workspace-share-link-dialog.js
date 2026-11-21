@@ -3,22 +3,14 @@
 // is workspace-unlock-link-dialog.js.
 import { html, nothing, unsafeCSS } from 'lit'
 import { buildShareUrl, encodeShareLink } from '#client/index.js'
-import { AppDialog, openAppDialog, rejectStacked } from './app-dialog.js'
-import { field, onEnter, secretInput } from './shared.js'
+import { openAppDialog, rejectStacked } from './app-dialog.js'
+import { PasswordDialog, field, onEnter } from './shared.js'
 import shareCSS from './dialog-share.css'
 
-class WorkspaceShareLinkDialog extends AppDialog {
-  static styles = [...AppDialog.styles, unsafeCSS(shareCSS)]
+class WorkspaceShareLinkDialog extends PasswordDialog {
+  static styles = [...PasswordDialog.styles, unsafeCSS(shareCSS)]
 
-  static properties = {
-    _name: { state: true },
-    _password: { state: true },
-    _confirm: { state: true },
-    _url: { state: true },
-    _busy: { state: true },
-    _error: { state: true },
-    _copied: { state: true },
-  }
+  static properties = { _name: { state: true }, _url: { state: true }, _copied: { state: true } }
 
   // The typed password, the link (which embeds the private key), and the raw
   // key the open helper set.
@@ -27,11 +19,7 @@ class WorkspaceShareLinkDialog extends AppDialog {
   constructor() {
     super()
     this._name = ''
-    this._password = ''
-    this._confirm = ''
     this._url = ''
-    this._busy = false
-    this._error = ''
     this._copied = false
   }
 
@@ -43,35 +31,20 @@ class WorkspaceShareLinkDialog extends AppDialog {
   }
 
   _onNameInput = (e) => { this._name = e.target.value }
-  _onPasswordInput = (e) => { this._password = e.target.value; this._error = '' }
-  _onConfirmInput = (e) => { this._confirm = e.target.value; this._error = '' }
 
   _canGenerate() {
     return this._name.trim().length > 0 && this._password.length > 0 && this._password === this._confirm && !this._busy
   }
 
-  _onGenerate = async () => {
+  _onGenerate = () => {
     if (!this._canGenerate()) return
-    this._busy = true
-    this._error = ''
-    try {
-      const encoded = await encodeShareLink({
-        id: this.workspaceId,
-        name: this._name.trim(),
-        privateKeyBase64: this.privateKeyBase64,
-        password: this._password,
-      })
-      // PBKDF2 takes a while: once cancelled, the key-bearing link isn't kept.
-      if (this._settled) return
+    const link = { id: this.workspaceId, name: this._name.trim(), privateKeyBase64: this.privateKeyBase64, password: this._password }
+    void this._attempt(() => encodeShareLink(link), (encoded) => {
       this._url = buildShareUrl(encoded)
       // The link is all that's copied; don't keep the password bound.
       this._password = ''
       this._confirm = ''
-    } catch (err) {
-      if (!this._settled) this._error = err?.message ?? String(err)
-    } finally {
-      this._busy = false
-    }
+    })
   }
 
   _onCopy = async () => {
@@ -133,8 +106,7 @@ class WorkspaceShareLinkDialog extends AppDialog {
         @input=${this._onNameInput}
         @keydown=${this._onKeydown}
       >`)}
-      ${field('Password', secretInput({ name: 'dv-share-link-pw', value: this._password, input: this._onPasswordInput, keydown: this._onKeydown }))}
-      ${field('Confirm password', secretInput({ name: 'dv-share-link-pw-confirm', value: this._confirm, input: this._onConfirmInput, keydown: this._onKeydown }))}
+      ${this.newPasswordFields('dv-share-link-pw')}
       <p class="nwd-note ui-hint">
         The link carries the workspace's identity (id, name, and
         private key) so the recipient joins the same sync chain.

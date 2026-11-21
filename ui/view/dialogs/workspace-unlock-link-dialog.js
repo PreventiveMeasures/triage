@@ -5,24 +5,21 @@
 // `attachSharedWorkspace` are the boot handler's (view.js).
 import { html, nothing, unsafeCSS } from 'lit'
 import { decodeShareLink, listWorkspaces, sanitizeWorkspaceName } from '#client/index.js'
-import { AppDialog, openAppDialog, rejectStacked } from './app-dialog.js'
-import { field, onEnter, secretInput } from './shared.js'
+import { openAppDialog, rejectStacked } from './app-dialog.js'
+import { PasswordDialog, field, onEnter } from './shared.js'
 import shareCSS from './dialog-share.css'
 
 const workspaceWithId = (id) => listWorkspaces().find((w) => w.id === id) ?? null
 
-class WorkspaceUnlockLinkDialog extends AppDialog {
-  static styles = [...AppDialog.styles, unsafeCSS(shareCSS)]
+class WorkspaceUnlockLinkDialog extends PasswordDialog {
+  static styles = [...PasswordDialog.styles, unsafeCSS(shareCSS)]
 
   static properties = {
     encoded: { type: String },
     _stage: { state: true },
-    _password: { state: true },
     _name: { state: true },
     _decoded: { state: true },
     _existingById: { state: true },
-    _busy: { state: true },
-    _error: { state: true },
   }
 
   // The decrypted private key, and the ciphertext the open helper set.
@@ -32,12 +29,9 @@ class WorkspaceUnlockLinkDialog extends AppDialog {
     super()
     this.encoded = ''
     this._stage = 'password'
-    this._password = ''
     this._name = ''
     this._decoded = null
     this._existingById = null
-    this._busy = false
-    this._error = ''
   }
 
   updated(changed) {
@@ -51,27 +45,16 @@ class WorkspaceUnlockLinkDialog extends AppDialog {
     input?.select()
   }
 
-  _onPasswordInput = (e) => { this._password = e.target.value; this._error = '' }
   _onNameInput = (e) => { this._name = e.target.value }
 
-  _onUnlock = async () => {
-    if (!this._password || this._busy) return
-    this._busy = true
-    this._error = ''
-    try {
-      const decoded = await decodeShareLink({ encoded: this.encoded, password: this._password })
-      // PBKDF2 takes a while: once cancelled, don't undo `_finish`'s wipe.
-      if (this._settled) return
-      this._existingById = workspaceWithId(decoded.id)
-      this._decoded = decoded
-      this._name = decoded.name
-      this._password = ''
-      this._stage = 'name'
-    } catch (err) {
-      if (!this._settled) this._error = err?.message ?? String(err)
-    } finally {
-      this._busy = false
-    }
+  unlock(password) { return decodeShareLink({ encoded: this.encoded, password }) }
+
+  unlocked(decoded) {
+    this._existingById = workspaceWithId(decoded.id)
+    this._decoded = decoded
+    this._name = decoded.name
+    this._password = ''
+    this._stage = 'name'
   }
 
   _onAttach = () => {
@@ -99,27 +82,6 @@ class WorkspaceUnlockLinkDialog extends AppDialog {
   }
 
   _onKeydown = onEnter(() => (this._stage === 'password' ? this._onUnlock() : this._onAttach()))
-
-  _passwordStage() {
-    return html`
-      <p class="nwd-note ui-hint">
-        Someone shared a workspace with you. Enter the password they
-        sent separately to attach it to this browser.
-      </p>
-      ${field('Password', secretInput({ name: 'dv-share-link-unlock', value: this._password, input: this._onPasswordInput, keydown: this._onKeydown }))}
-      ${this._error ? html`<p class="wsl-error" role="alert">${this._error}</p>` : nothing}
-      <footer class="nwd-actions">
-        <span class="nwd-spacer"></span>
-        <button type="button" @click=${this._onCancel}>Cancel</button>
-        <button
-          type="button"
-          class="primary"
-          ?disabled=${!this._password || this._busy}
-          @click=${this._onUnlock}
-        >${this._busy ? 'Unlocking…' : 'Unlock'}</button>
-      </footer>
-    `
-  }
 
   _nameStage() {
     if (this._existingById) {
@@ -176,7 +138,9 @@ class WorkspaceUnlockLinkDialog extends AppDialog {
       <header>
         <h3>${heading}</h3>
       </header>
-      ${this._stage === 'password' ? this._passwordStage() : this._nameStage()}
+      ${this._stage === 'password'
+        ? this.passwordStage('Someone shared a workspace with you. Enter the password they sent separately to attach it to this browser.', 'dv-share-link-unlock')
+        : this._nameStage()}
     </dialog>`
   }
 }
