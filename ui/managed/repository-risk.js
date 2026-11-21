@@ -1,24 +1,11 @@
-// Manage → Repositories → Risk, for admins: every connected repository's npm
-// lockfiles, or a team's or one repository's, their packages, and what risk
-// tells of each, as the server finds them (GET /api/admin/repositories/risk,
-// server-managed/repository-risk.ts); npm's advisories of them on a tab of
-// their own, those of malware a package's risk too. Packages are listed by
-// their risk alone, those only devDependencies need tagged so, and either
-// kind shown alone as toggled, as are advisories of the versions production
-// takes or of those, malware's either way. A mirror's copy differing from
-// npm's is flagged critical, listed first but for malware. Each lockfile used
-// links to it on GitHub, at the commit read. Each repository's open
-// Dependabot alerts are blended into the advisories: one of an advisory npm
-// tells too, by its GHSA and package, links where it is used to the alert,
-// adding where npm didn't tell it, and one npm tells none of is listed as its
-// own; one dismissed is paired alike, where it is used struck through, but
-// lists none of its own. Whose alerts couldn't be had is said beside, the
-// rest shown all the same. Each repository's GitHub Actions on a tab of
-// their own (repository-risk-actions.js): the actions and reusable
-// workflows its workflows use, resolved on GitHub, and what their steps
-// fetch or run past a pin.
-// Opened by its URL alone,
-// /manage/repositories/risk, until it is linked.
+// Manage → Repositories → Risk, for admins: the npm lockfiles of every
+// connected repository (or a team's, or one), their packages and what risk
+// finds of each (GET /api/admin/repositories/risk, repository-risk.ts).
+// Tabs: packages by risk (dev-only ones tagged, either kind shown alone);
+// npm's advisories, blended with each repository's Dependabot alerts (by GHSA
+// and package; a dismissed alert struck through and never listed alone); and
+// GitHub Actions (repository-risk-actions.js). A mirror's copy differing from
+// npm's is flagged critical. Lockfiles link to GitHub at the commit read.
 import { html, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from '../view/style-map.js'
@@ -36,10 +23,7 @@ import commonStyles from './styles/common.css'
 import linksStyles from './styles/links.css'
 import riskStyles from './styles/repository-risk.css'
 
-// What risk finds of a version, against the version it picks to compare it
-// with where it picks one (risk/npm/held.js, combined.js, compare.js): what it
-// holds, raised by what changed; what only a change tells; and npm's
-// advisories of malware.
+// What risk finds of a version (risk/npm/held.js, combined.js, compare.js).
 const FINDING_LABELS = {
   malware: 'Malware',
   deprecated: 'Deprecated',
@@ -91,60 +75,42 @@ const ERRORS = {
   'invalid-uses': 'Not a reference GitHub reads',
 }
 const errorText = code => ERRORS[code] ?? code
-// Why something couldn't be had, its detail in its tooltip.
 const failure = ({ error, detail }) => html`<span class="risk-error" data-tooltip=${detail ?? nothing}>${errorText(error)}</span>`
 const START_ERRORS = { 401: 'Sign in again to scan repositories.', 403: 'Only admins can scan repositories.',
   404: 'That team or repository is no longer connected. Choose again.' }
 
-// What a scan reads: every connected repository, a team's, or one.
 const SCOPES = [['all', 'All repositories'], ['team', 'Team'], ['repo', 'Repository']]
-// Up to how many teams are chosen among as buttons, as the scope is; more in
-// a list.
+// Teams are buttons up to this many, else a list.
 const TEAM_BUTTONS = 5
 
 const SOURCE_LABELS = { registry: 'npm', mirror: 'Mirror', git: 'Git', tarball: 'Tarball', file: 'File' }
 const assessable = source => source === 'registry' || source === 'mirror'
 
-// The malware advisories name in a package. They speak of npm's artifact:
-// not of one risk finds differs from npm's, as a private package of a public
-// one's name does, from npm's registry or a mirror. A mirror's copy can't be
-// held to npm's integrity where npm deleted the version, as it deletes every
-// one it finds malware in: it is npm's unless found otherwise.
+// The malware advisories name in a package. They speak of npm's artifact, so
+// not of a copy found to differ from it; a mirror's copy of a version npm
+// deleted (as it deletes malware) is npm's unless found otherwise.
 export const malwareOf = row => differs(row) ? null : row.malware ?? null
-// Whether risk found a mirror's copy isn't npm's of its name and version, its
-// integrity not npm's: a private package of a public one's name, or one
-// tampered with. Flagged critical, and listed first but for malware, not as
-// one that couldn't be assessed.
+// A mirror's copy whose integrity isn't npm's: a private package of a public
+// one's name, or one tampered with. Critical, not unassessed.
 export const differs = row => row.risk?.error === 'integrity-mismatch'
-// A package row's most severe finding, its malware first, as critical: the
-// advisories', or risk's own of a package npm took down, once; or its copy
-// differing from npm's. What its rows are flagged by.
 const severityOf = row => malwareOf(row) || differs(row) ? 'critical' : row.risk?.severity ?? null
-// A package row's risk, out of 100, as risk scores it (risk/npm/score.js):
-// malware's 100, the advisories' as risk's own; null where it isn't told.
+// Out of 100 (risk/npm/score.js), malware's 100; null where not told.
 export const scoreOf = row => malwareOf(row) ? 100 : row.risk && !row.risk.error ? row.risk.score ?? null : null
 export const findingsOf = row => {
   const found = row.risk?.findings ?? []
   return malwareOf(row) ? [{ id: 'malware', severity: 'critical' }, ...found.filter(({ id }) => id !== 'malware')] : found
 }
-// What its Malware finding says, a line each: the advisories of malware
-// naming it, and its package taken down by npm, as risk finds it.
+// The Malware finding's lines: the advisories naming it, and npm's takedown.
 export const malwareSaid = row => [...malwareOf(row) ?? [],
   ...row.risk?.findings?.some(({ id, takenDown }) => id === 'malware' && takenDown) ? ['Taken down by npm'] : []]
-// Whether a package row has malware: the advisories', or risk's own.
 const hasMalware = row => findingsOf(row).some(({ id }) => id === 'malware')
-// Whether a package row is shown whatever needs it: malware, or a copy
-// differing from npm's, either of which runs wherever it is installed, CI and
-// a developer's machine among them.
+// Shown whatever needs it, as either runs wherever it is installed.
 const regardless = row => differs(row) || hasMalware(row)
-// Whether a package row is of `kind` (PACKAGE_KINDS): development's where
-// only devDependencies need it, production's where more do, or its lockfiles
-// don't say; one told regardless of both.
+// Of `kind` (PACKAGE_KINDS): development where only devDependencies need it.
 const ofKind = (row, kind) => kind === 'all' || regardless(row) || Boolean(row.dev) === (kind === 'development')
 const severityLabel = severity => `${severity[0].toUpperCase()}${severity.slice(1)}`
 
-// Which package rows are shown, by the filter's value: its label, and which
-// rows.
+// Each package filter's label and rows.
 const FILTERS = {
   all: ['All', () => true],
   flagged: ['Flagged', row => Boolean(severityOf(row))],
@@ -152,45 +118,37 @@ const FILTERS = {
   elsewhere: ['Not from npm', row => !assessable(row.source)],
 }
 
-// What a package's risk is, as its column's heading tells it.
 const RISK_SAID = 'Out of 100: what its findings call for, lowered by how long the version has been out among how many download its package. Malware is 100.'
-// What a package's dev tag, or an advisory's, tells.
 const DEV_SAID = 'Only devDependencies need it, in every lockfile that locks it: an install without them leaves it out. Assessed after the rest.'
 const ADVISORY_DEV_SAID = 'Only devDependencies need these versions, in every lockfile that locks them: an install without them leaves them out.'
-// What a package's copy differing from npm's tells.
 const DIFFERS_SAID = 'Its lockfile’s integrity, a mirror’s, isn’t npm’s of this name and version: not npm’s package, as a private one of a public one’s name is, or one tampered with.'
-// The advisories shown, by the versions they affect: those some lockfile
-// needs as more than devDependencies do, or doesn't tell (Yarn 1's), or those
-// only devDependencies need. Malware's are shown either way.
+// Advisories by the versions they affect: production where some lockfile
+// needs them beyond devDependencies (or doesn't say, as Yarn 1's); malware's
+// either way.
 const KINDS = { production: 'Production', development: 'Development' }
-// The packages shown: all, those an install for production takes, or those
-// only devDependencies need (ofKind).
 const PACKAGE_KINDS = { all: 'All', production: 'Production', development: 'Development' }
 const devTag = said => html`<span class="risk-dev" data-tooltip=${said}>dev</span>`
 
-// A package's cell: npm's mark, or a package's for one from elsewhere (git, a
-// tarball, a file), its name, linked to npm's viewer at `path` where given,
-// and its `version`, muted, where it has one; and its dev tag.
+// npm's mark (a package's for git, tarball or file sources), its name linked
+// to npm's viewer at `path`, its version muted, and its dev tag.
 function packageCell({ name, source, dev }, version, path, devSaid) {
   const named = html`${name}${version ? html`<span class="risk-version">@${version}</span>` : nothing}`
   return html`<span class="risk-package">${icon(assessable(source) ? NPM_ICON_SVG : BUNDLE_ICON_SVG)}${path
     ? html`<a class="risk-name" href=${path}>${named}</a>` : html`<span>${named}</span>`}${dev ? devTag(devSaid) : nothing}</span>`
 }
 
-// Whether a risk line tells what risk found: its findings, or its copy
-// differing from npm's (differs); not why it couldn't be assessed.
+// A risk line of findings, or of a copy differing from npm's; not a failure.
 const found = risk => !risk.error || risk.error === 'integrity-mismatch'
 
-// A package row's risk as its line tells it, `stale` where the line is one
-// kept and since gone stale (when it was assessed); a stale one assessed
-// again replaced, or, where that fails, kept, saying why (`refreshFailed`).
+// A row's risk from its line, `stale` (when assessed) for one kept since; a
+// stale one whose reassessment fails is kept, saying why (`refreshFailed`).
 export function riskOf(line, was) {
   const stale = line.stale ?? null
   if (!found(line) && !stale && was?.stale && found(was)) return { ...was, refreshFailed: line.detail ? `${errorText(line.error)}: ${line.detail}` : errorText(line.error) }
   return line.error ? { error: line.error, detail: line.detail ?? null, stale } : { severity: line.severity, score: line.score ?? null, findings: line.findings, published: line.published, stale }
 }
 
-// How long ago `at` was, roughly: `5 minutes ago`, `3 hours ago`, `2 days ago`.
+// Roughly: `5 minutes ago`, `3 hours ago`, `2 days ago`.
 const relative = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
 export function ago(at, now = Date.now()) {
   const minutes = Math.round((at - now) / 60_000)
@@ -199,29 +157,23 @@ export function ago(at, now = Date.now()) {
   return Math.abs(hours) < 48 ? relative.format(hours, 'hour') : relative.format(Math.round(hours / 24), 'day')
 }
 
-// How many parts a scan is asked in at most, where the server answers in
-// parts (`continue`): 100 of 270s each, some seven hours.
+// Where the server answers in parts (`continue`): at most 100 of 270s each,
+// and a scan stops after 3 that tell nothing more (_told).
 const MAX_PARTS = 100
-// How many parts running may tell nothing more (_told) before a scan stops,
-// as one that goes no further wouldn't finish in MAX_PARTS either.
 const MAX_IDLE_PARTS = 3
-
-// How many package rows are drawn at most, the riskiest first.
+// Rows drawn at most, the riskiest first; lines come faster than such a
+// table redraws, so it draws at most every DRAW_MS.
 const MAX_ROWS = 1000
-// Lines come faster than a table this long redraws: draw at most this often.
 const DRAW_MS = 250
 
 const formatCount = new Intl.NumberFormat()
 
-// Package rows' counts: how many, how many told, flagged, stale, and told
-// stale this scan, since assessed again or not.
+// Package rows' counts; `wasStale`, those told stale this scan.
 const tally = rows => ({ total: rows.length, told: rows.filter(row => row.risk).length, flagged: rows.filter(severityOf).length,
   stale: rows.filter(row => row.risk?.stale).length, wasStale: rows.filter(row => row.wasStale).length })
 
-// An icon before a cell's text, muted (risk-icon).
 const icon = svg => html`<span class="risk-icon" aria-hidden="true">${appMarkup(svg)}</span>`
 
-// Why a Dependabot alert was dismissed, as GitHub offers the reasons.
 const DISMISSED_REASONS = {
   fix_started: 'A fix has already been started',
   inaccurate: 'This alert is inaccurate or incorrect',
@@ -230,8 +182,8 @@ const DISMISSED_REASONS = {
   tolerable_risk: 'Risk is tolerable to this project',
 }
 
-// What a Dependabot alert's link says of it: its number, and where it was
-// dismissed, why, by whom and when, then what they said.
+// A Dependabot alert's number, and its dismissal: why, by whom, when, and
+// what they said.
 export function alertSaid({ number, dismissed }) {
   if (!dismissed) return `Dependabot alert #${number}`
   const why = dismissed.auto ? 'auto-dismissed by a rule' : `dismissed${DISMISSED_REASONS[dismissed.reason] ? `: ${DISMISSED_REASONS[dismissed.reason]}` : ''}`
@@ -239,11 +191,9 @@ export function alertSaid({ number, dismissed }) {
   return [`Dependabot alert #${number}, ${why}${who ? ` (${who})` : ''}`, ...dismissed.comment ? [`“${dismissed.comment}”`] : []].join('\n')
 }
 
-// A lockfile (`used`, a repository's name and its path), cut short: a link
-// to its Dependabot alert, after Dependabot's mark, where an advisory's
-// alert of it is (`alerts`, by where it is used), struck through where it
-// was dismissed, else to it on GitHub, after GitHub's mark, where it is
-// listed (`links`, _lockfileLinks).
+// A lockfile (`used`: a repository's name and path), linked to its
+// Dependabot alert (`alerts`, struck through where dismissed), else to
+// GitHub (`links`, _lockfileLinks).
 function lockfileLink(used, links, alerts) {
   const alert = alerts?.get(used)
   if (alert && isHttpUrl(alert.url)) {
@@ -255,8 +205,7 @@ function lockfileLink(used, links, alerts) {
   return href ? html`<a class="risk-name risk-used" href=${href} target="_blank" rel="noopener noreferrer">${icon(GITHUB_ICON_SVG)}${path}</a>` : path
 }
 
-// Where a package or an advisory is locked: its lockfile, or how many,
-// opening into each one's; or where else a row is used, by its `noun`.
+// Its one lockfile, or how many (`noun`), opening into each.
 function usedInCell(lockfiles, links, alerts, noun = 'lockfiles') {
   const used = [...lockfiles]
   if (used.length === 1) return lockfileLink(used[0], links, alerts)
@@ -265,24 +214,28 @@ function usedInCell(lockfiles, links, alerts, noun = 'lockfiles') {
     <ul>${used.map(each => html`<li>${lockfileLink(each, links, alerts)}</li>`)}</ul></details>`
 }
 
-// Whether an id is a GHSA, as an advisory and a Dependabot alert share it.
 const isGhsa = id => typeof id === 'string' && /^GHSA(?:-[\da-z]{4}){3}$/iu.test(id)
 
-// The lines of a scan of `params` (`team` or `repo`, or neither),
-// repository-risk.ts RepositoryRiskLine, each as it comes.
+// A scan's lines (repository-risk.ts RepositoryRiskLine) as they come.
 const streamRisk = (params, signal, onLine) => request(`/api/admin/repositories/risk${params.size > 0 ? `?${params}` : ''}`, START_ERRORS, async response => {
   for await (const line of responseLines(response)) onLine(line)
 }, signal)
 
-// A package row's key: npm's package by its name and version, a mirror's by
-// its integrity too, as its risk line names it; any other by where it is from.
+// npm's by name and version (a mirror's with its integrity), as risk lines
+// name them; any other by where it is from.
 const riskKey = ({ name, version, integrity }) => `${name}@${version}\0${integrity ?? ''}`
 const packageKey = pkg => assessable(pkg.source) ? riskKey(pkg) : `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}`
+// Where a repository's lockfiles are used, as `usedIn` names them.
+const usedInOf = repo => [...repo.lockfiles?.keys() ?? []].map(path => `${repo.fullName}/${path}`)
+// An advisory row's versions, and those each lockfile told of (`versionsIn`,
+// for those of one kind alone to name only their lockfiles, _advisoryKinds).
+function addVersions(row, usedIn, versions) {
+  const told = row.versionsIn.get(usedIn) ?? row.versionsIn.set(usedIn, new Set()).get(usedIn)
+  for (const version of versions) { told.add(version); row.versions.add(version) }
+}
 
-// A package row's rank: malware first, then a copy differing from npm's, each
-// above any score (a version of enough critical findings scores 100 too), then
-// by its risk, the highest first, then those still to be told, those that
-// couldn't be, those of none, and those not assessed.
+// Malware, then a differing copy (above any score: enough critical findings
+// score 100 too), then by risk, then pending, failed, none, not assessed.
 function rank(row) {
   if (hasMalware(row)) return -102
   if (differs(row)) return -101
@@ -293,7 +246,6 @@ function rank(row) {
   return row.risk ? 2 : 1
 }
 
-// A row of tabs, each `[tab, label]`, `current` the one chosen.
 const tabList = (name, tabs, current, choose) => html`<div class="risk-tabs" role="tablist" aria-label=${name}>${tabs.map(([tab, label]) => html`<button type="button" role="tab"
   aria-selected=${current === tab} @click=${() => choose(tab)}>${label}</button>`)}</div>`
 
@@ -306,29 +258,17 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
 
   constructor() {
     super()
-    // idle, running, stopped or done.
-    this._state = 'idle'
-    this._error = null
-    this._filter = 'all'
-    // The advisories' KINDS shown, and the packages' PACKAGE_KINDS.
-    this._kind = 'production'
-    this._packageKind = 'all'
-    // The Actions tab's ACTION_KINDS shown.
-    this._actionKind = 'all'
-    this._query = ''
-    // packages, advisories or actions.
-    this._tab = 'packages'
-    // The repositories' files listed: lockfiles or workflows.
-    this._files = 'lockfiles'
+    // _state: idle, running, stopped or done. _kind: the advisories' KINDS,
+    // _packageKind the packages', _actionKind the Actions tab's. _tab:
+    // packages, advisories or actions; _files: lockfiles or workflows.
+    // _scope (SCOPES) names a team's or repository's id in _target; _choices
+    // are the teams and repositories, as Teams has them.
+    Object.assign(this, { _state: 'idle', _filter: 'all', _kind: 'production', _packageKind: 'all', _actionKind: 'all', _query: '',
+      _tab: 'packages', _files: 'lockfiles', _scope: 'all', _target: '', _choices: null })
     this._scan = null
     this._drawTimer = null
     // The parts a scan has been asked in so far (MAX_PARTS).
     this._parts = 0
-    // SCOPES', and the team's or repository's id it names.
-    this._scope = 'all'
-    this._target = ''
-    // The teams and connected repositories to choose among, as Teams has them.
-    this._choices = null
     this._reset()
   }
 
@@ -336,10 +276,9 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     return this._loadCollection('teams', 'teams', fetchTeams, data => { this._choices = data })
   }
 
-  // Scans `scope` (SCOPES) and `target` from now on, what was found of
-  // another put away; not while a scan is under way.
+  // What later scans read, dropping what was found of another; not while
+  // scanning. The same one chosen again keeps its findings.
   _choose(scope, target = '') {
-    // The one chosen chosen again keeps what was found of it.
     if (this._state === 'running' || (scope === this._scope && target === this._target)) return
     this._scope = scope
     this._target = target
@@ -349,21 +288,17 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   }
 
   _reset() {
-    // By id: { id, fullName, commit, lockfiles, error, detail, dependabot:
-    // its alerts as told ({ alerts }), why they couldn't be had ({ error,
-    // detail }), or null }; lockfiles by path, each { path, format,
-    // packages, error, detail }.
+    // By id: { id, fullName, commit, error, detail, dependabot: { alerts } or
+    // { error, detail } or null, lockfiles: by path { path, format, packages,
+    // error, detail } }.
     this._repos = new Map()
-    // By packageKey: { name, version, source, from, integrity, usedIn: Set,
-    // neededIn: Set of those of usedIn that lock it as more than
-    // devDependencies need, dev: whether none does, risk, wasStale: whether
-    // told stale this scan, malware: Set of advisory ids where npm's
-    // advisories name it }.
+    // By packageKey: { name, version, source, from, integrity, usedIn,
+    // neededIn (those of usedIn needing it beyond devDependencies), dev (none
+    // does), risk, wasStale (told stale this scan), malware (advisory ids) }.
     this._packages = new Map()
-    // By id and package: an advisory, its versions locked and where (Sets),
-    // and Dependabot's alerts of it by where (_alert).
+    // By id and package: an advisory, its versions and where (Sets), and
+    // Dependabot's alerts of it by where (_alert).
     this._advisories = new Map()
-    // Each repository's Actions, and the references they make, resolved.
     this._actions = new ActionsState()
   }
 
@@ -372,11 +307,10 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     super.disconnectedCallback()
   }
 
-  // Scans what is chosen anew, its lines drawn as they come.
   async start() {
     if (this._state === 'running' || (this._scope !== 'all' && !this._target)) return
-    // The scan's id, for its parts to go on past the repositories those
-    // before told whole (repository-risk.ts ScanProgress).
+    // The scan's id lets later parts skip what earlier ones told whole
+    // (repository-risk.ts ScanProgress).
     const params = new URLSearchParams({ ...this._scope === 'all' ? {} : { [this._scope]: this._target }, scan: crypto.randomUUID() })
     this._reset()
     this._error = null
@@ -385,9 +319,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     this._scan = scan
     this._parts = 0
     try {
-      // A part at a time where the server answers in parts (`continue`), as a
-      // serverless deployment's time-limited function does: each asked again
-      // from where the last stopped, what it told kept here.
+      // A time-limited (serverless) server answers in parts (`continue`),
+      // each asked from where the last stopped.
       for (let ended = 'continue', idle = 0; ended === 'continue';) {
         if (++this._parts > MAX_PARTS) throw new Error(`Stopped after ${formatCount.format(MAX_PARTS)} parts. Scan again to go on from where it stopped.`)
         ended = null
@@ -407,7 +340,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       this._error = err?.message ?? String(err)
       this._state = 'stopped'
     } finally {
-      // Stopped otherwise than by stop(), as by the session changing.
+      // Stopped otherwise than by stop(), as by a session change.
       if (this._scan === scan) {
         this._scan = null
         if (this._state === 'running') this._state = 'stopped'
@@ -416,8 +349,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     }
   }
 
-  // Stops a scan under way: the server stops with its reader. What it found
-  // so far stays.
+  // The server stops with its reader; what was found stays.
   stop() {
     if (!this._scan) return
     this._scan.abort()
@@ -436,9 +368,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     this._drawTimer ??= setTimeout(() => { this._drawTimer = null; this.requestUpdate() }, DRAW_MS)
   }
 
-  // How much of the scan is told: repositories and lockfiles read or failed,
-  // lockfiles' advisories and repositories' Dependabot alerts told or failed,
-  // and packages' risks told other than stale.
+  // How much is told: repositories, lockfiles, advisories and alerts read or
+  // failed, and risks told fresh.
   _told() {
     let told = 0
     for (const repo of this._repos.values()) {
@@ -450,34 +381,32 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     return told + this._actions.told()
   }
 
+  // A scan's next part tells its repositories and lockfiles again: what was
+  // told is kept until told otherwise.
   _apply(line) {
-    // A scan's next part tells its repositories and lockfiles again: those
-    // told already kept as they are until told otherwise.
     if (line.type === 'repos') {
-      // Those no longer listed, as disconnected or no longer the team's, or
-      // listed by another name, as renamed, forgotten.
+      // Those no longer listed (disconnected, no longer the team's) or
+      // renamed are forgotten.
       const listed = new Map(line.repos.map(({ id, fullName }) => [id, fullName]))
       const gone = [...this._repos.values()].filter(repo => listed.get(repo.id) !== repo.fullName)
       for (const repo of gone) { this._repos.delete(repo.id); this._actions.forget(repo.id) }
-      this._forget(gone.flatMap(repo => [...repo.lockfiles?.keys() ?? []].map(path => `${repo.fullName}/${path}`)), gone.some(repo => repo.dependabot?.alerts))
+      this._forget(gone.flatMap(usedInOf), gone.some(repo => repo.dependabot?.alerts))
       for (const { id, fullName } of line.repos) if (!this._repos.has(id)) this._repos.set(id, { id, fullName, commit: null, lockfiles: null, error: null, detail: null, dependabot: null })
     } else if (line.type === 'repo') {
       const repo = this._repos.get(line.id)
       if (!repo) return
-      // One that fails where a part before read it, as its access is
-      // withdrawn: what its lockfiles and its Dependabot alerts told
-      // forgotten.
+      // One failing after an earlier part read it (its access withdrawn)
+      // forgets what its lockfiles and alerts told.
       if (line.error) {
-        const told = [...repo.lockfiles?.keys() ?? []].map(path => `${repo.fullName}/${path}`)
+        const told = usedInOf(repo)
         const alerted = Boolean(repo.dependabot?.alerts)
         Object.assign(repo, { lockfiles: null, error: line.error, detail: line.detail ?? null, dependabot: null })
         this._actions.forget(repo.id)
         this._forget(told, alerted)
         return
       }
-      // Its lockfiles told again as they were, but where its default branch
-      // moved on between parts, or a team's directories in it changed:
-      // what those no longer listed told forgotten.
+      // Its lockfiles kept, unless its default branch moved on between parts;
+      // those no longer listed (a team's directories changed) forgotten.
       const moved = repo.commit !== null && repo.commit !== line.commit
       const listed = new Set(moved ? [] : line.lockfiles.map(({ path }) => path))
       const gone = [...repo.lockfiles?.keys() ?? []].filter(path => !listed.has(path)).map(path => `${repo.fullName}/${path}`)
@@ -501,8 +430,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       }
     } else if (line.type === 'risk') {
       const row = this._packages.get(riskKey(line))
-      // One told stale is so marked for the scan (wasStale), as one assessed
-      // again since (_metrics).
+      // Told stale stays marked for the scan (_metrics), assessed again or not.
       if (row) { row.risk = riskOf(line, row.risk); row.wasStale ||= Boolean(row.risk.stale) }
     } else if (line.type === 'advisories') {
       this._applyAdvisories(line)
@@ -513,10 +441,9 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     }
   }
 
-  // What lockfiles no longer listed told (`usedIn`, a repository's name and
-  // a path) forgotten: the packages no other lockfile tells, and the
-  // advisories as those listed tell them, as they are told again too where
-  // a repository's Dependabot alerts are forgotten (`alerted`).
+  // What lockfiles no longer listed told (`usedIn`): packages no other one
+  // tells, and the advisories, rebuilt then too where a repository's
+  // Dependabot alerts are forgotten (`alerted`).
   _forget(usedIn, alerted = false) {
     if (usedIn.length === 0) {
       if (alerted) this._readvise()
@@ -530,8 +457,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     this._readvise()
   }
 
-  // Each listed lockfile's advisories, as it told them last, told anew, and
-  // each repository's Dependabot alerts blended into them.
+  // The advisories rebuilt from each lockfile's last, with the alerts blended in.
   _readvise() {
     this._advisories = new Map()
     for (const row of this._packages.values()) row.malware = undefined
@@ -541,17 +467,13 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     this._alert()
   }
 
-  // Whether any repository told Dependabot alerts, blended into the
-  // advisories, so that another's are told anew with them.
   _alerted() {
     return [...this._repos.values()].some(repo => repo.dependabot?.alerts?.length > 0)
   }
 
-  // A lockfile's advisories, kept as it told them: told again otherwise, as
-  // a scan over an hour long audits it again (repository-risk.ts
-  // RISK_KEPT_MS), they replace those it told before. Where Dependabot's
-  // alerts are blended in, all are told anew, as an alert listed as its own
-  // may be of the advisory these tell.
+  // Told differently (a scan over an hour audits again, RISK_KEPT_MS), a
+  // lockfile's advisories replace its last. With alerts blended in, all are
+  // rebuilt, as an alert listed alone may be of an advisory these tell.
   _applyAdvisories(line) {
     const repo = this._repos.get(line.repo)
     const lockfile = repo?.lockfiles?.get(line.path)
@@ -563,10 +485,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     else if (JSON.stringify(before) !== JSON.stringify(line.advisories)) this._readvise()
   }
 
-  // A repository's Dependabot alerts, or why they couldn't be had, kept as
-  // told: told again otherwise, as a later part asks them again, they replace
-  // those told before; where a later part couldn't have them, those told
-  // before are kept, beside why, as a lockfile's advisories are.
+  // A repository's alerts replace its last; where a later part couldn't have
+  // them, the last are kept beside why.
   _applyDependabot(line) {
     const repo = this._repos.get(line.repo)
     if (!repo) return
@@ -575,14 +495,11 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     if (JSON.stringify(before?.alerts ?? null) !== JSON.stringify(repo.dependabot.alerts ?? null)) this._readvise()
   }
 
-  // Each repository's Dependabot alerts blended into the advisories npm's
-  // told: an alert of an advisory told, by its GHSA (its id, or one of its
-  // aliases) and package, is kept with it, by where it is used, its versions
-  // and malware with the rest, whether open or dismissed; an open one of none
-  // is listed as its own, as GitHub tells it, its range its own, and a
-  // dismissed one joins it, but lists none of its own. Where it is used, as
-  // its manifest's path, adds to where the advisory is, linked to the alert
-  // (lockfileLink).
+  // Dependabot's alerts blended into npm's advisories: one of an advisory
+  // told (by GHSA, its id or an alias, and package) joins it, open or
+  // dismissed, with its versions, malware and manifest (linked by
+  // lockfileLink); an open one of none is listed as GitHub tells it, and a
+  // dismissed one never alone.
   _alert() {
     const byGhsa = new Map()
     const keyOf = (ghsa, name) => `${ghsa.toUpperCase()}\0${name}`
@@ -605,37 +522,28 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       row.alerts ??= new Map()
       row.alerts.set(usedIn, alert)
       row.usedIn.add(usedIn)
-      if (alert.versions.length > 0) {
-        const told = row.versionsIn.get(usedIn) ?? row.versionsIn.set(usedIn, new Set()).get(usedIn)
-        for (const version of alert.versions) { told.add(version); row.versions.add(version) }
-      }
+      if (alert.versions.length > 0) addVersions(row, usedIn, alert.versions)
       row.malware ||= alert.malware
       this._markMalware(row)
     }
   }
 
-  // Advisories a lockfile (`usedIn`) tells, each kept once by its id and
-  // package: npm answers one a range it covers, here its ranges and versions
-  // together, and malware if any says so (npm-insights.ts merges them
-  // alike). Malware's marked on the packages of the versions it names.
+  // A lockfile's advisories, each once by id and package: npm answers one per
+  // range it covers, merged here (as npm-insights.ts does).
   _advise(usedIn, advisories) {
     for (const { range, versions, ...advisory } of advisories) {
       const key = `${advisory.id}\0${advisory.name}`
       let row = this._advisories.get(key)
       if (!row) this._advisories.set(key, row = { ...advisory, ranges: new Set(), versions: new Set(), usedIn: new Set(), versionsIn: new Map() })
       if (range) row.ranges.add(range)
-      for (const version of versions) row.versions.add(version)
       row.malware ||= advisory.malware
       row.usedIn.add(usedIn)
-      // The versions each lockfile told it of, for those of one kind alone
-      // to name only their lockfiles (_advisoryKinds).
-      const told = row.versionsIn.get(usedIn) ?? row.versionsIn.set(usedIn, new Set()).get(usedIn)
-      for (const version of versions) told.add(version)
+      addVersions(row, usedIn, versions)
       this._markMalware(row)
     }
   }
 
-  // An advisory of malware marked on the packages of the versions it names.
+  // Malware marked on the packages of the versions it names.
   _markMalware(row) {
     if (!row.malware) return
     for (const pkg of this._packages.values()) {
@@ -650,15 +558,12 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     return {
       repos: repos.length, reposRead: repos.filter(repo => repo.lockfiles || repo.error).length,
       lockfiles: lockfiles.length, lockfilesRead: lockfiles.filter(lockfile => lockfile.packages !== null || lockfile.error).length,
-      // Those more than devDependencies need, and those only they need, apart.
       needed: tally(assessed.filter(row => !row.dev)), dev: tally(assessed.filter(row => row.dev)),
       advisories: this._adviseCounts(),
     }
   }
 
-  // The advisories, how many in all and apart: those of malware, those of
-  // versions an install for production takes, and those only of versions
-  // only devDependencies need.
+  // How many advisories: in all, of malware, production's, and dev-only.
   _adviseCounts() {
     const kinds = this._advisoryKinds()
     const needed = new Set(kinds.production.filter(row => !row.malware).map(row => `${row.id}\0${row.name}`))
@@ -666,9 +571,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     return { total: this._advisories.size, malware, needed: needed.size, dev: this._advisories.size - malware - needed.size }
   }
 
-  // The package rows of the kind shown (`_packageKind`), filtered and
-  // searched for, by their risk alone (rank), whatever needs them: the
-  // riskiest first, of more findings ahead.
+  // The package rows shown, the riskiest first (rank), more findings ahead.
   _rows() {
     const query = this._query.trim().toLowerCase()
     const [, shown] = FILTERS[this._filter]
@@ -677,13 +580,11 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
         || a.name.localeCompare(b.name) || (a.version ?? '').localeCompare(b.version ?? ''))
   }
 
-  // Each of KINDS' advisories, by their package: each with the versions of
-  // that kind it affects and the lockfiles that told it of them, `dev` where
-  // only devDependencies need them; a version is development's where every
-  // package locked of it is `dev`. Where only a Dependabot alert tells of
-  // it, of no version a lockfile read locks (a package.json, bun's
-  // lockfile), it is of the kind the alert's scope tells.
-  // Malware's are of both, with all their versions, `dev` where all are.
+  // Each of KINDS' advisories, with that kind's versions and the lockfiles
+  // telling of them; a version is development's where every package of it
+  // is `dev`. One only an alert tells of, of no version a lockfile read
+  // locks (a package.json, bun's), is of the alert's scope. Malware's is of
+  // both, with all its versions.
   _advisoryKinds() {
     const devOnly = new Map()
     for (const row of this._packages.values()) {
@@ -695,7 +596,6 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       const versions = [...row.versions]
       const dev = versions.filter(version => devOnly.get(`${row.name}@${version}`) === true)
       const needed = versions.filter(version => devOnly.get(`${row.name}@${version}`) !== true)
-      // Where alerts alone tell it, of no version: by their scope.
       const unversioned = [...row.alerts ?? []].filter(([usedIn]) => !row.versionsIn.get(usedIn)?.size)
       const devIn = unversioned.filter(([, alert]) => alert.dev).map(([usedIn]) => usedIn)
       const neededIn = unversioned.filter(([, alert]) => !alert.dev).map(([usedIn]) => usedIn)
@@ -705,7 +605,6 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
         kinds.development.push(all)
         continue
       }
-      // Each kind's versions, and where it is used of them.
       const of = (shown, also) => ({ ...row, versions: new Set(shown),
         usedIn: new Set([...row.usedIn].filter(usedIn => also.includes(usedIn) || shown.some(version => row.versionsIn.get(usedIn)?.has(version)))) })
       if (needed.length > 0 || neededIn.length > 0) kinds.production.push({ ...of(needed, neededIn), dev: false })
@@ -714,8 +613,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     return kinds
   }
 
-  // The advisories of the kind shown (`_kind`) searched for, malware first,
-  // then the most severe.
+  // Malware first, then the most severe.
   _advisoryRows(kinds = this._advisoryKinds()) {
     const query = this._query.trim().toLowerCase()
     return kinds[this._kind].filter(row => !query || row.name.toLowerCase().includes(query))
@@ -723,17 +621,14 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
         || a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
   }
 
-  // A toggle (`name`d) of `kinds` ({ kind: label }), the one `value` names
-  // pressed, each with how many there are (`counts`) in a bubble, another
-  // `choose`n.
+  // Buttons of `kinds` ({ kind: label }), each counted, `value` pressed.
   _kindToggle(name, kinds, counts, value, choose) {
     return html`<div class="risk-scope" role="group" aria-label=${name}>${Object.entries(kinds).map(([kind, label]) => html`<button type="button"
       aria-pressed=${value === kind} @click=${() => choose(kind)}>${label}<span class="n">${formatCount.format(counts[kind])}</span></button>`)}</div>`
   }
 
-  // Which of `rows`, a kind's, are shown, by FILTERS, each with how many:
-  // those of none left out but All and the one chosen; none where All alone
-  // is left.
+  // FILTERS of `rows`, those matching none left out (but All and the one
+  // chosen); none where All alone is left.
   _filterToggle(rows) {
     const counts = Object.fromEntries(Object.entries(FILTERS).map(([filter, [, shown]]) => [filter, rows.filter(shown).length]))
     const offered = Object.entries(FILTERS).filter(([filter]) => filter === 'all' || filter === this._filter || counts[filter] > 0)
@@ -741,8 +636,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       counts, this._filter, filter => { this._filter = filter })
   }
 
-  // Each listed lockfile's link on GitHub, at the commit it was read at, by
-  // where it is used (`${fullName}/${path}`, as `usedIn` names it).
+  // Each lockfile's GitHub link at the commit read, by `usedIn`.
   _lockfileLinks() {
     const links = new Map()
     for (const repo of this._repos.values()) {
@@ -781,8 +675,6 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       <span class="result-count">${count === total ? '' : `${formatCount.format(count)} of `}${formatCount.format(total)} ${what}</span>`
   }
 
-  // A team's chosen with _teamPicker, and a repository with the picker the
-  // other pages share, by owner and searchable.
   _scopeBar() {
     const running = this._state === 'running'
     const loading = this._choices ? '' : 'Loading…'
@@ -796,8 +688,6 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     </div>`
   }
 
-  // A team, chosen as the scope is among a few (TEAM_BUTTONS), else from a
-  // list.
   _teamPicker(running, loading) {
     const teams = this._choices?.teams ?? []
     const name = team => team.hidden ? `${team.name} (hidden)` : team.name
@@ -811,30 +701,25 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     </select>`
   }
 
-  // The scan's progress, a metric each: its `label`, how many (`value`), of
-  // how many where it reads them (`of`), its bar's segments, each of a kind
-  // and how many of `of`, else of `scale`, else of `value` (`bar`: read;
-  // those an install for production takes and those only devDependencies
-  // need; malware), the rest unfilled; its parts told apart, each its kind,
-  // how many and of how many where told (`split`), and lines of `note`, both
-  // in its tooltip; and a `tone` where it calls for one.
+  // The scan's progress, a metric each: `label`, `value` (of `of`), its
+  // `bar`'s segments `[kind, n]` (of `scale`, else `of`, else `value`), its
+  // parts `split` `[kind, n, of]` and `note` lines for the tooltip, and a
+  // `tone`.
   _metrics() {
     const counts = this._counts()
     const { needed, dev, advisories } = counts
     const count = value => formatCount.format(value)
-    // A metric's parts, each its kind, how many and of how many: its bar's
-    // segments, and its split, those of none left out.
+    // A bar's segments, and the split of those not empty.
     const apart = parts => ({ bar: parts.map(([kind, value]) => [kind, value]), split: parts.filter(([, value, total = value]) => total > 0) })
     const flagged = needed.flagged + dev.flagged, stale = needed.stale + dev.stale, wasStale = needed.wasStale + dev.wasStale
     const { workflows, workflowsRead } = this._actions.counts()
     return [
-      // Its lockfiles and workflows read told apart.
       { label: 'Repositories', value: counts.reposRead, of: counts.repos, bar: [['read', counts.reposRead]],
         split: [['lockfiles', counts.lockfilesRead, counts.lockfiles], ['workflows', workflowsRead, workflows]].filter(([, , total]) => total > 0) },
       { label: 'Packages', value: needed.told + dev.told, of: needed.total + dev.total,
         ...apart([['prod', needed.told, needed.total], ['dev', dev.told, dev.total]]) },
       { label: 'Flagged', value: flagged, ...apart([['prod', needed.flagged], ['dev', dev.flagged]]), tone: flagged > 0 ? 'high' : null },
-      // Those still stale, its bar those assessed again of all told stale.
+      // Those still stale; the bar, those assessed again of all told stale.
       ...wasStale > 0 ? [{ label: 'Stale', value: stale, scale: wasStale,
         bar: [['prod', needed.wasStale - needed.stale], ['dev', dev.wasStale - dev.stale]], split: apart([['prod', needed.stale], ['dev', dev.stale]]).split,
         note: [...stale > 0 ? [`Assessed over an hour ago; ${this._state === 'running' ? 'to be assessed again once the rest are' : 'not assessed again yet'}.`] : [],
@@ -845,8 +730,6 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     ]
   }
 
-  // The references the workflows make resolved, where any repository's
-  // Actions were told.
   _actionsMetrics() {
     if (this._actions.listed.size === 0) return []
     const { actions, resolved } = this._actions.counts()
@@ -855,16 +738,14 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       { label: 'Actions flagged', value: flagged, bar: [], tone: flagged > 0 ? 'high' : null }]
   }
 
-  // The scan's state, beside what starts or stops it; none before one.
   _stateBadge() {
     if (this._state === 'idle') return nothing
     const state = this._state === 'running' && this._parts > 1 ? `Scanning · part ${formatCount.format(this._parts)}` : { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
     return html`<span class="risk-state" role="status" data-state=${this._state}>${state}</span>`
   }
 
-  // The scan's metrics (_metrics), each read with a bar and its tooltip a
-  // line each part, its count aligned, said to a screen reader too, as the
-  // bar is hidden from one and the tooltip shows on hover alone.
+  // Each metric with its bar and tooltip, its text said to screen readers
+  // too, as the bar is hidden from them and the tooltip shows on hover.
   _progress() {
     if (this._state === 'idle') return html`<div class="risk-progress" role="status"><p class="risk-progress-idle">Not scanned yet. A scan reads each repository from GitHub and assesses each npm package it locks, which can take a while; a scan again within the hour is quicker.</p></div>`
     const count = value => formatCount.format(value)
@@ -887,8 +768,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     return html`<span class="risk-pending">${this._state === 'running' ? running : otherwise}</span>`
   }
 
-  // What a repository's row says in place of its lockfiles, or on their tab
-  // its `workflows`, where it has none to list; null where it has.
+  // What a repository's row says instead of its lockfiles (or `workflows`);
+  // null where it has some.
   _repoStatus(repo, workflows = false) {
     if (repo.error) return failure(repo)
     if (repo.lockfiles === null) return this._pending('Waiting…', 'Not read')
@@ -903,10 +784,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     return lockfile.packages === null ? this._pending('Reading…', 'Not read') : `${formatCount.format(lockfile.packages)} packages`
   }
 
-  // A line a repository: its name, and beside it its lockfiles, each with its
-  // format and how many packages it locks, or why there are none; or, on
-  // their tab, its workflows and actions of its own, each with how many
-  // findings it has.
+  // A line per repository: its lockfiles (format, packages) or, on their tab,
+  // its workflows and own actions (findings), or why there are none.
   _lockfiles() {
     const workflows = this._actions.listed.size > 0 && this._files === 'workflows'
     return html`<section class="risk-section" aria-label="Lockfiles and workflows">
@@ -920,9 +799,6 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     </section>`
   }
 
-  // A repository's workflows and actions of its own, each with how many
-  // findings it has, or why it couldn't be read; or why its workflows
-  // couldn't be listed.
   _workflowItems(repo) {
     const listed = this._actions.listed.get(repo.id)
     if (!listed) return nothing
@@ -931,7 +807,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       : `${formatCount.format(file.findings.length)} findings`}</span></li>`)
   }
 
-  // The tabs and the controls of the results, kept in view as they scroll.
+  // Kept in view as the results scroll.
   _resultsHead(controls) {
     return html`<div class="risk-results-head">${this._tabs()}<div class="collection-toolbar">${controls}</div></div>`
   }
@@ -941,17 +817,14 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const all = [...this._packages.values()]
     const counts = Object.fromEntries(Object.keys(PACKAGE_KINDS).map(kind => [kind, all.filter(row => ofKind(row, kind)).length]))
     const links = this._lockfileLinks()
-    // Where they are from, but where all are npm's registry's, as most are.
+    // A Source column, unless all are from npm's registry, as most are.
     const sourced = all.some(row => row.source !== 'registry')
     return html`<section class="risk-section" aria-label="Packages">
       ${this._resultsHead(html`${this._kindToggle('Which packages', PACKAGE_KINDS, counts, this._packageKind, kind => { this._packageKind = kind })}
         ${this._filterToggle(all.filter(row => ofKind(row, this._packageKind)))}
         ${this._search(rows.length, counts[this._packageKind], 'packages')}`)}
-      <div class="link-table"><table>
-        <thead><tr><th>Package</th><th><span data-tooltip=${RISK_SAID}>Risk</span></th><th>Findings</th>${sourced ? html`<th>Source</th>` : nothing}<th class="risk-used-column">Used in</th></tr></thead>
-        <tbody>${repeat(rows.slice(0, MAX_ROWS), packageKey, row => this._packageRow(row, links, sourced))}</tbody>
-      </table></div>
-      ${rows.length > MAX_ROWS ? html`<p class="msg">Showing the first ${formatCount.format(MAX_ROWS)}. Search or filter to see others.</p>` : nothing}
+      ${this._table(rows, null, html`<th>Package</th><th><span data-tooltip=${RISK_SAID}>Risk</span></th><th>Findings</th>${sourced ? html`<th>Source</th>` : nothing}<th class="risk-used-column">Used in</th>`,
+        packageKey, row => this._packageRow(row, links, sourced), 'Search or filter to see others.')}
     </section>`
   }
 
@@ -966,24 +839,20 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     </tr>`
   }
 
-  // A package's risk, out of 100, in its level's color (risk/npm/score.js
-  // npmRiskLevel): red from 75, orange from 50, yellow from 25, else plain;
-  // nothing where it isn't told, its findings' cell saying why.
+  // Out of 100, in its level's color (npmRiskLevel); nothing where not told,
+  // the findings cell saying why.
   _score(row) {
     const score = scoreOf(row)
     const told = score === null ? nothing : html`<span class=${`risk-score risk-${npmRiskLevel(score)}`}>${score}</span>`
     return row.risk?.stale ? html`${told}<span class="risk-stale" data-tooltip=${this._staleSaid(row.risk)}>stale</span>` : told
   }
 
-  // Why a risk is stale: when it was assessed, and whether it is to be
-  // assessed again, once those with none are, or couldn't be.
   _staleSaid({ stale, refreshFailed }) {
     const next = refreshFailed ? `couldn’t be assessed again: ${refreshFailed}` : this._state === 'running' ? 'to be assessed again once the rest are' : 'not assessed again yet'
     return `Assessed ${ago(stale.assessedAt)}; ${next}`
   }
 
-  // What risk finds of a package, each by its severity; or, where it finds
-  // nothing, whether it is still to be told, couldn't be, or wasn't asked.
+  // Each finding by its severity; or whether it is pending, failed or unasked.
   _findings(row) {
     const findings = findingsOf(row)
     if (findings.length > 0) {
@@ -1025,15 +894,16 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     </section>`
   }
 
-  // A table of `rows` under `head`, MAX_ROWS at most; `empty` where none are.
-  _table(rows, empty, head, key, row) {
-    return html`${rows.length === 0 ? html`<p class="msg">${empty}</p>` : html`<div class="link-table"><table>
+  // A table of `rows` under `head`, MAX_ROWS at most; `empty` where none are
+  // (unless null), `more` where some are left out.
+  _table(rows, empty, head, key, row, more = 'Search to see others.') {
+    return html`${rows.length === 0 && empty != null ? html`<p class="msg">${empty}</p>` : html`<div class="link-table"><table>
         <thead><tr>${head}</tr></thead><tbody>${repeat(rows.slice(0, MAX_ROWS), key, row)}</tbody></table></div>`}
-      ${rows.length > MAX_ROWS ? html`<p class="msg">Showing the first ${formatCount.format(MAX_ROWS)}. Search to see others.</p>` : nothing}`
+      ${rows.length > MAX_ROWS ? html`<p class="msg">Showing the first ${formatCount.format(MAX_ROWS)}. ${more}</p>` : nothing}`
   }
 
-  // A row: a reference by its key, linked to it on GitHub, and what it is
-  // pinned to; or what a step pulls in; its findings, and where it is used.
+  // A reference, linked on GitHub, and what it is pinned to; or what a step
+  // pulls in. Then its findings and where it is used.
   _actionRow(row) {
     const href = row.kind === 'action' ? referenceHref(row) : null
     // A commit cut short, as GitHub shows one; the whole key in its tooltip.
@@ -1049,8 +919,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     </tr>`
   }
 
-  // Where a row is used: a file's line, linked on GitHub at the commit read,
-  // or a reference naming it, or how many, opening into each.
+  // A file's line, linked on GitHub at the commit read, or a reference naming it.
   _actionUsedIn(usedIn) {
     const links = new Map()
     const used = usedIn.map(({ repo, path, line, via }) => {
@@ -1078,9 +947,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     </tr>`
   }
 
-  // What Dependabot told, small, beside the advisories: how many alerts, open
-  // and dismissed, of how many repositories, and of how many they couldn't be
-  // had, each saying why in its tooltip; nothing where none told any.
+  // How many alerts (open, dismissed) of how many repositories, and whose
+  // couldn't be had, why in its tooltip; nothing where none told any.
   _dependabotStatus() {
     const repos = [...this._repos.values()].filter(repo => repo.dependabot)
     if (repos.length === 0) return nothing

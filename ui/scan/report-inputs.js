@@ -102,12 +102,14 @@ export class ReportInputs extends LitElement {
     }
   }
   _setCurrent(value) { if (this.mode === 'merge') this._merge = value; else this._link = value }
+  // The ids of the inputs shown that `keep` keeps.
+  _inputIds(keep) { return new Set(this._inputs.filter(keep).map(input => input.id)) }
   _selectSource(id, index = 0) {
     if (index < 0 || index >= this._current.sourceIds.length || this._current.sourceIds.includes(id) || !this._parents.some(parent => parent.id === id)) return
     const previous = new Set(this.mode === 'link' && this._current.kind === 'repository' ? this._inputs.map(input => input.id) : [])
     this._setCurrent({ ...this._current, sourceIds: this._current.sourceIds.map((value, i) => i === index ? id : value) })
     // Select newly available reports without undoing choices in scopes that remain.
-    this._setCurrent({ ...this._current, ids: new Set(this._inputs.filter(input => !previous.has(input.id) || this._current.ids.has(input.id)).map(input => input.id)) })
+    this._setCurrent({ ...this._current, ids: this._inputIds(input => !previous.has(input.id) || this._current.ids.has(input.id)) })
     this._notify()
   }
   get _canAddRepository() {
@@ -123,7 +125,7 @@ export class ReportInputs extends LitElement {
     if (this.mode !== 'link' || this._link.kind !== 'repository' || this._loading || this._link.sourceIds.length <= 1
       || index < 0 || index >= this._link.sourceIds.length) return
     this._link = { ...this._link, sourceIds: this._link.sourceIds.filter((_, i) => i !== index) }
-    this._link = { ...this._link, ids: new Set(this._inputs.filter(input => this._link.ids.has(input.id)).map(input => input.id)) }
+    this._link = { ...this._link, ids: this._inputIds(input => this._link.ids.has(input.id)) }
     this._notify()
     void this._focusRepository(Math.min(index, this._link.sourceIds.length - 1))
   }
@@ -149,7 +151,7 @@ export class ReportInputs extends LitElement {
     this._notify()
   }
   _selectAll(checked) {
-    this._setCurrent({ ...this._current, ids: new Set(checked ? this._inputs.map(input => input.id) : []) })
+    this._setCurrent({ ...this._current, ids: this._inputIds(() => checked) })
     this._notify()
   }
   _restore() {
@@ -160,7 +162,7 @@ export class ReportInputs extends LitElement {
     const ids = this.mode === 'link' && kind === 'repository' ? restore.source.ids ?? [restore.source.id] : [restore.source.id]
     const sourceIds = [...new Set(ids)].filter(id => id != null)
     this._setCurrent({ kind, sourceIds: sourceIds.length > 0 ? sourceIds : [null], ids: new Set() })
-    this._setCurrent({ ...this._current, ids: new Set(this._inputs.filter(input => restore.inputIds.includes(input.id)).map(input => input.id)) })
+    this._setCurrent({ ...this._current, ids: this._inputIds(input => restore.inputIds.includes(input.id)) })
   }
   render() {
     const merge = this.mode === 'merge'
