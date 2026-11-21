@@ -1,27 +1,13 @@
-/* W95 — easter-egg theme: Windows 95 on its teal desktop. It joins the
-   unlocked theme cycle, after pink, once the toggle has turned green into
-   pink three times on the page (view/theme.js), and is always there for
-   `DeepView.setTheme('w95')`.
-
-   The app is one window on the desktop, laid out as Explorer is: a navy
-   title bar, a sunken white tree pane on the left (the sidebar), the page
-   beside it, a status bar along its foot. The title and status bars are
-   the sidebar's header and actions, pinned along the window's edges
-   (view/sidebar.css). Dialogs are Windows 95 dialogs
-   (view/dialogs/dialog-base.css).
-
-   Its look is Windows 95's: silver chrome, white wells, navy where
-   something is picked, MS Sans Serif at its 8 points, no tracking and no
-   all-caps, square corners, and the bevel for depth — light from the top
-   left, white then pale grey, shade to the bottom right, grey then black.
-   Raised for windows and buttons, sunken for wells and fields, a pressed
-   toggle sunk over a white-and-silver dither. Toggle groups split into
-   their buttons; scrollbars are Windows 95's, arrows and all. What is
-   drawn on the white wells keeps the light theme's colours; the hues that
-   are text on silver take darker values to read there.
-
-   Screen only: print keeps the default theme's pinned palette
-   (print.css) and none of the window. */
+/* W95 — easter-egg theme: Windows 95 on its teal desktop (view/theme.js
+   unlocks it after pink; always there for `DeepView.setTheme('w95')`).
+   The app is one Explorer-like window: a navy title bar, a sunken white tree
+   pane (the sidebar), the page, a status bar — the title and status bars are
+   the sidebar's header and actions (view/sidebar.css); dialogs in
+   view/dialogs/dialog-base.css. Silver chrome, white wells, navy selection,
+   MS Sans Serif at 8pt, no tracking or all-caps, square corners, the bevel
+   for depth (lit top-left). Toggle groups split into raised buttons, a
+   pressed one sunk over a dither. Text on silver takes darker hues.
+   Screen only: print keeps the default theme's pinned palette (print.css). */
 
 @media screen {
   :root:has(> body.theme-w95) {
@@ -40,10 +26,8 @@
     --w95-title: #000080;
     /* A tooltip's pale yellow, behind any note that pops up over the page. */
     --w95-tooltip: #ffffe1;
-    /* The bevels, each as Windows draws it: a button's (white outside,
-       pale grey in), a window's (the two swapped), a button held down,
-       the default button's (a black ring inside), a field's, a status
-       field's, a tab's (no foot), a group box's etched groove. */
+    /* The bevels as Windows draws them: button, window, pressed, default button
+       (black ring inside), field, status field, tab (no foot), etched groove. */
     --w95-raised: inset -1px -1px #000, inset 1px 1px #fff, inset -2px -2px var(--w95-shadow), inset 2px 2px var(--w95-light);
     --w95-window: inset -1px -1px #000, inset 1px 1px var(--w95-light), inset -2px -2px var(--w95-shadow), inset 2px 2px #fff;
     --w95-pressed: inset -1px -1px #fff, inset 1px 1px #000, inset -2px -2px var(--w95-light), inset 2px 2px var(--w95-shadow);
@@ -215,9 +199,8 @@
     /* Its type was bitmap, unsmoothed: sharp, at any pixel ratio. */
     -webkit-font-smoothing: none;
 
-    /* The splitter between the panes is the sidebar's own margin, not a
-       gap of the body's: elements appended to the body later (a dialog's
-       host) would each open a gap of their own and squeeze the page. */
+    /* The pane splitter is the sidebar's margin, not a body gap: elements later
+       appended to the body (a dialog's host) would each open a gap. */
     & app-sidebar { height: auto; margin-right: 4px; padding: 2px; border-right: 0; background: #fff; box-shadow: var(--w95-sunken); }
     & #main-content { border-top: 0; }
 
@@ -247,19 +230,16 @@
     & :is(.kanban-column-header, .file-group-header, .drop-supported-section h2) { font-size: 11px; }
     & :focus-visible { outline: 1px dotted #000 !important; outline-offset: -4px !important; }
 
-    /* Scrollbars are Windows 95's: 16px, a raised thumb on the dither,
-       an arrow button at either end (below). Their own sizes elsewhere
-       give way: the bars take the default `auto` so these pseudo-elements
-       apply. Nor does anything overscroll: no bounce or glow at a
-       scroller's ends, no scrolling handed on to the one around it. A
-       shadow root's scrollers take the same from its own stylesheet. */
+    /* Windows 95 scrollbars: 16px, a raised thumb on the dither, arrow buttons
+       (below). Other sizes give way (`auto`, so these pseudo-elements apply), and
+       nothing overscrolls. Shadow roots do the same in their own sheets. */
     & *, & { scrollbar-color: auto; scrollbar-width: auto; overscroll-behavior: none; }
     & ::-webkit-scrollbar { width: 16px; height: 16px; background: var(--w95-dither); }
     & ::-webkit-scrollbar-track { background: var(--w95-dither); }
     & ::-webkit-scrollbar-thumb { background: var(--w95-face); border-radius: 0; box-shadow: var(--w95-raised); }
     & ::-webkit-scrollbar-corner { background: var(--w95-face); }
-    /* Buttons. A toggle group is no pill any more: its buttons stand
-       apart, each raised, and the one on sinks over the dither. */
+    /* A toggle group's buttons stand apart, each raised; the one on sinks over
+       the dither. */
     & :is(view-mode-buttons, source-filter, .severity-mode-chips, annotation-filter, severity-chips,
       triage-selector, triage-filter, .history-modes, .activity-views, .g2-layout-tabs, revalidation-switch) {
       gap: 0; padding: 0; border: 0;
@@ -403,28 +383,26 @@
       --text: #fff; --muted: var(--w95-light); --accent: #fff;
     }
 
-    /* The finding popup is a window: a navy title bar along its top,
-       its history, expand and close the bar's buttons; nothing dims
-       behind it, as nothing did. Its rail is a list view. */
+    /* The finding popup is a window: a navy title bar, its history / expand /
+       close the caption buttons, no dim. Its rail is a list view. */
     & .kanban-detail-dim { background: none; }
+    /* The windows' navy title bars. */
+    & :is(.kanban-detail-modal, .bundle-source-modal, .drop-prompt)::before {
+      position: absolute; top: 3px; right: 3px; left: 3px;
+      height: 18px; padding: 0 4px;
+      background: var(--w95-title); color: #fff;
+      font-weight: 700; line-height: 18px;
+    }
     & .kanban-detail-modal {
       --kanban-detail-bg: var(--w95-face);
       padding-top: 22px;
       border: 0;
       box-shadow: var(--w95-window);
 
-      &::before {
-        content: 'Finding';
-        position: absolute; top: 3px; right: 3px; left: 3px;
-        height: 18px; padding: 0 4px;
-        background: var(--w95-title); color: #fff;
-        font-weight: 700; line-height: 18px;
-      }
+      &::before { content: 'Finding'; }
     }
-    /* Its buttons are the bar's caption buttons wherever the popup is —
-       at the readable width, and filling the screen, where they would
-       otherwise ride the finding's pane: Maximize or Restore, then
-       Close, set apart. */
+    /* Caption buttons wherever the popup is, fullscreen included (where they'd
+       otherwise ride the finding's pane): Maximize / Restore, then Close. */
     & .kanban-detail-modal .kanban-detail-actions,
     & .kanban-detail-modal.fullscreen .kanban-detail-body .kanban-detail-actions {
       position: absolute; z-index: 2; top: 5px; right: 5px;
@@ -450,9 +428,8 @@
     & .kanban-detail-actions .kanban-detail-expand[aria-pressed='true'] { background: var(--w95-glyph-restore), var(--w95-face); }
     & .kanban-detail-actions .kanban-detail-close { margin-left: 2px; background: var(--w95-glyph-close), var(--w95-face); }
 
-    /* The code popup is a window too: no dimming, a title bar, Close its
-       caption button, its tools Windows 95's toolbar buttons, the source
-       in a white well. */
+    /* The code popup is a window too: title bar, Close as caption button,
+       toolbar-button tools, the source in a white well. */
     & .bundle-source-overlay { background: none; }
     & .bundle-source-modal {
       position: relative;
@@ -461,13 +438,7 @@
       background: var(--w95-face);
       box-shadow: var(--w95-window);
 
-      &::before {
-        content: 'Source';
-        position: absolute; top: 3px; right: 3px; left: 3px;
-        height: 18px; padding: 0 4px;
-        background: var(--w95-title); color: #fff;
-        font-weight: 700; line-height: 18px;
-      }
+      &::before { content: 'Source'; }
     }
     & .bundle-source-bar { border-bottom: 0; background: var(--w95-face); }
     & .bundle-source-title { font-family: inherit; font-size: 11px; color: #000; }
@@ -495,13 +466,9 @@
     /* Its count beside its icon. */
     & .bundle-code-importers-toggle { width: auto; min-width: 23px; }
 
-    /* The finding's column is a side panel of the finding's window, as
-       a wizard's picture is of its own: the window widens to take it
-       along its right, under the window's title bar, and grows no
-       shorter than a wizard. The window and the panel share one grid
-       cell, the window's width the cell's; the panel stretches to the
-       window's height and asks none of its own. Filling the screen,
-       the window takes the panel with it. */
+    /* The finding's column is the window's side panel, like a wizard's picture:
+       the window widens under its title bar to take it, sharing one grid cell
+       (the panel stretches to the window's height). Fullscreen takes it along. */
     @media (width >= 1400px) {
       & .kanban-detail-backdrop:has(> .kanban-detail-side) {
         grid-template-columns: min(calc(1100px + var(--kanban-side-w) + 12px), 100%);
@@ -531,9 +498,7 @@
       contain: size;
     }
 
-    /* A side panel's head sits on the window's face — the column picked
-       in a combo box, or the queue's name, then the arrows and where
-       they are — over its list, a white well. */
+    /* A side panel's head on the window face over a white well list. */
     & :is(.kanban-detail-side-header, .focus-sidebar-header) {
       min-height: 0; gap: 4px;
       padding: 0 0 4px;
@@ -555,9 +520,8 @@
       background: #fff;
       box-shadow: var(--w95-sunken);
     }
-    /* The arrows are a toolbar's buttons, their glyphs a scroll bar's,
-       nudged a pixel down and right while pressed, etched in grey while
-       there is nowhere further to go. */
+    /* The arrows are toolbar buttons with scrollbar glyphs, nudged while
+       pressed, etched grey when disabled. */
     & .focus-nav-btn {
       width: 22px; height: 21px;
       border: 0;
@@ -575,9 +539,8 @@
       &:disabled::before { filter: invert(50%) drop-shadow(1px 1px #fff); }
     }
 
-    /* The landing is the Welcome dialog: a window of its own, its
-       heading set large as Windows 95 set its own name there, the drop
-       box a white well, the formats in group boxes. */
+    /* The landing is the Welcome dialog: a window, its heading set large, the
+       drop box a white well, the formats in group boxes. */
     & .drop-prompt {
       position: relative;
       padding: 28px 16px 14px;
@@ -585,13 +548,7 @@
       box-shadow: var(--w95-window);
       color: #000;
 
-      &::before {
-        content: 'Welcome';
-        position: absolute; top: 3px; right: 3px; left: 3px;
-        height: 18px; padding: 0 4px;
-        background: var(--w95-title); color: #fff;
-        font-weight: 700; line-height: 18px;
-      }
+      &::before { content: 'Welcome'; }
     }
     & .drop-eyebrow { color: #000; font-size: 11px; font-weight: 400; }
     & .drop-heading h1 {
@@ -645,8 +602,8 @@
     /* Pulse's tiles and panels are group boxes. */
     & :is(.pulse-tile, .pulse-panel) { border: 0; background: var(--w95-face); box-shadow: var(--w95-etched); }
 
-    /* The graph's fullscreen maximizes the window. The zeros keep
-       their unit: they are summed in calc(). */
+    /* The graph's fullscreen maximizes the window; zeros keep their unit for
+       calc(). */
     /* stylelint-disable length-zero-no-unit */
     &.report-fullscreen {
       --w95-gap: 0px;
@@ -667,9 +624,8 @@
   body.theme-w95 ::-webkit-scrollbar-button:single-button:horizontal:decrement { background: var(--w95-arrow-left), var(--w95-face); }
   body.theme-w95 ::-webkit-scrollbar-button:single-button:horizontal:increment { background: var(--w95-arrow-right), var(--w95-face); }
 
-  /* An installed app drawing its own title bar maximizes the window:
-     its frame leaves the screen, as Windows 95's does, and the title
-     bar is the strip the OS draws its controls on. */
+  /* An installed app drawing its own title bar maximizes the window; the
+     title bar is the OS controls' strip. */
   /* stylelint-disable-next-line media-feature-name-value-no-unknown */
   @media (display-mode: window-controls-overlay) {
     body.theme-w95 {
