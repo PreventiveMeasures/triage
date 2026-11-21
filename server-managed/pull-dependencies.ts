@@ -98,8 +98,11 @@ export type AddedPackage = LockedPackage & { was?: string[]; base?: { name: stri
 // (`lockfile-unsupported`, Bun's) or GitHub having none at a commit compared.
 // A stasis.config.json a review holds to is told as one too, by its own path
 // (stasis-dependencies.ts stasisDirectory), or as `stasis-pending` or `stasis-failed`.
-export type DirectoryDependencies = { paths: string[] } & ({ added: AddedPackage[]; more: number; locked: LockedPackage[]; moreLocked: number }
+export type DirectoryDependencies = { paths: string[]; builds?: StasisBuild[] } & ({ added: AddedPackage[]; more: number; locked: LockedPackage[]; moreLocked: number }
   | { error: string; detail?: string })
+// A Stasis build a stasis.config.json's directory reads (stasis-dependencies.ts
+// stasisDirectory): of the commit, and whether it is made, or failed, as kept.
+export interface StasisBuild { commit: string; built: boolean }
 // What a pull request's lockfiles add: the commits compared (`base`, its
 // merge base, and `head`); each directory's, of those it changes a lockfile
 // in; and `cut` where it changes more files than GitHub lists, or lockfiles

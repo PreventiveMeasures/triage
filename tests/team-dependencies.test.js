@@ -538,8 +538,12 @@ test('a version several pull requests add: listed under one of those reviewing i
 
 test('a pull request awaiting a build of Stasis\'s is asked again alone, its repository not read again for it; one whose default branch awaits it is read again sooner; none said to want nothing meanwhile', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() })
-  const waiting = { paths: ['stasis.config.json'], error: 'stasis-pending' }
+  // Its head's build made, its merge base's still to be.
+  const waiting = { paths: ['stasis.config.json'], builds: [{ commit: 'a'.repeat(40), built: true }, { commit: 'b'.repeat(40), built: false }], error: 'stasis-pending' }
   const none = { ...terms, toReview: 0, unreviewed: 0, unsupported: 0 }
+  // How far Stasis is told: its mark, a bar, and how many builds of how many are made.
+  const progress = (done, total) => new RegExp(String.raw`<p class="team-deps-quiet team-deps-building" role="status" data-tooltip=Stasis is working out what their stasis\.config\.json entries reach: ${done} of ${total} builds made\. Those waiting are asked again as it makes them\.><img class="team-deps-stasis" src="\./stasis\.svg" alt="Stasis">\s*` +
+    String.raw`<span class="team-deps-progress" role="progressbar" aria-label="Stasis builds made" aria-valuemin="0" aria-valuemax=${total} aria-valuenow=${done}>[^]*?<span class="team-deps-progress-n">${done}/${total}</span></p>`, 'u')
   TEAM.push(21, 22)
   branches[21] = { cut: false, review: none, lockfiles: [dir()] }
   pulls[21] = { items: [pull(1)], more: false }
@@ -548,7 +552,8 @@ test('a pull request awaiting a build of Stasis\'s is asked again alone, its rep
   asked.teams.length = asked.dependencies.length = 0
   const view = shown([repo(21, 'org/built')])
   const text = await read(view)
-  assert.match(text, /role="status">Stasis is still working out what some <code>stasis\.config\.json<\/code> entries reach; they are asked again as it does\.</u)
+  assert.match(text, progress(1, 2), 'one made already counted made')
+  assert.doesNotMatch(text, /Stasis is still working out/u)
   assert.doesNotMatch(text, /No open pull request/u, 'nothing known to want none till it is built')
   t.mock.timers.tick(30_000)
   await read(view)
@@ -560,7 +565,7 @@ test('a pull request awaiting a build of Stasis\'s is asked again alone, its rep
   asked.teams.length = 0
   const branch = shown([repo(22, 'org/building')])
   state.teamDependenciesTab = 'branch'
-  assert.match(await read(branch), /role="status">Stasis is still working out what some <code>stasis\.config\.json<\/code> entries reach/u)
+  assert.match(await read(branch), progress(1, 2))
   t.mock.timers.tick(15_000)
   await read(branch)
   assert.equal(asked.teams.length, 1, 'not yet')
@@ -572,12 +577,15 @@ test('a pull request awaiting a build of Stasis\'s is asked again alone, its rep
 
 test('a version its lockfile alone asks for, the stasis.config.json beside it reaching it not, is marked in each list, every other row as it was; a lockfile\'s are listed while Stasis builds, marked once it has; those reviewed already first, those marked last', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() })
+  // The default branch's head, made, the merge base of a pull request still waiting on its own head's.
+  const [made, waited] = ['c'.repeat(40), 'd'.repeat(40)]
   const stasis = more => dir({ paths: ['stasis.config.json'], ...more })
   const lone = name => wants(name, { unreached: true })
-  const waiting = { paths: ['stasis.config.json'], error: 'stasis-pending' }
+  const waiting = { paths: ['stasis.config.json'], builds: [{ commit: waited, built: false }, { commit: made, built: true }], error: 'stasis-pending' }
   TEAM.push(23, 24)
   // 23 holds to its lockfile and the stasis.config.json beside it; 24 to its lockfile alone.
-  branches[23] = { cut: false, review: { ...terms, unreviewed: 2 }, lockfiles: [dir({ unreviewed: [lone('devtool'), wants('bundled')] }), stasis({ unreviewed: [wants('bundled')] })] }
+  branches[23] = { cut: false, review: { ...terms, unreviewed: 2 }, lockfiles: [dir({ unreviewed: [lone('devtool'), wants('bundled')] }),
+    stasis({ unreviewed: [wants('bundled')], builds: [{ commit: made, built: true }] })] }
   pulls[23] = { items: [pull(1), pull(2)], more: false }
   dependencies['23#1'] = { cut: false, review: terms, lockfiles: [dir({ added: [lone('only-pm'), wants('by-both'), lone('mixed'), wants('tooling', { unreached: true, reviews: 1 })] }),
     stasis({ added: [wants('by-both'), wants('only-stasis', { reviews: 1 })] })] }
@@ -598,7 +606,7 @@ test('a version its lockfile alone asks for, the stasis.config.json beside it re
     'its lockfile\'s alone marked; one Stasis reaches, alone or with it, and one of a lockfile with none beside it, not; one still built, listed unmarked. ' +
     'Those reviewed there already first, those marked last, a reviewed one first among them')
     assert.deepEqual(rows(cardsOf(text).find(card => nameOf(card) === 'both#1').split('team-deps-versions is-same')[1]), [['mixed', true]], 'above the one another lists, dimmed, which comes after all')
-    assert.match(text, /role="status">Stasis is still working out what some <code>stasis\.config\.json<\/code> entries reach/u)
+    assert.match(text, /<span class="team-deps-progress-n">1\/2<\/span>/u, 'each build once, one both the default branch and a pull request read')
     assert.doesNotMatch(text, /review fails/u, 'one awaiting it fails nothing')
     const marked = text.split('<li>').find(row => row.includes('data-tooltip=only-pm@'))
     assert.match(marked, /<span class="team-deps-unreached" role="img" aria-label=Needed by only lockfile, not stasis\.config\.json>!<\/span>/u, 'an exclamation mark, named')

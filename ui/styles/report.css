@@ -2035,6 +2035,19 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 }
 /* Stasis's mark, after how many of a card's versions it reaches. */
 .team-deps-stasis { width: .75rem; height: .75rem; vertical-align: -.125rem; }
+/* How far Stasis is with the builds the tab waits for: its mark, a bar and
+   how many of them it has made. */
+.team-deps-building {
+  display: flex; align-items: center; gap: .375rem;
+
+  & > .team-deps-stasis { flex: none; }
+  & > .team-deps-progress-n { flex: none; font-variant-numeric: tabular-nums; }
+}
+.team-deps-progress {
+  flex: none; width: 6rem; height: 4px; border-radius: 2px; overflow: hidden; background: var(--border);
+
+  & > span { display: block; height: 100%; background: var(--accent); transition: width .3s ease; }
+}
 .team-deps-versions {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 30rem), 1fr)); column-gap: 1.5rem;
   margin: .25rem 0 0; padding: 0; list-style: none;

@@ -171,19 +171,22 @@ export function wantingBeside(wantedIn: Map<string[], number>, config: string): 
 // why (`stasis-failed`). A base that couldn't be built of its own, as one of
 // no such file, reaches nothing, so every version at the head is new, as
 // where it is read without its base (`baseless`), which isn't built then.
+// Each told with the builds it reads (`builds`), whether each is made yet,
+// for a page to tell how far Stasis is with them.
 export async function stasisDirectory(config: string, base: string | null, head: string, read: (commit: string) => Promise<StasisRead>,
   locked: (commit: string, held: (path: string) => boolean) => Promise<CommitLockfiles>, baseless = false): Promise<DirectoryDependencies> {
   const paths = [config]
   const [after, before] = await Promise.all([read(head), baseless || base === null || base === head ? null : read(base)])
-  if (after.status === 'failed') return { paths, error: 'stasis-failed', detail: after.error }
-  if (before?.status === 'failed' && before.transient) return { paths, error: 'stasis-failed', detail: before.error }
-  if (after.status === 'pending' || before?.status === 'pending') return { paths, error: 'stasis-pending' }
+  const builds = [{ commit: head, built: after.status !== 'pending' }, ...before ? [{ commit: base!, built: before.status !== 'pending' }] : []]
+  if (after.status === 'failed') return { paths, builds, error: 'stasis-failed', detail: after.error }
+  if (before?.status === 'failed' && before.transient) return { paths, builds, error: 'stasis-failed', detail: before.error }
+  if (after.status === 'pending' || before?.status === 'pending') return { paths, builds, error: 'stasis-pending' }
   const lockedAt = async (commit: string, dependencies: StasisDependency[]): Promise<LockedPackage[]> => {
     const found = lockedVersions(dependencies, await locked(commit, path => installsBundle(path, directoryOf(config))))
     return [...found.locked, ...found.unlocked.map(({ name, version }): LockedPackage => ({ name, version, source: 'registry', unlocked: true }))]
   }
   const [now, was] = await Promise.all([lockedAt(head, after.dependencies), before?.status === 'ready' ? lockedAt(base!, before.dependencies) : []])
-  return addedBetween(paths, baseless ? [] : before === null ? now : was, now)
+  return { ...addedBetween(paths, baseless ? [] : before === null ? now : was, now), builds }
 }
 
 // `answer`, a review's dependencies, each version its package manager alone
