@@ -218,8 +218,9 @@ export const npmDeltaStore = <T>(db: UpstreamCacheStore, debug = false): KeptSto
 // The same, of public versions alone, by their names and versions
 // (npm-delta.ts versionDeltaKey), which npm never gives other files: read
 // without their integrities, so without asking npm, or keeping what it tells
-// of them, for them.
-export const npmVersionDeltaStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'npm/version-deltas', HISTORY_PAGE_KEPT_MS, debug)
+// of them, for them. Each read for VERSION_DELTA_KEPT_MS alone, pruned or not.
+export const VERSION_DELTA_KEPT_MS = 30 * 24 * 60 * 60_000
+export const npmVersionDeltaStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'npm/version-deltas', VERSION_DELTA_KEPT_MS, debug)
 // The versions a repository's lockfiles locked at the commit its dependencies
 // are reviewed since (pull-dependency-reviews.ts reviewBaseline), by the
 // commit, which never change: kept as its history's pages are, never stored

@@ -219,4 +219,6 @@ test('several versions\' lines, each of two public versions kept by their names 
   assert.ok(found.has(keys[1]), 'against none too')
   assert.equal(told['@corp/lib@1.1.0 (empty)'].additions, 5, 'a private one counted for its reader')
   assert.ok(!found.has(keys[2]), 'but not kept by its name')
+  const { VERSION_DELTA_KEPT_MS } = await import('../server-managed/npm-kept.ts')
+  assert.equal((await keptVersionDeltas(keys, npmVersionDeltaStore(send.db), Date.now() + VERSION_DELTA_KEPT_MS)).size, 0, 'none read past a month, pruned or not')
 })

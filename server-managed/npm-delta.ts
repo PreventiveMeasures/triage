@@ -17,7 +17,7 @@
 // it (`kept`), what a version holds never changing. Access is the caller's
 // to check.
 import { createHash } from 'node:crypto'
-import type { KeptStore } from './npm-kept.ts'
+import { type KeptStore, VERSION_DELTA_KEPT_MS } from './npm-kept.ts'
 import { type Lru, lru } from './lru.ts'
 import { NpmPackageError, type NpmPackageFile, npmFileText } from './npm-packages.ts'
 import { workerTurns } from './worker-turns.ts'
@@ -109,11 +109,12 @@ export const deltaKey = (base: string | null, other: string) => `${base ?? '(emp
 // npmVersionDeltaStore.
 export const versionDeltaKey = (name: string, version: string, otherName: string, otherVersion: string) =>
   `${name}@${version}\0${otherVersion === '(empty)' ? '(empty)' : `${otherName}@${otherVersion}`}`
-// Those of `keys` (versionDeltaKey) kept, by key.
-export async function keptVersionDeltas(keys: string[], kept: KeptStore<NpmDelta>): Promise<Map<string, NpmDelta>> {
+// Those of `keys` (versionDeltaKey) kept, by key, as of `now`: one kept past
+// VERSION_DELTA_KEPT_MS not, though no write has pruned it yet.
+export async function keptVersionDeltas(keys: string[], kept: KeptStore<NpmDelta>, now = Date.now()): Promise<Map<string, NpmDelta>> {
   const found = new Map<string, NpmDelta>()
   for (const [key, row] of keys.length > 0 ? await kept.readMany([...new Set(keys)]) : []) {
-    const known = deltaOf(row.value)
+    const known = now - row.at < VERSION_DELTA_KEPT_MS ? deltaOf(row.value) : null
     if (known) found.set(key, known)
   }
   return found

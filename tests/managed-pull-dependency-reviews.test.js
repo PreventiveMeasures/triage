@@ -1585,6 +1585,9 @@ test('a team\'s Dependencies tell the lines its versions change kept by their na
   const { versionDeltaKey } = await import('../server-managed/npm-delta.ts')
   const delta = { additions: 2, deletions: 0, typeless: null, binary: false }
   const deltasOf = async () => (await read()).lines.filter(line => line.repoId === 1).map(line => line.deltas ?? null)
+  const { VERSION_DELTA_KEPT_MS } = await import('../server-managed/npm-kept.ts')
+  await npmVersionDeltaStore(db).write(versionDeltaKey('kept', '1.0.0', 'kept', '(empty)'), delta, Date.now() - VERSION_DELTA_KEPT_MS)
+  assert.deepEqual(await deltasOf(), [null, null], 'none kept past a month, pruned or not')
   // Kept by their names alone: told, npm's documents of them never read.
   await npmVersionDeltaStore(db).write(versionDeltaKey('kept', '1.0.0', 'kept', '(empty)'), delta, Date.now())
   assert.deepEqual(await deltasOf(), [[['kept', '1.0.0', '(empty)', delta]], [['kept', '1.0.0', '(empty)', delta]]])
