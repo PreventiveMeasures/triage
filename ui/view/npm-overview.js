@@ -296,11 +296,9 @@ export function npmAdvisoriesColumn(entry) {
   const isCurrent = sessionCheck()
   const ready = data.status === 'ready'
   const advisories = ready ? data.advisories : []
-  const statuses = advisories.map(advisory => npmAdvisoryStatus(advisory, data.versions, version))
-  const groups = ADVISORY_GROUPS.map(([status, heading]) => ({
-    status, heading: heading(version), advisories: advisories.filter((_, i) => statuses[i] === status),
-  })).filter(group => group.advisories.length > 0)
-  const active = statuses.filter(status => status === 'affects').length
+  const byStatus = Map.groupBy(advisories, advisory => npmAdvisoryStatus(advisory, data.versions, version))
+  const groups = ADVISORY_GROUPS.filter(([status]) => byStatus.has(status)).map(([status, heading]) => ({ status, heading: heading(version), advisories: byStatus.get(status) }))
+  const active = byStatus.get('affects')?.length ?? 0
   // Where the repository's advisories are as GitHub last listed them, how long ago, or missing.
   const unchecked = ready && data.keptAt
     ? html`<p class="npm-advisories-note">GitHub's repository advisories are as of ${npmSpan(Date.now() - Date.parse(data.keptAt))} ago: they couldn't be checked now.</p>`

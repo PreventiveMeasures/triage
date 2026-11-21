@@ -569,14 +569,13 @@ class BundleCompare extends LitElement {
 
   // Bundles as picker options, same-named ones told apart by a short integrity suffix.
   _bundleOptions(others) {
-    const nameCounts = new Map()
-    for (const b of others) nameCounts.set(b.name, (nameCounts.get(b.name) ?? 0) + 1)
+    const named = Map.groupBy(others, b => b.name)
     return others.map((b) => ({
       id: b.integrity, integrity: b.integrity,
       kind: b.kind ?? (b.name.toLowerCase().endsWith('.map') ? 'sourcemap' : 'stasis'),
       summary: b.summary,
       size: typeof b.size === 'number' ? formatBytes(b.size) : '—',
-      filename: nameCounts.get(b.name) > 1
+      filename: named.get(b.name).length > 1
         ? `${b.name} · ${b.integrity.slice('sha512-'.length, 'sha512-'.length + 6)}…`
         : b.name,
     }))
