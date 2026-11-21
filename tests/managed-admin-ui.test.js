@@ -450,14 +450,14 @@ test('bundle location editing retains the collection and directory on failure, t
   page._locationDirectory = '/foo/sub'
   await page._saveLocation(bundle)
   assert.match(page._error, /choose a repository and directory within your team access/u)
-  assert.equal(page._locationBundle, 'b')
+  assert.equal(page._locationId, 'b')
   assert.equal(page._locationDirectory, '/foo/sub')
   assert.deepEqual(page._data.bundles, [bundle])
   status = 200
   token = 'rotated-token'
   page.session = { ...adminSession, csrfToken: token }
   await page._saveLocation(bundle)
-  assert.equal(page._locationBundle, null)
+  assert.equal(page._locationId, null)
   assert.equal(page._error, null, 'a successful retry clears the previous action error')
 })
 
@@ -491,7 +491,7 @@ test('bundle origins load only for open Stasis editors and never replace the ass
   assert.equal(page._locationOrigin.github, 'source/repo', 'late metadata cannot replace the current row')
   page._closeLocation()
   assert.equal(page._locationOrigin, null)
-  assert.equal(page._locationBundle, null)
+  assert.equal(page._locationId, null)
 })
 
 test('bundle metadata shortcuts match supported GitHub origins and apply their declared location', () => {
@@ -559,7 +559,7 @@ test('bundle origin errors are retryable and cancelled editors ignore late metad
   requests[3].resolve(Response.json({ bundle: { repo: { github: 'late/repo' } } }))
   await setImmediate()
   assert.equal(page._locationOrigin, null)
-  assert.equal(page._locationBundle, null)
+  assert.equal(page._locationId, null)
 })
 
 test('bundle metadata suggestions use current aliases without replacing the saved or edited location', async t => {
@@ -1107,7 +1107,7 @@ test('report location suggestions load per open editor, apply connected destinat
   requests[4].resolve(Response.json({ location: { repoId: 7, github: 'org/repo', directory: 'late' } }))
   await setImmediate()
   assert.equal(page._locationOrigin, null)
-  assert.equal(page._locationReport, null)
+  assert.equal(page._locationId, null)
 })
 
 test('upload and location refusals name team access only when the server reports it', async t => {

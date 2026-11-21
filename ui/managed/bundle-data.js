@@ -3,8 +3,13 @@ import { managedAppState } from './state.js'
 import { reportRepoGithub } from '@preventive/report'
 import { commonFileDirectory } from '../../common/managed/repository-alias.ts'
 
+// `signal`, or else, as well, the managed session's ending.
+const sessionSignal = signal => signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
+const sessionChanged = () => new DOMException('Managed session changed', 'AbortError')
+const json = response => response.json()
+
 export async function fetchManagedBundleCatalog({ signal } = {}) {
-  signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
+  signal = sessionSignal(signal)
   signal.throwIfAborted()
   const response = await managedFetch('/api/admin/bundles', { credentials: 'same-origin', signal })
   signal.throwIfAborted()
@@ -23,7 +28,7 @@ async function requestBundle(id, part, signal) {
   if (!response.ok) throw Object.assign(new Error(`Bundle ${part} request failed (${response.status})`), { status: response.status })
   const data = part === 'contents' ? await response.text() : await response.json()
   signal?.throwIfAborted()
-  if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
+  if (generation !== managedAppState.generation) throw sessionChanged()
   return data
 }
 export function fetchBundleMetadata(id, { signal } = {}) {
@@ -33,7 +38,7 @@ export function fetchBundleMetadata(id, { signal } = {}) {
 // The location editor handles failures inline. Its reference read must stop
 // with that editor instead of leaving a shared request that can raise a toast.
 export async function fetchBundleOrigin(id, { signal } = {}) {
-  signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
+  signal = sessionSignal(signal)
   const data = await requestBundle(id, 'metadata', signal)
   const repo = data?.bundle?.repo ?? null
   const github = reportRepoGithub({ repo })
@@ -54,7 +59,7 @@ export async function fetchBundleOrigin(id, { signal } = {}) {
 }
 
 export async function fetchBundleContents(id, { signal } = {}) {
-  signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
+  signal = sessionSignal(signal)
   try { return await requestBundle(id, 'contents', signal) }
   catch (err) {
     if (err.name !== 'AbortError') managedAppState.notify(`Couldn't load bundle contents: ${err.message}`)
@@ -87,7 +92,7 @@ export const PATCH_ERRORS = {
 }
 // A patch's fields as the npm endpoints take them, where `patch` names one
 // (`{ hash, repoId, commit, path }`).
-export const patchParams = patch => patch ? { patchHash: patch.hash,
+const patchParams = patch => patch ? { patchHash: patch.hash,
   ...patch.repoId == null ? {} : { patchRepoId: String(patch.repoId), patchCommit: patch.commit }, ...patch.path == null ? {} : { patchPath: patch.path } } : {}
 
 const NPM_ERRORS = {
@@ -102,17 +107,13 @@ const NPM_ERRORS = {
   502: "The npm registry couldn't be reached.",
 }
 
-// Reads asked for ahead of their readers (prefetch), by their URL, each
-// `{ reading, until, generation }`: the first read of one within
-// PREFETCH_MS, of the session that asked for it, takes its answer, none read
-// again; one taken failing, or refused, as a server busy for a moment
-// refuses it, read anew, but for a session change; one none takes in time
-// called off.
+// Reads made ahead of their readers, by URL. The first request() for one
+// within PREFETCH_MS, in the same session, takes its answer; a failed or
+// refused one is read anew; one nobody takes in time is aborted.
 const PREFETCH_MS = 15_000
 const prefetched = new Map()
 
-// `url` read now, for a read of it soon to take (request).
-export function prefetch(url) {
+function prefetch(url) {
   if (prefetched.has(url)) return
   const unread = new AbortController()
   const reading = managedFetch(url, { credentials: 'same-origin', signal: AbortSignal.any([unread.signal, managedAppState.sessionController.signal]) })
@@ -139,11 +140,10 @@ const abortable = (promise, signal) => new Promise((resolve, reject) => {
   promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
 })
 
-// A read that a session change aborts, its failures named by `errors`, by
-// their error code or else their status; one read ahead (prefetch) taken, but
-// for a request of another method (`init`).
+// A read that a session change aborts, its failures named by `errors` (by
+// error code, else status); a prefetched answer is taken for a GET.
 export async function request(url, errors, read, signal, init = {}) {
-  signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
+  signal = sessionSignal(signal)
   const generation = managedAppState.generation
   const ask = () => managedFetch(url, { credentials: 'same-origin', ...init, signal })
   const ahead = init.method ? null : takePrefetched(url, generation)
@@ -159,13 +159,13 @@ export async function request(url, errors, read, signal, init = {}) {
   }
   const data = await read(response)
   signal.throwIfAborted()
-  if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
+  if (generation !== managedAppState.generation) throw sessionChanged()
   return data
 }
 
 // npm package reads are never kept: the server checks access, against the
 // registry, on every one.
-const requestNpm = (part, params, signal) => request(`/api/npm/${part}?${new URLSearchParams(params)}`, NPM_ERRORS, response => response.json(), signal)
+const requestNpm = (part, params, signal) => request(`/api/npm/${part}?${new URLSearchParams(params)}`, NPM_ERRORS, json, signal)
 
 const REPOSITORY_CODE_ERRORS = {
   'no-repository': 'This repository is not available to you.',
@@ -189,7 +189,7 @@ const REPOSITORY_CODE_ERRORS = {
 }
 
 const requestRepository = (part, params, signal) =>
-  request(`/api/admin/repositories/${part}?${new URLSearchParams(params)}`, REPOSITORY_CODE_ERRORS, response => response.json(), signal)
+  request(`/api/admin/repositories/${part}?${new URLSearchParams(params)}`, REPOSITORY_CODE_ERRORS, json, signal)
 
 // A repository's directory at a revision (`ref`: a commit, `heads/<branch>`,
 // `tags/<tag>`, or '' for the default branch's head), for the code viewer:
@@ -229,7 +229,7 @@ const REPOSITORY_HISTORY_ERRORS = {
 export function fetchRepositoryHistory(repoId, ref, path, { page = 1, all = false, fresh = false, from = null, signal } = {}) {
   return request(`/api/admin/repositories/history?${new URLSearchParams({ repoId, ref, path, page, ...all ? { all: 'true' } : {}, ...fresh ? { fresh: 'true' } : {},
     ...from ? { from: from.join(',') } : {} })}`,
-    REPOSITORY_HISTORY_ERRORS, response => response.json(), signal)
+    REPOSITORY_HISTORY_ERRORS, json, signal)
 }
 
 const REPOSITORY_CHANGES_ERRORS = {
@@ -243,12 +243,12 @@ const REPOSITORY_CHANGES_ERRORS = {
 // Replay plays them, fifty commits at most.
 export function fetchRepositoryChanges(repoId, path, shas, { signal } = {}) {
   return request(`/api/admin/repositories/changes?${new URLSearchParams({ repoId, path, shas: shas.join(',') })}`,
-    REPOSITORY_CHANGES_ERRORS, response => response.json(), signal)
+    REPOSITORY_CHANGES_ERRORS, json, signal)
 }
 
 // The files commit `commit` holds within `path`, which Replay starts from.
 export function fetchRepositoryTree(repoId, path, commit, { signal } = {}) {
-  return request(`/api/admin/repositories/tree?${new URLSearchParams({ repoId, path, commit })}`, REPOSITORY_CHANGES_ERRORS, response => response.json(), signal)
+  return request(`/api/admin/repositories/tree?${new URLSearchParams({ repoId, path, commit })}`, REPOSITORY_CHANGES_ERRORS, json, signal)
 }
 
 const REPOSITORY_ISSUES_ERRORS = {
@@ -264,7 +264,7 @@ const REPOSITORY_ISSUES_ERRORS = {
 // open or closed (`state`), a page at a time, on from the cursor `after`.
 const issuesUrl = (repoId, kind, state, after) => `/api/admin/repositories/issues?${new URLSearchParams({ repoId, kind, state, ...after ? { after } : {} })}`
 export function fetchRepositoryIssues(repoId, kind, { state = 'open', after = null, signal } = {}) {
-  return request(issuesUrl(repoId, kind, state, after), REPOSITORY_ISSUES_ERRORS, response => response.json(), signal)
+  return request(issuesUrl(repoId, kind, state, after), REPOSITORY_ISSUES_ERRORS, json, signal)
 }
 
 const REPOSITORY_AGENTS_ERRORS = {
@@ -279,7 +279,7 @@ const REPOSITORY_AGENTS_ERRORS = {
 // page, naming neither, with issues and branches).
 const agentsUrl = (repoId, pulls, commits) => `/api/admin/repositories/agents?${new URLSearchParams({ repoId, ...pulls ? { pulls } : {}, ...commits ? { commits } : {} })}`
 export function fetchRepositoryAgents(repoId, { pulls = null, commits = null, signal } = {}) {
-  return request(agentsUrl(repoId, pulls, commits), REPOSITORY_AGENTS_ERRORS, response => response.json(), signal)
+  return request(agentsUrl(repoId, pulls, commits), REPOSITORY_AGENTS_ERRORS, json, signal)
 }
 
 const REPOSITORY_ITEM_ERRORS = {
@@ -290,7 +290,7 @@ const REPOSITORY_ITEM_ERRORS = {
 
 // An issue or pull request, as its popup shows it, with its description.
 export function fetchRepositoryItem(repoId, number, { signal } = {}) {
-  return request(`/api/admin/repositories/item?${new URLSearchParams({ repoId, number })}`, REPOSITORY_ITEM_ERRORS, response => response.json(), signal)
+  return request(`/api/admin/repositories/item?${new URLSearchParams({ repoId, number })}`, REPOSITORY_ITEM_ERRORS, json, signal)
 }
 
 const PULL_DEPENDENCIES_ERRORS = {
@@ -310,13 +310,13 @@ const PULL_DEPENDENCIES_ERRORS = {
 const pullDependencyFlags = ({ review, listed }) => ({ ...review ? { review: '1' } : {}, ...listed ? { listed: '1' } : {} })
 export function fetchPullDependencies(repoId, number, { review = false, listed = false, signal } = {}) {
   return request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, number, ...pullDependencyFlags({ review, listed }) })}`,
-    PULL_DEPENDENCIES_ERRORS, response => response.json(), signal)
+    PULL_DEPENDENCIES_ERRORS, json, signal)
 }
 // Those of several of a repository's pull requests at once, by number, each
 // its answer, else an error of why GitHub failed it.
 export async function fetchPullDependenciesOf(repoId, numbers, { review = false, listed = false, signal } = {}) {
   const { pulls, users, deltas } = await request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, numbers: numbers.join(','), ...pullDependencyFlags({ review, listed }) })}`,
-    PULL_DEPENDENCIES_ERRORS, response => response.json(), signal)
+    PULL_DEPENDENCIES_ERRORS, json, signal)
   return pullAnswers(pulls, users, deltas)
 }
 // Each with the app's users the answer names (`users`), and the lines the
@@ -349,7 +349,7 @@ const BUNDLE_DEPENDENCY_REVIEW_ERRORS = {
   400: 'Not a bundle.',
 }
 export function fetchBundleDependencyReview(id, { signal } = {}) {
-  return request(`/api/bundles/${encodeURIComponent(id)}/dependency-review`, BUNDLE_DEPENDENCY_REVIEW_ERRORS, response => response.json(), signal)
+  return request(`/api/bundles/${encodeURIComponent(id)}/dependency-review`, BUNDLE_DEPENDENCY_REVIEW_ERRORS, json, signal)
 }
 
 // A bundle's last validation its reader may see (GET
@@ -367,10 +367,10 @@ const BUNDLE_VALIDATION_ERRORS = {
 }
 const validationUrl = id => `/api/bundles/${encodeURIComponent(id)}/validation`
 export function fetchBundleValidation(id, { signal } = {}) {
-  return request(validationUrl(id), BUNDLE_VALIDATION_ERRORS, response => response.json(), signal)
+  return request(validationUrl(id), BUNDLE_VALIDATION_ERRORS, json, signal)
 }
 export function runBundleValidation(id, csrfToken, { signal } = {}) {
-  return request(validationUrl(id), BUNDLE_VALIDATION_ERRORS, response => response.json().catch(() => null), signal, { method: 'POST', headers: { 'x-csrf-token': csrfToken } })
+  return request(validationUrl(id), BUNDLE_VALIDATION_ERRORS, json.catch(() => null), signal, { method: 'POST', headers: { 'x-csrf-token': csrfToken } })
 }
 
 // A team's Dependencies tab's, of those of its repositories `repoIds` names,
@@ -387,9 +387,7 @@ const unreadPulls = error => `Not all its open pull requests were read. ${UNREAD
 export function fetchTeamDependencies(teamId, onLine, { repoIds = null, signal } = {}) {
   const query = repoIds ? `?${new URLSearchParams({ repoIds: repoIds.join(',') })}` : ''
   return request(`/api/teams/${encodeURIComponent(teamId)}/dependencies${query}`, TEAM_DEPENDENCIES_ERRORS, async response => {
-    const generation = managedAppState.generation
-    for await (const line of responseLines(response)) {
-      if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
+    for await (const line of sessionLines(response)) {
       onLine(typeof line.error === 'string' ? { ...line, error: BRANCH_DEPENDENCIES_ERRORS[line.error] ?? BRANCH_DEPENDENCIES_ERRORS[line.status]
         ?? `It couldn’t be read (${line.error}).`, code: line.error } : Array.isArray(line.dependencies) ? { ...line, dependencies: pullAnswers(line.dependencies, line.users) }
         : typeof line.pulls?.error === 'string' ? { ...line, pulls: { ...line.pulls, error: unreadPulls(line.pulls.error) } } : line)
@@ -410,7 +408,7 @@ const REPOSITORY_PULSE_ERRORS = {
 // the pull requests and issues of the last `weeks` weeks.
 const pulseUrl = (repoId, weeks) => `/api/admin/repositories/pulse?${new URLSearchParams({ repoId, weeks })}`
 export function fetchRepositoryPulse(repoId, weeks, { signal } = {}) {
-  return request(pulseUrl(repoId, weeks), REPOSITORY_PULSE_ERRORS, response => response.json(), signal)
+  return request(pulseUrl(repoId, weeks), REPOSITORY_PULSE_ERRORS, json, signal)
 }
 
 // The first read an Activity view opening on `tab` makes, read ahead of it
@@ -426,7 +424,7 @@ export function prefetchActivity(repoId, tab, { state = 'open', weeks = 4 } = {}
 // (YYYY-MM-DD; none, on) and of any of `authors` (GitHub logins).
 export function fetchRepositoryPulseItems(repoId, weeks, { from, to = null, authors = [] }, { signal } = {}) {
   const query = new URLSearchParams({ repoId, weeks, from, ...to === null ? {} : { to }, ...authors.length > 0 ? { authors: authors.join(',') } : {} })
-  return request(`/api/admin/repositories/pulse/items?${query}`, REPOSITORY_PULSE_ERRORS, response => response.json(), signal)
+  return request(`/api/admin/repositories/pulse/items?${query}`, REPOSITORY_PULSE_ERRORS, json, signal)
 }
 
 // A version's manifest and files; with `patch`, its files alone, as the
@@ -511,6 +509,15 @@ export async function* responseLines(response) {
   }
 }
 
+// Those of the session they were asked in alone.
+async function* sessionLines(response) {
+  const generation = managedAppState.generation
+  for await (const line of responseLines(response)) {
+    if (generation !== managedAppState.generation) throw sessionChanged()
+    yield line
+  }
+}
+
 // Every file of an npm version that needs pretty-printing, pretty-printed by
 // the server in one request, which keeps the copies of a public one: `onLine`
 // called with each as it comes, in path order, `{ path, source, text }`, or
@@ -536,9 +543,7 @@ export function fetchPrettyNpmChanges(name, version, otherVersion, onLine, { sig
 // one's error told as `message`, as `told` names it; refused as `errors` name it.
 function requestPrettyLines(url, errors, onLine, signal, told = PRETTY_ERRORS) {
   return request(url, errors, async response => {
-    const generation = managedAppState.generation
-    for await (const { error, status, ...line } of responseLines(response)) {
-      if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
+    for await (const { error, status, ...line } of sessionLines(response)) {
       await onLine(error ? { ...line, status, message: told[error] ?? told[status] ?? `Request failed (${status})` } : line)
     }
   }, signal)
@@ -557,7 +562,7 @@ const RENAME_DIFF_ERRORS = {
 // and hidden: its change blocks and the removed lines left out as renamed
 // (rename-diff.js). `params` name both files, a base's `path` and `hash`, the
 // other's `otherPath` and `otherHash`.
-const requestRenameDiff = (url, signal) => request(url, RENAME_DIFF_ERRORS, response => response.json(), signal)
+const requestRenameDiff = (url, signal) => request(url, RENAME_DIFF_ERRORS, json, signal)
 
 export function fetchBundleRenameDiff(id, other, { path, hash, otherPath, otherHash }, { signal } = {}) {
   return requestRenameDiff(`/api/bundles/${encodeURIComponent(id)}/rename-diff?${new URLSearchParams({ path, hash, other, otherPath, otherHash })}`, signal)
@@ -609,9 +614,7 @@ const DELTA_ERRORS = { ...NPM_ERRORS, 'delta-busy': 'Too many packages are being
   'delta-timeout': 'Counting its lines took too long.', 'delta-failed': 'Its lines couldn’t be counted.' }
 export function fetchNpmDeltas(versions, onLine, { signal } = {}) {
   return request(`/api/npm/deltas?${new URLSearchParams({ versions: JSON.stringify(versions) })}`, DELTA_ERRORS, async response => {
-    const generation = managedAppState.generation
-    for await (const { error, status, ...line } of responseLines(response)) {
-      if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
+    for await (const { error, status, ...line } of sessionLines(response)) {
       onLine(error ? { ...line, error: DELTA_ERRORS[error] ?? DELTA_ERRORS[status] ?? `Request failed (${status})` } : line)
     }
   }, signal)

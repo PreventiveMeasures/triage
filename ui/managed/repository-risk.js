@@ -27,7 +27,6 @@ import { isHttpUrl } from '@preventive/report'
 import { npmRiskLevel } from '../../risk/npm/score.js'
 import { managedRoutePath } from '../../common/managed/routes.js'
 import { ManagedPage } from './page.js'
-import { adminNavigation } from './navigation.js'
 import { request, responseLines } from './bundle-data.js'
 import { fetchTeams } from './admin-api.js'
 import { BUNDLE_ICON_SVG, DEPENDABOT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG } from '../view/icons.js'
@@ -299,7 +298,8 @@ const tabList = (name, tabs, current, choose) => html`<div class="risk-tabs" rol
   aria-selected=${current === tab} @click=${() => choose(tab)}>${label}</button>`)}</div>`
 
 class ManagedAdminRepositoryRisk extends ManagedPage {
-  static properties = { _state: { state: true }, _error: { state: true }, _filter: { state: true }, _kind: { state: true }, _packageKind: { state: true },
+  static view = 'manage-repos'
+  static properties = { _state: { state: true }, _filter: { state: true }, _kind: { state: true }, _packageKind: { state: true },
     _query: { state: true }, _tab: { state: true }, _actionKind: { state: true }, _files: { state: true },
     _scope: { state: true }, _target: { state: true }, _choices: { state: true } }
   static styles = [unsafeCSS(commonStyles), unsafeCSS(linksStyles), unsafeCSS(riskStyles)]
@@ -332,9 +332,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     this._reset()
   }
 
-  connectedCallback() {
-    super.connectedCallback()
-    void this._loadCollection('teams', 'teams', fetchTeams, data => { this._choices = data })
+  _load() {
+    return this._loadCollection('teams', 'teams', fetchTeams, data => { this._choices = data })
   }
 
   // Scans `scope` (SCOPES) and `target` from now on, what was found of
@@ -755,7 +754,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   }
 
   render() {
-    return html`<div class="wrap">${adminNavigation('manage-repos', this._role, this.allowShare)}
+    return html`<div class="wrap">${this._nav()}
       <h1 class="sr-only">Repository risk</h1>
       <div class="page-intro"><p class="intro">Risks in each repository’s npm dependencies and GitHub Actions.</p>
         ${this._stateBadge()}${this._state === 'running' ? html`<button type="button" class="btn" @click=${() => this.stop()}>Stop</button>`

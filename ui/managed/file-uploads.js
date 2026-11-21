@@ -1,18 +1,14 @@
-// Open a file picker (hidden input, created on demand) and hand the chosen files
-// to `onFiles`. `multiple` allows batch uploads.
-export function pickFiles(onFiles, multiple = true) {
+export function pickFiles(onFiles) {
   const input = document.createElement('input')
   input.type = 'file'
-  input.multiple = multiple
+  input.multiple = true
   input.addEventListener('change', () => { onFiles([...input.files]) }, { once: true })
   input.click()
 }
 
-// Wire file drag&drop onto a host element: `onFiles(File[])` fires on drop, and
-// `onState(active)` toggles as a file drag enters / leaves (drives the drop
-// overlay). Enter/leave are tracked with a depth counter so moving over child
-// nodes doesn't flicker the overlay, and only drags that actually carry files
-// are handled (so dragging text / a link is ignored). Returns a teardown.
+// `onFiles(File[])` on a drop, `onState(active)` as a file drag enters or
+// leaves. Enter/leave are counted so moving over child nodes doesn't flicker
+// the overlay; drags carrying no files (text, a link) are ignored.
 export function installFileDropZone(host, onFiles, onState) {
   let depth = 0
   const hasFiles = (e) => Array.from(e.dataTransfer?.types ?? []).includes('Files')

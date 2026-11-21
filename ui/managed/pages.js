@@ -1,11 +1,11 @@
-import { getPreviewRole, managedFetch } from '../../client/managed/request.js'
 // Manage custom elements, registered by the lazy client-managed.js entry.
 // Manage data stays in the lazy bundle; the host supplies session updates and
 // renders composed navigation and notification events.
+import { getPreviewRole, managedFetch } from '../../client/managed/request.js'
 import { html, nothing, unsafeCSS } from 'lit'
 import { keyed } from 'lit/directives/keyed.js'
 import { reportRepoGithub } from '@preventive/report'
-import { ManagedPage, loadingRows } from './page.js'
+import { FileDrop, ManagedPage, emptyState, errorMessage, loadingRows } from './page.js'
 import { appMarkup } from '../view/markup.js'
 import { ROLES, roleAtLeast } from '../../common/managed/roles.ts'
 import { VISIBILITY_PERMISSION_LABELS } from '../../common/managed/permissions.ts'
@@ -15,11 +15,11 @@ import { REPORT_LOGOS } from '../view/report-logos.js'
 import { displayName } from '../../common/report-display-name.js'
 import { DELETE_ICON_SVG, EDIT_ICON_SVG } from '../view/icons.js'
 import { formatBytes } from '../scan/metrics.js'
-import { adminIcon, adminNavigation } from './navigation.js'
+import { adminIcon, openAdminPage } from './navigation.js'
 import { ManagedLocalImport } from './local-import.js'
 import { fetchBundleOrigin } from './bundle-data.js'
 import { addPublicRepository, connectRepositoryApp, createBundle, deleteBundle, deleteReport, fetchBundleUsage, fetchBundles, fetchHistory, fetchReportLocation, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchRepositoryLockfiles, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setBundleVisible, setReportRepo, setReportVisible, setRepositoryDependencyReview, setRole, uploadBundle, uploadReport } from './admin-api.js'
-import { installFileDropZone, pickFiles, uploadFiles, uploadLocalFile } from './file-uploads.js'
+import { uploadFiles, uploadLocalFile } from './file-uploads.js'
 import { viewAs } from '../../client/managed/session.js'
 import localImportStyles from './styles/local-import.css'
 import commonStyles from './styles/common.css'
@@ -43,12 +43,6 @@ import '../view/repository-selector.js'
 import '../view/user-selector.js'
 import './repository-aliases.js'
 
-function openAdminPage(view) {
-  document.dispatchEvent(new CustomEvent('managed-admin-navigate', {
-    detail: { view }, bubbles: true, composed: true,
-  }))
-}
-
 function adminAvatar(id, login) {
   return html`<span class="avatar" aria-hidden="true">
     <span>${(login?.[0] ?? '?').toUpperCase()}</span>
@@ -63,49 +57,72 @@ function actorAvatar(id, shown) {
     <img alt="" loading="lazy" decoding="async" src=${`/api/avatar/${encodeURIComponent(id)}`} @error=${event => { event.currentTarget.hidden = true }}>`)}</span>`
 }
 
-// The kinds of history, each shown by its chip, in the rows and the filter;
-// its text capitalized itself, as an option's plain text is not styled.
+// The kinds of history, each shown by its chip in the rows and the filter;
+// capitalized here, as an option's plain text is not styled.
 const HISTORY_KINDS = ['triage', 'visibility', 'upload', 'repository', 'access', 'delete']
-const kindChip = (kind, text = kind ?? 'activity') => html`<span class=${`kind ${kind ?? ''}`}>${text[0].toUpperCase()}${text.slice(1)}</span>`
+const kindChip = kind => {
+  const text = kind ?? 'activity'
+  return html`<span class=${`kind ${kind ?? ''}`}>${text[0].toUpperCase()}${text.slice(1)}</span>`
+}
 
 const ADMIN_EDIT_ICON = appMarkup(EDIT_ICON_SVG)
 const ADMIN_DELETE_ICON = appMarkup(DELETE_ICON_SVG)
 const ADMIN_REMOVE_ICON = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8"/></svg>`
 const ADMIN_PLUS_ICON = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>`
-const ADMIN_ROLE_LABELS = { admin: 'Admin', manage: 'Manager', triage: 'Triage', view: 'Viewer', none: 'No access' }
-const ADMIN_ROLE_DESCRIPTIONS = {
-  admin: 'Manage workspace access and teams',
-  manage: 'Manage content and triage within team access',
-  triage: 'Review and triage findings',
-  view: 'Read-only access',
-  none: 'No workspace access',
+const REPO_ICON = adminIcon('repo')
+// Each role's label and description.
+const ROLE_TEXT = {
+  admin: ['Admin', 'Manage workspace access and teams'],
+  manage: ['Manager', 'Manage content and triage within team access'],
+  triage: ['Triage', 'Review and triage findings'],
+  view: ['Viewer', 'Read-only access'],
+  none: ['No access', 'No workspace access'],
+}
+
+// Manage › `label` › `title`, `label` going `back`.
+function breadcrumb(label, backLabel, back, title) {
+  return html`<div class="breadcrumb">
+    <button type="button" class="breadcrumb-manage" @click=${() => openAdminPage('manage')}>Manage</button>
+    <span class="breadcrumb-separator" aria-hidden="true">›</span>
+    <button type="button" class="breadcrumb-manage" aria-label=${backLabel} @click=${back}>${label}</button>
+    <span class="breadcrumb-separator" aria-hidden="true">›</span>
+    ${title ? html`<h1 class="breadcrumb-current">${title}</h1>` : nothing}
+  </div>`
+}
+
+const HOME_CONTENT = [
+  ['manage-bundles', 'Bundles', 'Keep source archives ready for review.', 'bundle'],
+  ['manage-scans', 'Scans', 'Run and monitor scans from stored bundles.', 'scan'],
+  ['manage-reports', 'Reports', 'Review, publish, and organize findings.', 'report'],
+]
+const HOME_WORKSPACE = [
+  ['manage-repos', 'Repositories', 'Connect sources and manage repository settings.', 'repo'],
+  ['admin-users', 'Users', 'Manage accounts, roles, and workspace access.', 'users'],
+  ['manage-teams', 'Teams', 'Bring people and repositories together.', 'team'],
+]
+
+function homePage([view, title, description, icon]) {
+  return html`<button type="button" class=${`page page-${icon}`} @click=${() => openAdminPage(view)}>
+    <span class="page-top"><span class="page-icon" aria-hidden="true">${adminIcon(icon)}</span><strong class="page-title">${title}</strong><span class="arrow" aria-hidden="true">${adminIcon('arrow')}</span></span>
+    <span class="page-copy"><span>${description}</span></span>
+  </button>`
 }
 
 class ManagedAdminHome extends ManagedPage {
-
+  static view = 'manage'
   static styles = [unsafeCSS(homeStyles), unsafeCSS(commonStyles)]
 
   render() {
-    const content = [
-      ['manage-bundles', 'Bundles', 'Keep source archives ready for review.', 'bundle'],
-      ['manage-scans', 'Scans', 'Run and monitor scans from stored bundles.', 'scan'],
-      ['manage-reports', 'Reports', 'Review, publish, and organize findings.', 'report'],
-    ]
-    const workspace = [
-      ['manage-repos', 'Repositories', 'Connect sources and manage repository settings.', 'repo'],
-      ['admin-users', 'Users', 'Manage accounts, roles, and workspace access.', 'users'],
-      ['manage-teams', 'Teams', 'Bring people and repositories together.', 'team'],
-    ]
-    return html`<div class="wrap">${adminNavigation('manage', this._role, this.allowShare)}
+    return html`<div class="wrap">${this._nav()}
       <h1 class="sr-only">Manage</h1>
       ${this._role == null ? html`<p class="msg" role="status">Loading management pages…</p>` : html`
         <section class="home-section" aria-labelledby="content-heading">
           <div class="section-heading"><h2 id="content-heading">Content & activity</h2><span>From source to findings</span></div>
-          <div class="pages">${content.filter(([view]) => view !== 'manage-scans' || ['admin', 'manage'].includes(this._role)).map(page => this._page(page))}</div>
+          <div class="pages">${HOME_CONTENT.filter(([view]) => view !== 'manage-scans' || ['admin', 'manage'].includes(this._role)).map(homePage)}</div>
         </section>
         ${this._role === 'admin' ? html`<section class="home-section" aria-labelledby="workspace-heading">
           <div class="section-heading"><h2 id="workspace-heading">Workspace & access</h2><span>Sources, people, and permissions</span></div>
-          <div class="pages workspace-pages">${workspace.map(page => this._page(page))}</div>
+          <div class="pages workspace-pages">${HOME_WORKSPACE.map(homePage)}</div>
         </section>` : nothing}
         <button type="button" class="history-link" @click=${() => openAdminPage('manage-history')}>
           <span class="page-icon" aria-hidden="true">${adminIcon('history')}</span>
@@ -114,34 +131,18 @@ class ManagedAdminHome extends ManagedPage {
         </button>`}
     </div>`
   }
-
-  _page([view, title, description, icon]) {
-    return html`<button type="button" class=${`page page-${icon}`} @click=${() => openAdminPage(view)}>
-      <span class="page-top"><span class="page-icon" aria-hidden="true">${adminIcon(icon)}</span><strong class="page-title">${title}</strong><span class="arrow" aria-hidden="true">${adminIcon('arrow')}</span></span>
-      <span class="page-copy"><span>${description}</span></span>
-    </button>`
-  }
-
 }
 customElements.define('managed-admin-home', ManagedAdminHome)
 
 class ManagedAdminHistory extends ManagedPage {
-  static properties = { _page: { state: true }, _history: { state: true }, _total: { state: true }, _error: { state: true }, _filter: { state: true }, _query: { state: true }, _repo: { state: true }, _actor: { state: true }, _options: { state: true } }
-
+  static view = 'manage-history'
+  static properties = { _page: { state: true }, _history: { state: true }, _total: { state: true }, _filter: { state: true }, _query: { state: true }, _repo: { state: true }, _actor: { state: true }, _options: { state: true } }
   static styles = [unsafeCSS(historyStyles), unsafeCSS(commonStyles)]
 
   constructor() {
     super()
-    this._history = null
-    this._total = 0
+    Object.assign(this, { _history: null, _total: 0, _page: 1, _filter: 'all', _query: '', _repo: '', _actor: '', _options: { repos: [], users: [] } })
     this._searchTimer = null
-    this._error = null
-    this._page = 1
-    this._filter = 'all'
-    this._query = ''
-    this._repo = ''
-    this._actor = ''
-    this._options = { repos: [], users: [] }
     this._onActorFilter = (event) => {
       const actor = event.detail?.actor
       if (typeof actor !== 'string') return
@@ -157,7 +158,6 @@ class ManagedAdminHistory extends ManagedPage {
   connectedCallback() {
     super.connectedCallback()
     document.addEventListener('managed-history-filter', this._onActorFilter)
-    void this._load()
   }
 
   disconnectedCallback() {
@@ -190,21 +190,9 @@ class ManagedAdminHistory extends ManagedPage {
     this._searchTimer = setTimeout(() => { void this._load() }, 250)
   }
 
-  _setRepo(repo) {
-    this._repo = repo
-    return this._load()
-  }
-
-  _setActor(actor) {
-    this._actor = actor
-    return this._load()
-  }
-
-  _clearContext() {
-    this._repo = ''
-    this._actor = ''
-    return this._load()
-  }
+  _setRepo(repo) { this._repo = repo; return this._load() }
+  _setActor(actor) { this._actor = actor; return this._load() }
+  _clearContext() { this._repo = ''; this._actor = ''; return this._load() }
 
   _contextFilters() {
     const repos = this._options.repos
@@ -227,7 +215,7 @@ class ManagedAdminHistory extends ManagedPage {
     const history = this._history ?? []
     const page = this._page
     const start = (page - 1) * 100
-    return html`<div class="wrap">${adminNavigation('manage-history', this._role, this.allowShare)}
+    return html`<div class="wrap">${this._nav()}
       <h1 class="sr-only">History</h1>
       <div class="page-intro"><p class="intro">${this._role === 'admin' ? 'Uploads, builds, access changes, repository changes, deletions, and triage.' : 'Bundle, report, and triage history within your team access.'}</p><span class="result-count">${this._history ? this._total : '…'} entries</span></div>
       <div class="toolbar" role="search">
@@ -237,7 +225,7 @@ class ManagedAdminHistory extends ManagedPage {
         <button type="button" class="btn" ?disabled=${this._loading} @click=${() => this._load(page)}>Refresh</button>
       </div>
       ${this._error ? html`<p class="msg error" role="alert">Couldn’t load history: ${this._error} <button type="button" class="btn" @click=${() => this._load()}>Retry</button></p>` : nothing}
-      <div class="manage-list" aria-busy=${this._loading}>${this._history == null ? (this._error ? nothing : loadingRows('Loading history…')) : history.length === 0 ? html`<div class="history"><p class="empty">${this._query.trim() || this._filter !== 'all' || this._repo || this._actor ? 'No activity matches your filters.' : 'No history available yet.'}</p></div>` : html`<div class="history" aria-label="Workspace history"><div class="history-head" aria-hidden="true"><span>Type</span><span>Activity</span><span>Repository / report / finding</span><span>Time</span></div>${history.map((entry) => this._row(entry))}</div>`}</div>
+      ${this._list(this._history, 'Loading history…', () => history.length === 0 ? html`<div class="history"><p class="empty">${this._query.trim() || this._filter !== 'all' || this._repo || this._actor ? 'No activity matches your filters.' : 'No history available yet.'}</p></div>` : html`<div class="history" aria-label="Workspace history"><div class="history-head" aria-hidden="true"><span>Type</span><span>Activity</span><span>Repository / report / finding</span><span>Time</span></div>${history.map((entry) => this._row(entry))}</div>`)}
       ${this._total > 100 ? html`<nav class="pagination" aria-label="History pages"><span role="status">${start + 1}–${Math.min(start + 100, this._total)} of ${this._total} entries</span><button type="button" class="btn" ?disabled=${this._loading || page === 1} @click=${() => this._changePage(page - 1)}>Previous</button><span>Page ${page} of ${Math.ceil(this._total / 100)}</span><button type="button" class="btn" ?disabled=${this._loading || start + 100 >= this._total} @click=${() => this._changePage(page + 1)}>Next</button></nav>` : nothing}
     </div>`
   }
@@ -274,75 +262,63 @@ class ManagedAdminHistory extends ManagedPage {
 }
 customElements.define('managed-admin-history', ManagedAdminHistory)
 
+const userDate = value => {
+  if (value == null || value === '') return null
+  const date = new Date(Number(value))
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
 function userTime(value) {
-  if (value == null || value === '') return html`<span>Unknown</span>`
-  const timestamp = typeof value === 'number' ? value : Number(value)
-  if (!Number.isFinite(timestamp)) return html`<span>Unknown</span>`
-  const date = new Date(timestamp)
-  if (Number.isNaN(date.getTime())) return html`<span>Unknown</span>`
+  const date = userDate(value)
+  if (!date) return html`<span>Unknown</span>`
   return html`<time datetime=${date.toISOString()}>${date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</time><span>${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>`
 }
 
-function userTimeLabel(value) {
-  if (value == null || value === '') return 'Unknown'
-  const timestamp = typeof value === 'number' ? value : Number(value)
-  return Number.isFinite(timestamp) && !Number.isNaN(new Date(timestamp).getTime()) ? `Last seen ${new Date(timestamp).toLocaleString()}` : 'Unknown'
-}
-
-function userActivityAt(user) {
-  return user?.lastActivityAt ?? user?.lastActivity ?? user?.lastWriteAt ?? user?.lastActiveAt
-}
+const userActivityAt = user => user?.lastActivityAt ?? user?.lastActivity ?? user?.lastWriteAt ?? user?.lastActiveAt
 
 class ManagedAdminUsers extends ManagedPage {
-  static properties = {
-    _query: { state: true },
-    _users: { state: true },
-    _teams: { state: true },
-    _error: { state: true },
-  }
-
+  static view = 'admin-users'
+  static properties = { _query: { state: true }, _users: { state: true }, _teams: { state: true } }
   static styles = [unsafeCSS(usersStyles), unsafeCSS(commonStyles)]
+  static collection = ['users', 'users', signal => Promise.all([fetchUsers(signal), fetchTeams(signal)])]
 
   constructor() {
     super()
-    this._users = null
-    this._query = ''
-    this._teams = null
-    this._error = null
+    Object.assign(this, { _users: null, _query: '', _teams: null })
   }
 
-  connectedCallback() {
-    super.connectedCallback()
-    void this._load()
+  _show([users, teamData]) {
+    this._users = users
+    this._teams = Array.isArray(teamData?.teams) ? teamData.teams : []
   }
 
-  async _load() {
-    this._error = null
-    await this._loadCollection('users', 'users', signal => Promise.all([fetchUsers(signal), fetchTeams(signal)]), ([users, teamData]) => {
-      this._users = users
-      this._teams = Array.isArray(teamData?.teams) ? teamData.teams : []
+  // The teams a user is a member of, each with their membership.
+  _memberships(user) {
+    return (this._teams ?? []).flatMap(team => {
+      const member = team.members?.find(candidate => candidate.userId === user.id)
+      return member == null ? [] : [{ team, member }]
     })
   }
 
   _filteredUsers() {
     const query = this._query.trim().toLocaleLowerCase()
-    return (this._users ?? []).filter(user => [user.name, user.login, user.role, ...(this._teams ?? []).filter(team => team.members?.some(member => member.userId === user.id)).map(team => team.name)].filter(Boolean).join(' ').toLocaleLowerCase().includes(query))
+    return (this._users ?? []).filter(user => [user.name, user.login, user.role, ...this._memberships(user).map(({ team }) => team.name)].filter(Boolean).join(' ').toLocaleLowerCase().includes(query))
   }
 
   render() {
     const users = this._filteredUsers()
-    return html`<div class="wrap">${adminNavigation('admin-users', this._role, this.allowShare)}
+    return html`<div class="wrap">${this._nav()}
       <h1 class="sr-only">Users</h1>
       <div class="page-intro"><p class="intro">Manage workspace access and roles.</p></div>
       <div class="collection-toolbar" role="search"><input type="search" aria-label="Search users" placeholder="Search by name, username, or team…" .value=${this._query} @input=${e => { this._query = e.target.value }}><span class="result-count" role="status">${this._users && this._query.trim() ? `${users.length} matching out of ` : ''}${this._users?.length ?? '…'} users</span></div>
-      ${this._error ? html`<p class="msg error" role="alert">Couldn't load users: ${this._error}</p>` : nothing}
-      <div class="manage-list" aria-busy=${this._loading}>${this._users == null ? (this._error ? nothing : loadingRows('Loading users…')) : this._list(users)}</div>
+      ${errorMessage(this._error && `Couldn't load users: ${this._error}`)}
+      ${this._list(this._users, 'Loading users…', () => this._directory(users))}
     </div>`
   }
 
-  _list(users) {
+  _directory(users) {
     if (this._users.length === 0) return html`<p class="msg">No users yet.</p>`
-    if (users.length === 0) return html`<div class="empty"><strong>No matching users</strong><p>Try another name, username, or team.</p></div>`
+    if (users.length === 0) return emptyState('No matching users', 'Try another name, username, or team.')
     return html`<div class="directory">
       <div class="list-head" aria-hidden="true"><span>Account</span><span>Team access</span><span>Last seen</span><span>Last activity</span><span>Role</span><span></span></div>
       <ul class="users">${users.map((u) => this._row(u))}</ul>
@@ -351,10 +327,8 @@ class ManagedAdminUsers extends ManagedPage {
 
   _row(u) {
     const isSelf = u.id === this._me
-    const memberships = (this._teams ?? []).flatMap((team) => {
-      const member = team.members?.find((candidate) => candidate.userId === u.id)
-      return member == null ? [] : [{ team, member }]
-    })
+    const memberships = this._memberships(u)
+    const active = userDate(userActivityAt(u)), seen = userDate(u.lastSeenAt)
     return html`<li>
       <span class="person">
         ${adminAvatar(u.id, u.login)}
@@ -368,14 +342,14 @@ class ManagedAdminUsers extends ManagedPage {
           return html`<span class="team-access"><strong>${adminIcon('team')}<span>${team.name}</span></strong><span class="team-perms">${['dependencies', 'security'].map((permission) => html`<span class=${member[permission] === true ? 'permission-granted' : 'permission-denied'}>${member[permission] === true ? '+' : '−'} ${permission === 'dependencies' ? 'Deps' : 'Security'}</span>`)}</span></span>`
         })}
       </span>
-      <span class="last-seen" aria-label=${userTimeLabel(u.lastSeenAt)}>${userTime(u.lastSeenAt)}</span>
-      <button type="button" class="activity-link" aria-label=${`Show activity by ${u.login}`} @click=${() => this._showActivity(u.id)}><span class="last-activity" aria-label=${`Last activity ${userTimeLabel(userActivityAt(u)).replace(/^Last seen /u, '')}`}>${userTime(userActivityAt(u))}</span></button>
+      <span class="last-seen" aria-label=${seen ? `Last seen ${seen.toLocaleString()}` : 'Unknown'}>${userTime(u.lastSeenAt)}</span>
+      <button type="button" class="activity-link" aria-label=${`Show activity by ${u.login}`} @click=${() => openAdminPage('manage-history', { actor: `user:${u.id}` })}><span class="last-activity" aria-label=${`Last activity ${active ? active.toLocaleString() : 'Unknown'}`}>${userTime(userActivityAt(u))}</span></button>
       <span class="access">
       <select class="role" ?disabled=${isSelf}
         aria-label=${`Change ${u.login}’s role`}
-        aria-description=${ADMIN_ROLE_DESCRIPTIONS[u.role] ?? ''}
+        aria-description=${ROLE_TEXT[u.role]?.[1] ?? ''}
         @change=${(e) => this._changeRole(u, e.target.value, e.target)}>
-        ${ROLES.map((r) => html`<option value=${r} ?selected=${r === u.role}>${ADMIN_ROLE_LABELS[r]}</option>`)}
+        ${ROLES.map((r) => html`<option value=${r} ?selected=${r === u.role}>${ROLE_TEXT[r][0]}</option>`)}
       </select>
       </span>
       <span class="view-as">${isSelf ? nothing : html`<button type="button" class="icon-btn"
@@ -406,16 +380,8 @@ class ManagedAdminUsers extends ManagedPage {
     }
     this.requestUpdate()
   }
-
-  _showActivity(userId) {
-    document.dispatchEvent(new CustomEvent('managed-admin-navigate', {
-      detail: { view: 'manage-history', actor: `user:${userId}` }, bubbles: true, composed: true,
-    }))
-  }
 }
 customElements.define('managed-admin-users', ManagedAdminUsers)
-
-const REPO_ICON = adminIcon('repo')
 
 // The lockfiles a repository's dependency review holds to as its settings
 // edit them: every one (`all`), all but those named, or those alone; and as
@@ -424,68 +390,30 @@ const draftScope = lockfiles => !lockfiles || (lockfiles.mode === 'exclude' && l
   : { mode: lockfiles.mode, paths: [...lockfiles.paths].toSorted() }
 const scopeSent = scope => scope.mode === 'all' ? { mode: 'exclude', paths: [] } : { mode: scope.mode, paths: scope.paths }
 
+const ACCESS_ICONS = {
+  private: html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>`,
+  public: html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M2.5 8h11M8 2c1.5 1.7 2.2 3.7 2.2 6S9.5 12.3 8 14c-1.5-1.7-2.2-3.7-2.2-6S6.5 3.7 8 2Z"/></svg>`,
+}
+
 // Only the connected set loads on entry. Private/public discovery is opt-in,
 // and each connected repository has its own page for configuration.
 class ManagedAdminRepos extends ManagedPage {
+  static view = 'manage-repos'
   static properties = {
-    _publicRepoOpen: { state: true },
-    _publicRepository: { state: true },
-    _publicRepoError: { state: true },
-    _addingPublic: { state: true },
-    _data: { state: true },
-    _error: { state: true },
-    _actionError: { state: true },
-    _scope: { state: true },
-    _showAll: { state: true },
-    _query: { state: true },
-    _organization: { state: true },
-    _loading: { state: true },
-    _busy: { state: true },
-    _connectingApp: { state: true },
-    _detail: { state: true },
-    _aliases: { state: true },
-    _impact: { state: true },
-    _impactLoading: { state: true },
-    _removeOpen: { state: true },
-    _acknowledge: { state: true },
-    _deleteTriage: { state: true },
-    _confirmName: { state: true },
-    _reviewDraft: { state: true },
+    _publicRepoOpen: { state: true }, _publicRepository: { state: true }, _publicRepoError: { state: true }, _addingPublic: { state: true },
+    _actionError: { state: true }, _scope: { state: true }, _showAll: { state: true }, _query: { state: true }, _organization: { state: true },
+    _busy: { state: true }, _connectingApp: { state: true }, _detail: { state: true }, _aliases: { state: true },
+    _impact: { state: true }, _impactLoading: { state: true }, _removeOpen: { state: true }, _acknowledge: { state: true },
+    _deleteTriage: { state: true }, _confirmName: { state: true }, _reviewDraft: { state: true },
   }
-
   static styles = [unsafeCSS(reposStyles), unsafeCSS(commonStyles)]
 
   constructor() {
     super()
-    this._publicRepoOpen = false
-    this._publicRepository = ''
-    this._publicRepoError = null
-    this._addingPublic = false
-    this._data = null
-    this._error = null
-    this._actionError = null
-    this._scope = 'connected'
-    this._showAll = false
-    this._query = ''
-    this._organization = null
-    this._loading = true
-    this._busy = null
-    this._connectingApp = false
-    this._detail = null
-    this._aliases = false
-    this._impact = null
-    this._impactLoading = false
-    this._impactFresh = false
-    this._removeOpen = false
-    this._acknowledge = false
-    this._deleteTriage = false
-    this._confirmName = ''
-    this._impactRequest = null
-  }
-
-  connectedCallback() {
-    super.connectedCallback()
-    void this._load()
+    Object.assign(this, { _publicRepoOpen: false, _publicRepository: '', _publicRepoError: null, _addingPublic: false, _actionError: null,
+      _scope: 'connected', _showAll: false, _query: '', _organization: null, _loading: true, _busy: null, _connectingApp: false,
+      _detail: null, _aliases: false, _impact: null, _impactLoading: false, _impactFresh: false, _impactRequest: null })
+    this._resetRemoval()
   }
 
   disconnectedCallback() {
@@ -493,12 +421,14 @@ class ManagedAdminRepos extends ManagedPage {
     this._impactRequest?.abort()
   }
 
-  _repositoryKey() { return `repos:${JSON.stringify([this._scope, this._showAll])}` }
+  _resetRemoval(open = false) {
+    Object.assign(this, { _removeOpen: open, _acknowledge: false, _deleteTriage: false, _confirmName: '' })
+  }
 
   async _load(refresh = false) {
     this._error = null
     const { _scope: scope, _showAll: showAll } = this
-    await this._loadCollection(this._repositoryKey(), 'repositories', signal => fetchRepositories(scope, showAll, refresh, signal), data => {
+    await this._loadCollection(`repos:${JSON.stringify([scope, showAll])}`, 'repositories', signal => fetchRepositories(scope, showAll, refresh, signal), data => {
       this._data = data
       this._organization = this._repositoryChoices().activeFacet
     })
@@ -506,27 +436,14 @@ class ManagedAdminRepos extends ManagedPage {
 
   _open(scope) {
     this._impactRequest?.abort()
-    this._publicRepoOpen = false
-    this._scope = scope
-    this._showAll = false
-    this._query = ''
-    this._organization = null
-    this._detail = null
-    this._aliases = false
-    this._impact = null
-    this._removeOpen = false
-    this._acknowledge = false
-    this._deleteTriage = false
-    this._confirmName = ''
-    this._data = null
-    this._actionError = null
+    Object.assign(this, { _publicRepoOpen: false, _scope: scope, _showAll: false, _query: '', _organization: null, _detail: null, _aliases: false,
+      _impact: null, _data: null, _actionError: null })
+    this._resetRemoval()
     void this._load()
   }
 
   _setShowAll(value) {
-    this._showAll = value
-    this._organization = null
-    this._data = null
+    Object.assign(this, { _showAll: value, _organization: null, _data: null })
     void this._load()
   }
 
@@ -538,38 +455,21 @@ class ManagedAdminRepos extends ManagedPage {
   }
 
   _back(title = null) {
-    return html`<div class="breadcrumb">
-      <button type="button" class="breadcrumb-manage" @click=${() => {
-        document.dispatchEvent(new CustomEvent('managed-admin-navigate', {
-          detail: { view: 'manage' }, bubbles: true, composed: true,
-        }))
-      }}>Manage</button>
-      <span class="breadcrumb-separator" aria-hidden="true">›</span>
-      <button type="button" class="breadcrumb-manage" aria-label="Back to repositories" @click=${() => {
-        if (this._detail) { this._impactRequest?.abort(); this._detail = null; this._actionError = null }
-        else if (this._aliases) this._aliases = false
-        else this._open('connected')
-      }}>Repositories</button>
-      <span class="breadcrumb-separator" aria-hidden="true">›</span>
-      ${title ? html`<h1 class="breadcrumb-current">${title}</h1>` : nothing}
-    </div>`
+    return breadcrumb('Repositories', 'Back to repositories', () => {
+      if (this._detail) { this._impactRequest?.abort(); this._detail = null; this._actionError = null }
+      else if (this._aliases) this._aliases = false
+      else this._open('connected')
+    }, title)
   }
 
   _openDetail(repo) {
-    this._detail = repo
-    this._reviewDraft = null
-    this._actionError = null
-    this._impact = this.appState.read(`repo-impact:${repo.id}`) ?? null
-    this._impactFresh = false
-    this._removeOpen = false
-    this._acknowledge = false
-    this._deleteTriage = false
-    this._confirmName = ''
-    this._impactLoading = true
+    const key = `repo-impact:${repo.id}`
+    Object.assign(this, { _detail: repo, _reviewDraft: null, _actionError: null, _impact: this.appState.read(key) ?? null, _impactFresh: false, _impactLoading: true })
+    this._resetRemoval()
     this._impactRequest?.abort()
     const request = new AbortController()
     this._impactRequest = request
-    void this.appState.load(`repo-impact:${repo.id}`, 'repository data', signal => fetchRepositoryImpact(repo.id, signal), {
+    void this.appState.load(key, 'repository data', signal => fetchRepositoryImpact(repo.id, signal), {
       signal: request.signal, apply: impact => { this._impact = impact },
     }).then(impact => { if (!request.signal.aborted) this._impactFresh = true; return impact }).catch((err) => {
       if (!request.signal.aborted && err?.name !== 'AbortError' && !this._impact) this._actionError = `Couldn't load repository data: ${err?.message ?? err}`
@@ -584,16 +484,16 @@ class ManagedAdminRepos extends ManagedPage {
     const connected = this._scope === 'connected'
     const title = connected ? 'Repositories' : `Add ${this._scope} repository`
     const choices = this._repositoryChoices()
-    return html`<div class="wrap">${adminNavigation('manage-repos', this._role, this.allowShare)}
+    return html`<div class="wrap">${this._nav()}
       ${connected ? html`<h1 class="sr-only">${title}</h1>` : this._back(title)}
       <div class="page-intro"><p class="intro">${connected
         ? 'Manage connected repositories and their settings.'
         : this._scope === 'installed'
           ? this._showAll ? 'Showing all repositories the GitHub App can read.' : 'Showing installed repositories you can access on GitHub.'
           : 'Choose a public repository your GitHub account is involved with.'}</p>${connected ? html`<div class="repository-actions">
-          <button type="button" class="btn" @click=${() => this._open('installed')}>${this._accessIcon('private')} Add installed repository</button>
-          <button type="button" class="btn" @click=${() => this._open('public')}>${this._accessIcon('public')} Add your public repository</button>
-          ${this._role === 'admin' && this._data?.canAddAnyPublicRepository ? html`<button type="button" class="btn" aria-expanded=${this._publicRepoOpen} @click=${() => this._openPublicRepository()}>${this._accessIcon('public')} Add a public repository</button>` : nothing}
+          <button type="button" class="btn" @click=${() => this._open('installed')}>${ACCESS_ICONS.private} Add installed repository</button>
+          <button type="button" class="btn" @click=${() => this._open('public')}>${ACCESS_ICONS.public} Add your public repository</button>
+          ${this._role === 'admin' && this._data?.canAddAnyPublicRepository ? html`<button type="button" class="btn" aria-expanded=${this._publicRepoOpen} @click=${() => this._openPublicRepository()}>${ACCESS_ICONS.public} Add a public repository</button>` : nothing}
         </div>` : nothing}</div>
       ${!connected && this._scope === 'installed' ? html`<div class="access-note">
         <p class="ui-hint">Installed repositories are readable through the GitHub App. Install it on a repository or organization to make it available here.</p>
@@ -606,13 +506,13 @@ class ManagedAdminRepos extends ManagedPage {
           : html`<button type="button" class="btn" ?disabled=${this._loading} @click=${() => { void this._load(true) }}>Refresh</button>`}
       </div>
       ${connected && this._publicRepoOpen && this._role === 'admin' && this._data?.canAddAnyPublicRepository ? this._publicRepositoryForm() : nothing}
-      ${this._actionError ? html`<p class="msg error" role="alert">${this._actionError}</p>` : nothing}
+      ${errorMessage(this._actionError)}
       ${this._error ? html`<p class="msg error" role="alert">Couldn't load repositories: ${this._error}</p><button type="button" class="btn" @click=${() => { void this._load() }}>Try again</button>` : nothing}
       ${!connected && this._data ? html`<p class="repository-count" role="status">${choices.count}${choices.count === choices.total ? '' : ` of ${choices.total}`} ${choices.total === 1 ? 'repository' : 'repositories'}</p>` : nothing}
       <div class="manage-list"><div aria-busy=${this._loading}>${this._body(choices)}</div>
         ${connected && this._role === 'admin' ? html`<div class="repository-pages">
           <button type="button" class="btn" @click=${() => { this._publicRepoOpen = false; this._actionError = null; this._aliases = true }}>Aliases</button>
-          <button type="button" class="btn" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-repo-risk' }, bubbles: true, composed: true }))}>Risk</button>
+          <button type="button" class="btn" @click=${() => openAdminPage('manage-repo-risk')}>Risk</button>
         </div>` : nothing}
       </div>
     </div>`
@@ -620,7 +520,7 @@ class ManagedAdminRepos extends ManagedPage {
 
   // Aliases open in place of the repository list; the breadcrumb returns to it.
   _aliasesPage() {
-    return html`<div class="wrap">${adminNavigation('manage-repos', this._role, this.allowShare)}
+    return html`<div class="wrap">${this._nav()}
       ${this._back('Aliases')}
       <div class="manage-list has-intro"><managed-repository-aliases .session=${this.session} .repositories=${this._data?.repositories}></managed-repository-aliases></div>
     </div>`
@@ -628,8 +528,9 @@ class ManagedAdminRepos extends ManagedPage {
 
   _body(choices) {
     if (!this._data) return this._error ? nothing : loadingRows('Loading repositories…')
+    const scope = this._scope
     return html`
-      ${this._data.tokenMissing && !this._showAll && this._scope !== 'connected' ? html`<p class="msg">Log out and back in to refresh your GitHub membership access.</p>` : nothing}
+      ${this._data.tokenMissing && !this._showAll && scope !== 'connected' ? html`<p class="msg">Log out and back in to refresh your GitHub membership access.</p>` : nothing}
       <div class="repository-browser">
         ${choices.showFacets ? html`<nav class="organization-list" aria-label="Filter by organization">
           <button type="button" class="organization" aria-pressed=${choices.activeFacet == null} @click=${() => { this._organization = null }}><span class="organization-name">All organizations</span><span class="organization-count">${choices.total}</span></button>
@@ -640,10 +541,8 @@ class ManagedAdminRepos extends ManagedPage {
             ${section.label ? html`<h2 class="owner-head"><span class="owner-icon" aria-hidden="true">${section.label[0] ?? '?'}</span>${section.label}</h2>` : nothing}
             <ul class="repos">${section.options.map(option => this._row(option.repo, section.organization ? option.name : option.label))}</ul>
           </section>`)}
-          ${choices.count ? nothing : html`<div class="empty">
-            <strong>${choices.total ? 'No matching repositories' : this._scope === 'connected' ? 'No connected repositories yet' : `No ${this._scope} repositories available`}</strong>
-            <p>${choices.total ? 'Try a different search or organization.' : this._scope === 'connected' ? 'Add an installed or public repository to get started.' : this._scope === 'installed' ? this._showAll ? 'Install the GitHub App, then refresh this list.' : 'No installed repositories match your GitHub access. Turn on Show all to browse every installation.' : 'Public repositories associated with your GitHub account will appear here.'}</p>
-          </div>`}
+          ${choices.count ? nothing : emptyState(choices.total ? 'No matching repositories' : scope === 'connected' ? 'No connected repositories yet' : `No ${scope} repositories available`,
+            choices.total ? 'Try a different search or organization.' : scope === 'connected' ? 'Add an installed or public repository to get started.' : scope === 'installed' ? this._showAll ? 'Install the GitHub App, then refresh this list.' : 'No installed repositories match your GitHub access. Turn on Show all to browse every installation.' : 'Public repositories associated with your GitHub account will appear here.')}
         </div>
       </div>
     `
@@ -661,7 +560,7 @@ class ManagedAdminRepos extends ManagedPage {
         <input id="public-repository" class="confirm-name" type="text" placeholder="owner/repo or https://github.com/owner/repo" autocomplete="off" required .value=${this._publicRepository} ?disabled=${this._addingPublic} @input=${event => { this._publicRepository = event.target.value }}>
       </label>
       <div class="dialog-actions"><button type="button" class="btn" ?disabled=${this._addingPublic} @click=${() => { this._publicRepoOpen = false }}>Cancel</button><button type="submit" class="btn" ?disabled=${this._addingPublic || !this._publicRepository.trim()}>${this._addingPublic ? 'Adding…' : 'Add repository'}</button></div>
-      ${this._publicRepoError ? html`<p class="msg error" role="alert">${this._publicRepoError}</p>` : nothing}
+      ${errorMessage(this._publicRepoError)}
     </form>`
   }
 
@@ -705,7 +604,7 @@ class ManagedAdminRepos extends ManagedPage {
   _openCode(event, repo) {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     event.preventDefault()
-    this.dispatchEvent(new CustomEvent('managed-repository-code-open', { detail: { repoId: repo.id }, bubbles: true, composed: true }))
+    this._emit('managed-repository-code-open', { repoId: repo.id })
   }
 
   _accessLabel(repo) {
@@ -714,44 +613,50 @@ class ManagedAdminRepos extends ManagedPage {
     return visibility ? `${visibility} · ${source}` : source
   }
 
-  _connectAppButton(repo) {
-    return repo.installed ? nothing : html`<button type="button" class="btn connect-app" aria-label=${`Connect GitHub App to ${repo.fullName}`} ?disabled=${this._busy != null} @click=${() => { void this._connectApp(repo) }}>${this._connectingApp && this._busy === repo.id ? 'Connecting…' : 'Connect GitHub App'}</button>`
+  // One repository's change at a time (`_busy`), its failure shown as `Couldn't ${failure}: …`.
+  async _act(repo, failure, work) {
+    this._busy = repo.id
+    this._actionError = null
+    try { await work() } catch (err) {
+      this._actionError = `Couldn't ${failure}: ${err?.message ?? err}`
+    } finally {
+      this._busy = null
+    }
+  }
+
+  // A repository changed in both its page and the list.
+  _patchRepo(id, fields) {
+    if (this._detail?.id === id) this._detail = { ...this._detail, ...fields }
+    if (this._data) this._data = { ...this._data, repositories: this._data.repositories.map(entry => entry.id === id ? { ...entry, ...fields } : entry) }
   }
 
   async _connectApp(repo) {
     if (this._busy != null || repo.installed) return
-    this._busy = repo.id
     this._connectingApp = true
-    this._actionError = null
-    try {
+    await this._act(repo, `connect ${repo.fullName}`, async () => {
       const result = await this.appState.mutate(() => connectRepositoryApp(repo.id, this._csrf), ['repos', 'history', 'scan-sources'])
       if (!this.isConnected) return
       if (!result.connected) { globalThis.location.assign(result.installUrl); return }
-      if (this._detail?.id === repo.id) this._detail = { ...this._detail, installed: true }
-      if (this._data) this._data = { ...this._data, repositories: this._data.repositories.map(entry => entry.id === repo.id ? { ...entry, installed: true } : entry) }
+      this._patchRepo(repo.id, { installed: true })
       await this._load()
-    } catch (err) {
-      this._actionError = `Couldn't connect ${repo.fullName}: ${err?.message ?? err}`
-    } finally {
-      this._busy = null
-      this._connectingApp = false
-    }
+    })
+    this._connectingApp = false
   }
 
   _detailPage(repo) {
     const active = repo.active !== false
     const reports = this._impact?.reports ?? []
     const bundles = this._impact?.bundles ?? []
-    return html`<div class="wrap">${adminNavigation('manage-repos', this._role, this.allowShare)}
+    return html`<div class="wrap">${this._nav()}
       <div class="head">${this._back()}<h1>${repo.fullName}</h1></div>
       <p class="intro ui-hint">Repository settings and stored data.</p>
-      ${this._actionError ? html`<p class="msg error" role="alert">${this._actionError}</p>` : nothing}
+      ${errorMessage(this._actionError)}
       <div class="manage-list repository-detail">
         <section class="section" aria-label="Repository connection">
           <h2>Connection</h2>
           <div class="settings-row"><div class="settings-copy"><strong>${this._accessLabel(repo)}</strong><p>${active ? 'Active for new scans and uploads.' : 'Deactivated. Stored reports and bundles are retained.'}</p></div>
             <span class=${`status-line ${active ? '' : 'inactive'}`}>${active ? 'Active' : 'Deactivated'}</span>
-            ${this._connectAppButton(repo)}
+            ${repo.installed ? nothing : html`<button type="button" class="btn connect-app" aria-label=${`Connect GitHub App to ${repo.fullName}`} ?disabled=${this._busy != null} @click=${() => { void this._connectApp(repo) }}>${this._connectingApp && this._busy === repo.id ? 'Connecting…' : 'Connect GitHub App'}</button>`}
             ${repo.htmlUrl ? html`<a class="btn" href=${repo.htmlUrl} target="_blank" rel="noopener noreferrer">View on GitHub</a>` : nothing}
           </div>
           <div class="settings-row"><div class="settings-copy"><strong>${active ? 'Deactivate repository' : 'Reactivate repository'}</strong><p>${active ? 'Pause new scans while preserving all stored data and attachments.' : 'Make this repository available for new scans and bundle attachments again.'}</p></div>
@@ -773,7 +678,7 @@ class ManagedAdminRepos extends ManagedPage {
         <section class="section" aria-label="Permanent repository removal">
           <h2>Permanent removal</h2>
           <div class="settings-row"><div class="settings-copy"><strong>Delete repository and stored data</strong><p>Deactivation is reversible. Permanent removal deletes this repository’s attached reports and bundles; it cannot be undone.</p></div>
-            <button type="button" class="btn danger" ?disabled=${this._busy != null || this._impactLoading || !this._impactFresh || this._impact == null} @click=${() => { this._removeOpen = true; this._acknowledge = false; this._deleteTriage = false; this._confirmName = '' }}>Remove permanently</button>
+            <button type="button" class="btn danger" ?disabled=${this._busy != null || this._impactLoading || !this._impactFresh || this._impact == null} @click=${() => this._resetRemoval(true)}>Remove permanently</button>
           </div>
         </section>
       </div>
@@ -783,10 +688,9 @@ class ManagedAdminRepos extends ManagedPage {
 
   // Its dependency review: on or off at once, by its header's switch; the
   // reviews each version needs, the commit whose lockfiles' versions need
-  // none and the lockfiles it holds to, saved together; no commit where the
-  // server registers reviewed dependencies, which replace it, the one stored
-  // left as it is (`setting`). On, where no team that reviews dependencies
-  // has it, which its pull requests then show no review for, it says so.
+  // none and the lockfiles it holds to, saved together (_reviewSetting). On,
+  // where no team that reviews dependencies has it, which its pull requests
+  // then show no review for, it says so.
   _dependencyReviewSection(repo) {
     const registered = this._data?.reviewedDependencies === true
     const saved = repo.dependencyReview ?? { enabled: false, required: 1, since: null }
@@ -794,15 +698,14 @@ class ManagedAdminRepos extends ManagedPage {
     const draft = { required: String(saved.required), since: saved.since ?? '', scope: savedScope, adding: '', ...this._reviewDraft }
     const changed = draft.required !== String(saved.required) || (!registered && draft.since.trim() !== (saved.since ?? ''))
       || JSON.stringify(draft.scope) !== JSON.stringify(savedScope)
-    const setting = (enabled, required, since, lockfiles) => this._reviewSetting(enabled, required, since, lockfiles)
     const busy = this._busy != null
     return html`<section class="section" aria-label="Dependency review">
       <div class="section-head"><h2>Dependency review</h2>
         <mode-switch label=${saved.enabled ? 'On' : 'Off'} accessible-label="Review dependencies" .checked=${saved.enabled} .disabled=${busy}
-          @click=${() => { if (!busy) void this._saveDependencyReview(repo, setting(!saved.enabled, saved.required, saved.since)) }}></mode-switch>
+          @click=${() => { if (!busy) void this._saveDependencyReview(repo, this._reviewSetting(!saved.enabled, saved.required, saved.since)) }}></mode-switch>
       </div>
       ${saved.enabled ? html`<form class="settings-row dependency-review-settings" aria-label="Dependency review settings"
-        @submit=${event => { event.preventDefault(); void this._saveDependencyReview(repo, setting(true, Number(draft.required), draft.since.trim().toLowerCase() || null, scopeSent(draft.scope))) }}>
+        @submit=${event => { event.preventDefault(); void this._saveDependencyReview(repo, this._reviewSetting(true, Number(draft.required), draft.since.trim().toLowerCase() || null, scopeSent(draft.scope))) }}>
         <label><span>Reviews each version needs</span><input type="number" min="1" max="10" required .value=${draft.required} ?disabled=${busy}
           @input=${event => { this._reviewDraft = { ...draft, required: event.target.value } }}></label>
         ${registered ? nothing : html`<label class="dependency-review-since"><span>Reviewed since commit (optional)</span><input type="text" placeholder="Full commit id"
@@ -858,9 +761,9 @@ class ManagedAdminRepos extends ManagedPage {
     </fieldset>`
   }
 
-  // The lockfiles of its default branch its review reads, and its
-  // stasis.config.json files, read once as its settings show, its page told
-  // again as they arrive.
+  // The default branch's lockfiles its review reads, and its
+  // stasis.config.json files, read once as its settings show, the page
+  // updated as they arrive.
   _lockfilesFor(repo) {
     if (this._lockfileRead?.repoId !== repo.id) {
       const read = { repoId: repo.id, status: 'loading', paths: [], configs: [] }
@@ -873,30 +776,23 @@ class ManagedAdminRepos extends ManagedPage {
   }
 
   // A review's setting as it is saved: without its commit where the server
-  // registers reviewed dependencies, the one stored kept; with the lockfiles
-  // it holds to where they are given.
+  // registers reviewed dependencies, which replace it, the one stored kept;
+  // with the lockfiles it holds to where they are given.
   _reviewSetting(enabled, required, since, lockfiles) {
     return { ...this._data?.reviewedDependencies === true ? { enabled, required } : { enabled, required, since }, ...lockfiles ? { lockfiles } : {} }
   }
 
   async _saveDependencyReview(repo, setting) {
     if (this._busy != null) return
-    this._busy = repo.id
-    this._actionError = null
-    try {
+    await this._act(repo, `save ${repo.fullName}'s dependency review`, async () => {
       const dependencyReview = await this.appState.mutate(() => setRepositoryDependencyReview(repo.id, setting, this._csrf), ['repos'])
-      // Pull requests' dependencies read with their review before, told
-      // again, the page left meanwhile or not.
+      // Pull requests' dependencies read with their review before are read
+      // again, whether or not the page was left meanwhile.
       globalThis.dispatchEvent?.(new Event('dependency-review-changed'))
       if (!this.isConnected) return
-      if (this._detail?.id === repo.id) this._detail = { ...this._detail, dependencyReview }
-      if (this._data) this._data = { ...this._data, repositories: this._data.repositories.map(entry => entry.id === repo.id ? { ...entry, dependencyReview } : entry) }
+      this._patchRepo(repo.id, { dependencyReview })
       this._reviewDraft = null
-    } catch (err) {
-      this._actionError = `Couldn't save ${repo.fullName}'s dependency review: ${err?.message ?? err}`
-    } finally {
-      this._busy = null
-    }
+    })
   }
 
   _removeDialog(repo, reports, bundles) {
@@ -918,28 +814,15 @@ class ManagedAdminRepos extends ManagedPage {
     </div>`
   }
 
-  _accessIcon(kind) {
-    return kind === 'private' ? html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>` : html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M2.5 8h11M8 2c1.5 1.7 2.2 3.7 2.2 6S9.5 12.3 8 14c-1.5-1.7-2.2-3.7-2.2-6S6.5 3.7 8 2Z"/></svg>`
-  }
-
   async _setActive(repo, active) {
     if (this._busy != null) return
-    this._busy = repo.id
-    this._actionError = null
-    try {
+    const verb = active ? (repo.active === false ? 'reactivate' : 'add') : 'deactivate'
+    await this._act(repo, `${verb} ${repo.fullName}`, async () => {
       await this.appState.mutate(() => selectRepository(repo.id, active, this._csrf), ['repos', 'reports', 'bundles', 'teams', 'users', 'history'])
       if (!this.isConnected) return
-      if (this._detail?.id === repo.id) this._detail = { ...this._detail, active }
-      if (this._data) {
-        this._data = { ...this._data, repositories: this._data.repositories.map((entry) => entry.id === repo.id ? { ...entry, active } : entry) }
-      }
+      this._patchRepo(repo.id, { active })
       await this._load()
-    } catch (err) {
-      const verb = active ? (repo.active === false ? 'reactivate' : 'add') : 'deactivate'
-      this._actionError = `Couldn't ${verb} ${repo.fullName}: ${err?.message ?? err}`
-    } finally {
-      this._busy = null
-    }
+    })
   }
 
   _canRemove(repo) {
@@ -950,19 +833,13 @@ class ManagedAdminRepos extends ManagedPage {
 
   async _remove(repo) {
     if (!this._canRemove(repo)) return
-    this._busy = repo.id
-    this._actionError = null
-    try {
+    await this._act(repo, `remove ${repo.fullName}`, async () => {
       await this.appState.mutate(() => removeRepository(repo.id, repo.fullName, this._deleteTriage, this._csrf), ['repos', 'repo-impact', 'reports', 'report-preview', 'bundles', 'teams', 'users', 'history', 'scan-sources'])
       this._removeOpen = false
       this._detail = null
       this._impact = null
       await this._load()
-    } catch (err) {
-      this._actionError = `Couldn't remove ${repo.fullName}: ${err?.message ?? err}`
-    } finally {
-      this._busy = null
-    }
+    })
   }
 }
 customElements.define('managed-admin-repos', ManagedAdminRepos)
@@ -981,99 +858,221 @@ function locationHint(source, value, field, apply, disabled) {
     : html`<span class="location-metadata">${content}</span>`
 }
 
+const uploadedOn = item => Number.isFinite(item.uploadedAt) ? new Date(item.uploadedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''
+const locationOf = item => item.repoFullName ? `${item.repoFullName}${item.repoDirectory ? `/${item.repoDirectory}` : ''}` : 'No repository assigned'
+
+// Reports' and bundles' pages: files uploaded (by drop, picker or local
+// import), searched and filtered by visibility, each assigned a repository
+// location in an editor that suggests the one the file itself names. A
+// subclass names its `kind` and API; `_suggestion` reads what its origin
+// request answers.
+class ManagedUploadsPage extends ManagedPage {
+  static properties = {
+    localImportSource: { attribute: false }, _query: { state: true }, _visibility: { state: true }, _busy: { state: true },
+    _locationId: { state: true }, _locationOrigin: { state: true }, _locationOriginError: { state: true },
+    _locationRepo: { state: true }, _locationDirectory: { state: true }, _locationBusy: { state: true },
+  }
+
+  constructor() {
+    super()
+    const { kind, upload, importFamilies, uploadFamilies } = this.constructor
+    Object.assign(this, { _query: '', _visibility: 'all', _busy: false, _locationId: null, _locationOrigin: null, _locationOriginError: null,
+      _locationRepo: null, _locationDirectory: '', _locationBusy: false })
+    this._locationOriginRequest = null
+    this._queue = [] // files awaiting upload; a drop during an in-flight upload joins it
+    this._localImport = new ManagedLocalImport(this, kind, file => uploadLocalFile(this, file,
+      selected => upload(selected, this._csrf), importFamilies ?? uploadFamilies))
+    this._drop = new FileDrop(this, () => this._acceptsDrop())
+  }
+
+  _acceptsDrop() { return true }
+
+  disconnectedCallback() {
+    super.disconnectedCallback()
+    this._closeLocation()
+  }
+
+  _show(data) {
+    this._data = data
+    if (this._locationId && !data[`${this.constructor.kind}s`]?.some(item => item.id === this._locationId)) this._closeLocation()
+  }
+
+  _upload(files) {
+    const { upload, uploadFamilies } = this.constructor
+    return uploadFiles(this, files, file => upload(file, this._csrf), uploadFamilies)
+  }
+
+  // Those searched for of the visibility chosen, and how many of how many.
+  _filtered() {
+    const { kind } = this.constructor
+    const items = Array.isArray(this._data?.[`${kind}s`]) ? this._data[`${kind}s`] : []
+    const query = this._query.trim().toLocaleLowerCase()
+    const filtered = items.filter(item => this._searchText(item).filter(Boolean).join(' ').toLocaleLowerCase().includes(query)
+      && (this._visibility === 'all' || this._visible(item) === (this._visibility === 'visible')))
+    const count = `${query || this._visibility !== 'all' ? `${filtered.length} of ` : ''}${items.length} ${items.length === 1 ? kind : `${kind}s`}`
+    return { items, filtered, count }
+  }
+
+  _toolbar(count) {
+    const { kind } = this.constructor
+    return html`<div class="collection-toolbar" role="search">
+      <input type="search" aria-label=${`Search ${kind}s`} placeholder=${`Search ${kind}s or repositories…`} .value=${this._query} @input=${e => { this._query = e.target.value }}>
+      <select aria-label=${`${kind[0].toUpperCase()}${kind.slice(1)} visibility`} .value=${this._visibility} @change=${e => { this._visibility = e.target.value }}><option value="all">${`All ${kind}s`}</option><option value="visible">Visible to teams</option><option value="hidden">${`Hidden ${kind}s`}</option></select>
+      ${count}
+    </div>`
+  }
+
+  // `work`, its failure shown as `${failure}: …`.
+  async _attempt(failure, work) {
+    this._error = null
+    try { await work() } catch (err) { this._error = `${failure}: ${String(err?.message ?? err)}` }
+  }
+
+  _setVisible(item, visible) {
+    const { kind, setVisible, visibleFamilies } = this.constructor
+    return this._attempt(`Couldn't change ${kind} visibility`, async () => {
+      await this.appState.mutate(() => setVisible(item.id, visible, this._csrf), visibleFamilies)
+      item.visible = visible
+      this.requestUpdate()
+      await this._load()
+    })
+  }
+
+  _openLocation(item) {
+    if (item.canChangeRepo === false) return
+    this._closeLocation()
+    Object.assign(this, { _locationId: item.id, _locationRepo: item.repoId ?? null, _locationDirectory: item.repoDirectory ?? '', _error: null })
+    if (this._suggests(item)) void this._loadLocationOrigin(item)
+  }
+
+  _suggests() { return true }
+
+  _closeLocation() {
+    this._locationOriginRequest?.abort()
+    this._locationOriginRequest = null
+    Object.assign(this, { _locationId: null, _locationOrigin: null, _locationOriginError: null })
+  }
+
+  // The location the file names, as the server resolves it through current
+  // connections and aliases. It never replaces the editor's values.
+  async _loadLocationOrigin(item) {
+    this._locationOriginRequest?.abort()
+    const request = new AbortController()
+    this._locationOriginRequest = request
+    this._locationOrigin = undefined
+    this._locationOriginError = null
+    try {
+      const origin = await this._fetchOrigin(item.id, request.signal)
+      if (this._locationOriginRequest !== request) return
+      // A repository may have been connected after this catalogue was loaded.
+      if (origin?.repoId != null && this._data) {
+        this._data = { ...this._data, repos: [...(this._data.repos ?? []).filter(repo => repo.repoId !== origin.repoId), { repoId: origin.repoId, fullName: origin.github }] }
+      }
+      this._locationOrigin = typeof origin?.github === 'string' && origin.github ? this._suggestion(origin) : null
+    } catch (err) {
+      if (this._locationOriginRequest !== request) return
+      this._locationOrigin = null
+      if (err?.name !== 'AbortError') this._locationOriginError = `Couldn't load the ${this.constructor.kind}’s suggested location.`
+    }
+  }
+
+  _locationEditor(item) {
+    const { kind, hintSource } = this.constructor
+    const repos = Array.isArray(this._data?.repos) ? this._data.repos : []
+    const origin = this._locationOrigin
+    const originRepo = origin && this._originRepo(origin, repos)
+    const hint = (value, field, apply) => locationHint(hintSource, value, field, apply, this._locationBusy)
+    return html`<div class="location-editor">
+      <div class="location-field">
+        <div class="location-field-header"><span class="ui-hint">Repository</span>${origin ? hint(origin.github, 'repository', originRepo ? () => {
+          this._locationRepo = originRepo.repoId
+          if (origin.directory != null) this._locationDirectory = origin.directory
+        } : null) : nothing}</div>
+        <repository-selector label=${`Repository for ${kind}`} .options=${repoOptions(repos)} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector>
+      </div>
+      <div class="location-field">
+        <div class="location-field-header"><label for=${`${kind}-dir-${item.id}`}>Directory (optional)</label>${origin ? hint(origin.directory ?? 'Directory not specified', 'directory', origin.directory == null ? null : () => { this._locationDirectory = origin.directory }) : nothing}</div>
+        <input id=${`${kind}-dir-${item.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} ?disabled=${this._locationBusy} @input=${event => { this._locationDirectory = event.target.value }}>
+      </div>
+      <div class="location-actions"><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => this._closeLocation()}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => void this._saveLocation(item)}>Save</button></div>
+      ${this._locationOriginError ? html`<p class="location-origin" role="status">${this._locationOriginError} <button type="button" class="origin-retry" @click=${() => void this._loadLocationOrigin(item)}>Retry</button></p>` : nothing}
+    </div>`
+  }
+
+  async _saveLocation(item) {
+    if (this._locationBusy) return
+    this._locationBusy = true
+    const { kind, setRepo, locationFamilies } = this.constructor
+    try {
+      await this._attempt(`Couldn't set ${kind} location`, async () => {
+        await this.appState.mutate(() => setRepo(item.id, this._locationRepo, this._locationDirectory.trim(), this._csrf), locationFamilies)
+        this._closeLocation()
+        await this._load({ preserveError: true })
+      })
+    } finally { this._locationBusy = false }
+  }
+}
+
 // Reports are uploaded with their own repository metadata, or assigned to the
 // connected repository their findings name. New reports remain hidden until an
 // admin previews and publishes them; the list never asks the uploader to repeat
 // a repo or directory already present in the report header.
-class ManagedAdminReports extends ManagedPage {
-  static properties = {
-    localImportSource: { attribute: false },
-    _query: { state: true },
-    _visibility: { state: true },
-    _data: { state: true },
-    _error: { state: true },
-    _busy: { state: true },
-    _dragOver: { state: true },
-    _preview: { state: true },
-    _previewLoading: { state: true },
-    _locationReport: { state: true },
-    _locationOrigin: { state: true },
-    _locationOriginError: { state: true },
-    _locationRepo: { state: true },
-    _locationDirectory: { state: true },
-    _locationBusy: { state: true },
-  }
-
+class ManagedAdminReports extends ManagedUploadsPage {
+  static kind = 'report'
+  static view = 'manage-reports'
+  static collection = ['reports', 'reports', fetchReports]
+  static upload = uploadReport
+  static uploadFamilies = ['reports', 'repo-impact', 'history', 'scan-sources']
+  static setVisible = setReportVisible
+  static visibleFamilies = ['reports', 'history', 'scan-sources']
+  static setRepo = setReportRepo
+  static locationFamilies = ['reports', 'repo-impact', 'history', 'scan-sources']
+  static hintSource = 'report'
+  static properties = { _preview: { state: true }, _previewLoading: { state: true } }
   static styles = [unsafeCSS(reportsStyles), unsafeCSS(locationStyles), unsafeCSS(commonStyles), unsafeCSS(localImportStyles)]
 
   constructor() {
     super()
-    this._query = ''
-    this._visibility = 'all'
-    this._data = null
-    this._error = null
-    this._busy = false
-    this._dragOver = false
     this._preview = null
     this._previewLoading = null
     this._previewRequest = null
-    this._locationReport = null
-    this._locationOrigin = null
-    this._locationOriginError = null
-    this._locationOriginRequest = null
-    this._locationRepo = null
-    this._locationDirectory = ''
-    this._locationBusy = false
-    this._teardownDrop = null
-    this._queue = []
-    this._localImport = new ManagedLocalImport(this, 'report', file => uploadLocalFile(this, file,
-      selected => uploadReport(selected, this._csrf), ['reports', 'repo-impact', 'history', 'scan-sources']))
-  }
-
-  connectedCallback() {
-    super.connectedCallback()
-    void this._load()
-    this._teardownDrop = installFileDropZone(this, (files) => void this._upload(files), (active) => { this._dragOver = active })
   }
 
   disconnectedCallback() {
     super.disconnectedCallback()
-    this._teardownDrop?.()
     this._cancelPreview()
-    this._closeLocation()
   }
 
-  async _load({ preserveError = false } = {}) {
-    if (!preserveError) this._error = null
-    await this._loadCollection('reports', 'reports', fetchReports, data => {
-      this._data = data
-      if (this._preview && !data.reports?.some(report => report.id === this._preview)) this._cancelPreview()
-      if (this._locationReport && !data.reports?.some(report => report.id === this._locationReport)) this._closeLocation()
-    })
+  _show(data) {
+    if (this._preview && !data.reports?.some(report => report.id === this._preview)) this._cancelPreview()
+    super._show(data)
   }
+
+  _searchText(report) { return [report.filename, displayName(report.filename), report.repoFullName, report.repoDirectory, report.uploadedByLogin] }
+  _visible(report) { return Boolean(report.visible) }
+  _fetchOrigin(id, signal) { return fetchReportLocation(id, AbortSignal.any([signal, this.appState.sessionController.signal])) }
+  _suggestion(origin) { return { github: origin.github, repoId: origin.repoId ?? null, directory: typeof origin.directory === 'string' ? origin.directory || '/' : null } }
+  _originRepo(origin, repos) { return origin.repoId != null && repos.find(repo => repo.repoId === origin.repoId) }
 
   render() {
     return html`
-      ${this._dragOver ? html`<div class="dropzone">Drop reports to upload</div>` : nothing}
-      <div class="wrap">${adminNavigation('manage-reports', this._role, this.allowShare)}
+      ${this._drop.overlay('Drop reports to upload')}
+      <div class="wrap">${this._nav()}
         <h1 class="sr-only">Reports</h1>
         <div class="page-intro"><p class="intro">Upload reports. New reports stay hidden until you make them visible.</p>${this._localImport.renderAction()}</div>
         ${this._localImport.renderPanel(this._busy || !this._csrf)}
-        <div class="drop-card"><span class="drop-icon" aria-hidden="true">${adminIcon('upload')}</span><span class="drop-copy"><strong>Upload reports</strong><span>Drop files anywhere on this page.</span></span><button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
+        <div class="drop-card">${this._drop.card('Upload reports', 'Drop files anywhere on this page.', this._busy)}</div>
         ${this._data?.repoScopes?.length ? html`<p class="intro">Team paths: ${this._data.repoScopes.map(scope => `${this._data.repos.find(repo => repo.repoId === scope.repoId)?.fullName ?? scope.repoId}/${scope.path ?? ''}`).join(', ')}</p>` : nothing}
         ${this._body()}
       </div>`
   }
 
   _body() {
-    const reports = Array.isArray(this._data?.reports) ? this._data.reports : []
-    const query = this._query.trim().toLocaleLowerCase()
-    const filtered = reports.filter(report => [report.filename, displayName(report.filename), report.repoFullName, report.repoDirectory, report.uploadedByLogin].filter(Boolean).join(' ').toLocaleLowerCase().includes(query)
-      && (this._visibility === 'all' || Boolean(report.visible) === (this._visibility === 'visible')))
-    const count = `${query || this._visibility !== 'all' ? `${filtered.length} of ` : ''}${reports.length} ${reports.length === 1 ? 'report' : 'reports'}`
-    return html`<div class="collection-toolbar" role="search"><input type="search" aria-label="Search reports" placeholder="Search reports or repositories…" .value=${this._query} @input=${e => { this._query = e.target.value }}><select aria-label="Report visibility" .value=${this._visibility} @change=${e => { this._visibility = e.target.value }}><option value="all">All reports</option><option value="visible">Visible to teams</option><option value="hidden">Hidden reports</option></select><span class="result-count" role="status">${this._data == null ? '… reports' : count}</span></div>
-      ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
-      <div class="manage-list" aria-busy=${this._loading}>${this._data == null ? (this._error ? nothing : loadingRows('Loading reports…')) : filtered.length > 0 ? html`<div class="report-list"><div class="report-list-head" aria-hidden="true"><span class="report-heading">Report</span><span>Repository</span><span>Uploaded by</span><span>Date</span><span class="size-heading">Size</span><span>Visibility</span><span class="actions-heading">Actions</span></div><ul class="reports">${filtered.map(report => this._row(report))}</ul></div>` : html`<div class="empty"><strong>${reports.length === 0 ? 'No reports uploaded yet' : 'No matching reports'}</strong><p>${reports.length === 0 ? 'Drop a report here or browse files above.' : 'Try a different search or visibility filter.'}</p></div>`}</div>`
+    const { items: reports, filtered, count } = this._filtered()
+    return html`${this._toolbar(html`<span class="result-count" role="status">${this._data == null ? '… reports' : count}</span>`)}
+      ${errorMessage(this._error)}
+      ${this._list(this._data, 'Loading reports…', () => filtered.length > 0 ? html`<div class="report-list"><div class="report-list-head" aria-hidden="true"><span class="report-heading">Report</span><span>Repository</span><span>Uploaded by</span><span>Date</span><span class="size-heading">Size</span><span>Visibility</span><span class="actions-heading">Actions</span></div><ul class="reports">${filtered.map(report => this._row(report))}</ul></div>`
+        : reports.length === 0 ? emptyState('No reports uploaded yet', 'Drop a report here or browse files above.') : emptyState('No matching reports', 'Try a different search or visibility filter.'))}`
   }
 
   _row(report) {
@@ -1082,15 +1081,14 @@ class ManagedAdminReports extends ManagedPage {
     const logo = REPORT_LOGOS[analyzer] ?? REPORT_LOGOS.default
     const canAssignLocation = report.repoEmbedded !== true && report.canChangeRepo !== false
     const canMakeVisible = report.repoEmbedded === true || report.repoId != null
-    const location = report.repoFullName ? `${report.repoFullName}${report.repoDirectory ? `/${report.repoDirectory}` : ''}` : 'No repository assigned'
-    const when = Number.isFinite(report.uploadedAt) ? new Date(report.uploadedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''
+    const location = locationOf(report)
     return html`<li class=${`report${report.visible === false ? ' content-hidden' : ''}`}>
       <div class="report-main">
         <span class="report-mark" aria-hidden="true">${appMarkup(logo)}</span>
         <span class="report-name" data-tooltip-truncated data-tooltip=${name}>${name}</span>
         <span class="report-location" data-tooltip-truncated data-tooltip=${location}>${location}</span>
         <span class="report-meta report-uploader" data-tooltip-truncated data-tooltip=${report.uploadedByLogin ?? 'Uploader removed'}>${report.uploadedByLogin ?? 'Uploader removed'}</span>
-        <span class="report-meta report-date">${when}</span>
+        <span class="report-meta report-date">${uploadedOn(report)}</span>
         <span class="report-meta report-size">${formatBytes(report.byteSize)}</span>
         <span class=${`status ${report.visible ? 'visible' : 'hidden'}`}>${report.visible ? 'Visible' : 'Hidden'}</span>
         <span class="report-actions">
@@ -1102,84 +1100,8 @@ class ManagedAdminReports extends ManagedPage {
         </span>
       </div>
       ${this._preview === report.id ? html`<div class="preview">${this._previewLoading === report.id ? html`<span class="preview-loading">Loading preview…</span>` : html`<pre>${this._previewText ?? ''}</pre>`}</div>` : nothing}
-      ${this._locationReport === report.id ? this._locationEditor(report) : nothing}
+      ${this._locationId === report.id ? this._locationEditor(report) : nothing}
     </li>`
-  }
-
-  _openLocation(report) {
-    if (report.canChangeRepo === false) return
-    this._closeLocation()
-    this._locationReport = report.id
-    this._locationRepo = report.repoId ?? null
-    this._locationDirectory = report.repoDirectory ?? ''
-    this._error = null
-    void this._loadLocationOrigin(report)
-  }
-
-  _closeLocation() {
-    this._locationOriginRequest?.abort()
-    this._locationOriginRequest = null
-    this._locationReport = null
-    this._locationOrigin = null
-    this._locationOriginError = null
-  }
-
-  // The repository named by the report's findings, resolved by the server
-  // through current connections and aliases. It never replaces the editor's values.
-  async _loadLocationOrigin(report) {
-    this._locationOriginRequest?.abort()
-    const request = new AbortController()
-    this._locationOriginRequest = request
-    this._locationOrigin = undefined
-    this._locationOriginError = null
-    try {
-      const origin = await fetchReportLocation(report.id, AbortSignal.any([request.signal, this.appState.sessionController.signal]))
-      if (this._locationOriginRequest !== request) return
-      // A repository may have been connected after this catalogue was loaded.
-      if (origin?.repoId != null && this._data) {
-        this._data = { ...this._data, repos: [...(this._data.repos ?? []).filter(item => item.repoId !== origin.repoId), { repoId: origin.repoId, fullName: origin.github }] }
-      }
-      this._locationOrigin = typeof origin?.github === 'string' && origin.github
-        ? { github: origin.github, repoId: origin.repoId ?? null, directory: typeof origin.directory === 'string' ? origin.directory || '/' : null } : null
-    } catch (err) {
-      if (this._locationOriginRequest !== request) return
-      this._locationOrigin = null
-      if (err?.name !== 'AbortError') this._locationOriginError = "Couldn't load the report’s suggested location."
-    }
-  }
-
-  _locationEditor(report) {
-    const repos = Array.isArray(this._data?.repos) ? this._data.repos : []
-    const origin = this._locationOrigin
-    const originRepo = origin?.repoId != null && repos.find(repo => repo.repoId === origin.repoId)
-    const reportHint = (value, field, apply) => locationHint('report', value, field, apply, this._locationBusy)
-    return html`<div class="location-editor">
-      <div class="location-field">
-        <div class="location-field-header"><span class="ui-hint">Repository</span>${origin ? reportHint(origin.github, 'repository', originRepo ? () => {
-          this._locationRepo = originRepo.repoId
-          if (origin.directory != null) this._locationDirectory = origin.directory
-        } : null) : nothing}</div>
-        <repository-selector label="Repository for report" .options=${repoOptions(repos)} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector>
-      </div>
-      <div class="location-field">
-        <div class="location-field-header"><label for=${`report-dir-${report.id}`}>Directory (optional)</label>${origin ? reportHint(origin.directory ?? 'Directory not specified', 'directory', origin.directory == null ? null : () => { this._locationDirectory = origin.directory }) : nothing}</div>
-        <input id=${`report-dir-${report.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} ?disabled=${this._locationBusy} @input=${event => { this._locationDirectory = event.target.value }}>
-      </div>
-      <div class="location-actions"><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => this._closeLocation()}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => void this._saveLocation(report)}>Save</button></div>
-      ${this._locationOriginError ? html`<p class="location-origin" role="status">${this._locationOriginError} <button type="button" class="origin-retry" @click=${() => void this._loadLocationOrigin(report)}>Retry</button></p>` : nothing}
-    </div>`
-  }
-
-  async _saveLocation(report) {
-    if (this._locationBusy) return
-    this._locationBusy = true
-    this._error = null
-    try {
-      await this.appState.mutate(() => setReportRepo(report.id, this._locationRepo, this._locationDirectory.trim(), this._csrf), ['reports', 'repo-impact', 'history', 'scan-sources'])
-      this._closeLocation()
-      await this._load({ preserveError: true })
-    } catch (err) { this._error = `Couldn't set report location: ${String(err?.message ?? err)}` }
-    finally { this._locationBusy = false }
   }
 
   _cancelPreview() {
@@ -1197,11 +1119,12 @@ class ManagedAdminReports extends ManagedPage {
     const request = new AbortController()
     this._previewRequest = request
     const isCurrent = () => this._previewRequest === request && !request.signal.aborted
+    const key = `report-preview:${report.id}`
     this._preview = report.id
-    this._previewText = this.appState.read(`report-preview:${report.id}`) ?? ''
-    this._previewLoading = this.appState.read(`report-preview:${report.id}`) === undefined ? report.id : null
+    this._previewText = this.appState.read(key) ?? ''
+    this._previewLoading = this.appState.read(key) === undefined ? report.id : null
     try {
-      await this.appState.load(`report-preview:${report.id}`, 'report preview', async signal => {
+      await this.appState.load(key, 'report preview', async signal => {
         const res = await managedFetch(`/api/admin/reports/${encodeURIComponent(report.id)}`, { credentials: 'same-origin', signal })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const text = await res.text()
@@ -1211,25 +1134,9 @@ class ManagedAdminReports extends ManagedPage {
     finally { if (isCurrent()) this._previewLoading = null }
   }
 
-  async _setVisible(report, visible) {
-    this._error = null
-    try {
-      await this.appState.mutate(() => setReportVisible(report.id, visible, this._csrf), ['reports', 'history', 'scan-sources'])
-      report.visible = visible
-      this.requestUpdate()
-      await this._load()
-    } catch (err) { this._error = `Couldn't change report visibility: ${String(err?.message ?? err)}` }
-  }
-
-  async _upload(files) {
-    await uploadFiles(this, files, file => uploadReport(file, this._csrf), ['reports', 'repo-impact', 'history', 'scan-sources'])
-  }
-
   async _delete(report) {
     if (!globalThis.confirm?.(`Delete “${displayName(report.filename)}”? This can't be undone.`)) return
-    this._error = null
-    try { await this.appState.mutate(() => deleteReport(report.id, this._csrf), ['reports', `report-preview:${report.id}`, 'repo-impact', 'history', 'scan-sources']) }
-    catch (err) { this._error = `Delete failed: ${String(err?.message ?? err)}` }
+    await this._attempt('Delete failed', () => this.appState.mutate(() => deleteReport(report.id, this._csrf), ['reports', `report-preview:${report.id}`, 'repo-impact', 'history', 'scan-sources']))
     await this._load({ preserveError: true })
   }
 }
@@ -1256,153 +1163,102 @@ function bundleDeletion(bundle, { reports, otherReports }) {
     `${count === 1 ? 'Its' : 'Their'} findings will show no code from it until the same bundle is uploaded again.`].join('\n')
 }
 
-// Bundles — full-view page for admin/manage. Uploads a bundle (sourcemap /
-// stasis archive, content-addressed by sha512 so dupes collapse) and lists what's
-// stored, with download + delete and uploader/repo attribution. Own
-// chunk, fetches its own data; no main-bundle state.
-class ManagedAdminBundles extends ManagedPage {
+// Source bundles (sourcemaps or Stasis archives, content-addressed so
+// duplicates collapse), uploaded or built from a repository, with their
+// uploader and repository.
+class ManagedAdminBundles extends ManagedUploadsPage {
+  static kind = 'bundle'
+  static view = 'manage-bundles'
+  static collection = ['bundles', 'bundles', fetchBundles]
+  static upload = uploadBundle
+  static uploadFamilies = ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources']
+  static importFamilies = ['bundles', 'reports', 'repo-impact', 'history', 'scan-sources']
+  static setVisible = setBundleVisible
+  static visibleFamilies = ['bundles', 'teams', 'history', 'scan-sources']
+  static setRepo = setBundleRepo
+  static locationFamilies = ['bundles', 'teams', 'repo-impact', 'history', 'scan-sources']
+  static hintSource = 'metadata'
   static properties = {
-    createRepoId: { attribute: false },
-    installTooltips: { attribute: false },
-    localImportSource: { attribute: false },
-    _query: { state: true },
-    _visibility: { state: true },
-    _visibilityBusy: { state: true },
-    _deleting: { state: true },
-    _creating: { state: true },
-    _data: { state: true },
-    _locationBundle: { state: true },
-    _locationOrigin: { state: true },
-    _locationOriginError: { state: true },
-    _locationRepo: { state: true },
-    _locationDirectory: { state: true },
-    _locationBusy: { state: true },
-    _error: { state: true },
-    _busy: { state: true },
-    _dragOver: { state: true },
+    createRepoId: { attribute: false }, installTooltips: { attribute: false },
+    _visibilityBusy: { state: true }, _deleting: { state: true }, _creating: { state: true },
   }
-
   static styles = [unsafeCSS(bundlesStyles), unsafeCSS(locationStyles), unsafeCSS(commonStyles), unsafeCSS(localImportStyles)]
 
   constructor() {
     super()
-    this._query = ''
-    this._visibility = 'all'
-    this._visibilityBusy = null
-    this._deleting = null
-    this._creating = false
-    this._data = null
-    this._error = null
-    this._busy = false
-    this._locationBundle = null
-    this._locationOrigin = null
-    this._locationOriginError = null
-    this._locationOriginRequest = null
-    this._locationRepo = null
-    this._locationDirectory = ''
-    this._locationBusy = false
-    this._dragOver = false
-    this._teardownDrop = null
-    this._queue = [] // files awaiting upload; a drop during an in-flight upload joins it
-    this._localImport = new ManagedLocalImport(this, 'bundle', file => uploadLocalFile(this, file,
-      selected => uploadBundle(selected, this._csrf), ['bundles', 'reports', 'repo-impact', 'history', 'scan-sources']))
+    Object.assign(this, { _visibilityBusy: null, _deleting: null, _creating: false })
   }
 
-  connectedCallback() {
-    super.connectedCallback()
-    void this._load()
-    this._teardownDrop = installFileDropZone(this, (files) => { if (!this._creating) void this._upload(files) }, (active) => { this._dragOver = !this._creating && active })
-  }
+  _acceptsDrop() { return !this._creating }
+  _searchText(bundle) { return [bundle.filename, bundle.repoFullName, bundle.repoDirectory, bundle.kind, bundle.provenance === 'build' ? 'built' : null, bundle.uploadedByLogin] }
+  _visible(bundle) { return bundle.visible !== false }
+  _suggests(bundle) { return bundle.kind === 'stasis' }
+  _fetchOrigin(id, signal) { return fetchBundleOrigin(id, { signal }) }
+  _suggestion(repo) { return { github: repo.github, directory: typeof repo.directory === 'string' ? repo.directory : repo.root === true ? '/' : null } }
 
-  disconnectedCallback() {
-    super.disconnectedCallback()
-    this._teardownDrop?.()
-    this._closeLocation()
-  }
-
-  async _load({ preserveError = false } = {}) {
-    if (!preserveError) this._error = null
-    await this._loadCollection('bundles', 'bundles', fetchBundles, data => {
-      this._data = data
-      if (this._locationBundle && !data.bundles?.some(bundle => bundle.id === this._locationBundle)) this._closeLocation()
-    })
+  _originRepo(origin, repos) {
+    const github = reportRepoGithub({ repo: origin })?.toLowerCase()
+    return github && repos.find(repo => repo.fullName.toLowerCase() === github)
   }
 
   _showCreate(open) {
     if (!open && this.createRepoId != null) {
-      document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-bundles' }, bubbles: true, composed: true }))
+      openAdminPage('manage-bundles')
       return
     }
     this._creating = open
-    this._dragOver = false
+    this._drop.active = false
     if (!open) void this.updateComplete.then(() => this.renderRoot.querySelector('.create-bundle-action')?.focus())
   }
 
   willUpdate(changed) {
-    if (changed.has('createRepoId')) {
-      this._creating = this.createRepoId != null
-    }
+    if (changed.has('createRepoId')) this._creating = this.createRepoId != null
   }
 
   render() {
     if (this._creating) {
-      return html`<div class="wrap">${adminNavigation('manage-bundles', this._role, this.allowShare)}
-      <div class="breadcrumb">
-        <button type="button" class="breadcrumb-manage" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage' }, bubbles: true, composed: true }))}>Manage</button>
-        <span class="breadcrumb-separator" aria-hidden="true">›</span>
-        <button type="button" class="breadcrumb-manage" aria-label="Back to bundles" @click=${() => this._showCreate(false)}>Bundles</button>
-        <span class="breadcrumb-separator" aria-hidden="true">›</span><h1 class="breadcrumb-current">Create a bundle</h1>
-      </div>
+      return html`<div class="wrap">${this._nav()}
+      ${breadcrumb('Bundles', 'Back to bundles', () => this._showCreate(false), 'Create a bundle')}
       <managed-create-bundle .initialRepoId=${this.createRepoId ?? null} .installTooltips=${this.installTooltips}
         .createBundle=${this._csrf ? (input, signal) => this.appState.mutate(() => createBundle(input, this._csrf, signal), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources']) : undefined}
-        @bundle-created=${event => this.dispatchEvent(new CustomEvent('managed-bundle-open', { detail: event.detail, bubbles: true, composed: true }))}></managed-create-bundle>
+        @bundle-created=${event => this._emit('managed-bundle-open', event.detail)}></managed-create-bundle>
     </div>`
     }
     return html`
-      ${this._dragOver ? html`<div class="dropzone">Drop bundles to upload</div>` : nothing}
-      <div class="wrap">${adminNavigation('manage-bundles', this._role, this.allowShare)}
+      ${this._drop.overlay('Drop bundles to upload')}
+      <div class="wrap">${this._nav()}
         <h1 class="sr-only">Bundles</h1>
         <div class="page-intro"><p class="intro">Source bundles for your repositories.</p><div class="bundle-actions">${this._localImport.renderAction()}<button type="button" class="local-import-toggle create-bundle-action" ?disabled=${!this._data} @click=${() => this._showCreate(true)}>Create</button></div></div>
         ${this._localImport.renderPanel(this._busy || !this._csrf)}
-        <section class="drop-card" aria-label="Upload bundles">
-          <span class="drop-icon" aria-hidden="true">${adminIcon('upload')}</span><span class="drop-copy"><strong>Upload source bundles</strong><span>Drop source archives anywhere on this page.</span></span>
-          <button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button>
-        </section>
+        <section class="drop-card" aria-label="Upload bundles">${this._drop.card('Upload source bundles', 'Drop source archives anywhere on this page.', this._busy)}</section>
         ${this._body()}
       </div>`
   }
 
   _body() {
-    const bundles = Array.isArray(this._data?.bundles) ? this._data.bundles : []
-    const query = this._query.trim().toLocaleLowerCase()
-    const filtered = bundles.filter(bundle => [bundle.filename, bundle.repoFullName, bundle.repoDirectory, bundle.kind, bundle.provenance === 'build' ? 'built' : null, bundle.uploadedByLogin].filter(Boolean).join(' ').toLocaleLowerCase().includes(query)
-      && (this._visibility === 'all' || (bundle.visible !== false) === (this._visibility === 'visible')))
+    const { items: bundles, filtered, count } = this._filtered()
+    const loaded = this._data != null
     const unassigned = filtered.filter(bundle => bundle.repoId == null).length
     const bytes = filtered.reduce((sum, bundle) => sum + (Number.isFinite(bundle.byteSize) ? bundle.byteSize : 0), 0)
-    const count = `${query || this._visibility !== 'all' ? `${filtered.length} of ` : ''}${bundles.length} ${bundles.length === 1 ? 'bundle' : 'bundles'}`
-    const groups = Map.groupBy(filtered, (bundle) => bundle.repoFullName || 'Unattached')
-    return html`<div class="collection-toolbar" role="search">
-      <input type="search" aria-label="Search bundles" placeholder="Search bundles or repositories…" .value=${this._query} @input=${e => { this._query = e.target.value }}>
-      <select aria-label="Bundle visibility" .value=${this._visibility} @change=${e => { this._visibility = e.target.value }}><option value="all">All bundles</option><option value="visible">Visible to teams</option><option value="hidden">Hidden bundles</option></select>
-      <span class="summary result-count" role="status"><span>${this._data == null ? '… bundles' : count}</span><span>${this._data == null ? '…' : formatBytes(bytes)}</span>
-        ${this._data == null || unassigned ? html`<span class="unassigned">${this._data == null ? '… unattached' : `${unassigned} unattached`}</span>` : nothing}
-      </span>
-    </div>
-      ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
-      <div class="manage-list" aria-busy=${this._loading}>${this._data == null ? (this._error ? nothing : loadingRows('Loading bundles…')) : filtered.length > 0 ? html`<div class="bundle-groups">${[...groups].toSorted(([a], [b]) => a === 'Unattached' ? -1 : b === 'Unattached' ? 1 : a.localeCompare(b)).map(([name, items]) => html`<section class="bundle-group"><div class="bundle-group-head"><strong>${name}</strong><span>${items.length} ${items.length === 1 ? 'bundle' : 'bundles'}</span></div><ul class="bundles">${items.map((b) => this._row(b))}</ul></section>`)}</div>` : html`<div class="empty"><strong>${bundles.length > 0 ? 'No matching bundles' : 'No bundles uploaded yet'}</strong><p>${bundles.length > 0 ? 'Try a different search or visibility filter.' : 'Drop source archives here or browse files above.'}</p></div>`}</div>`
+    const groups = [...Map.groupBy(filtered, (bundle) => bundle.repoFullName || 'Unattached')].toSorted(([a], [b]) => a === 'Unattached' ? -1 : b === 'Unattached' ? 1 : a.localeCompare(b))
+    return html`${this._toolbar(html`<span class="summary result-count" role="status"><span>${loaded ? count : '… bundles'}</span><span>${loaded ? formatBytes(bytes) : '…'}</span>
+        ${!loaded || unassigned ? html`<span class="unassigned">${loaded ? `${unassigned} unattached` : '… unattached'}</span>` : nothing}
+      </span>`)}
+      ${errorMessage(this._error)}
+      ${this._list(this._data, 'Loading bundles…', () => filtered.length > 0 ? html`<div class="bundle-groups">${groups.map(([name, items]) => html`<section class="bundle-group"><div class="bundle-group-head"><strong>${name}</strong><span>${items.length} ${items.length === 1 ? 'bundle' : 'bundles'}</span></div><ul class="bundles">${items.map((b) => this._row(b))}</ul></section>`)}</div>`
+        : bundles.length > 0 ? emptyState('No matching bundles', 'Try a different search or visibility filter.') : emptyState('No bundles uploaded yet', 'Drop source archives here or browse files above.'))}`
   }
 
   _row(b) {
     const visible = b.visible !== false
-    const location = b.repoFullName ? `${b.repoFullName}${b.repoDirectory ? `/${b.repoDirectory}` : ''}` : 'No repository assigned'
-    const when = Number.isFinite(b.uploadedAt) ? new Date(b.uploadedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''
+    const location = locationOf(b)
     return html`<li class=${`bundle-row${visible ? '' : ' content-hidden'}`}>
       <span class="identity"><span class="bundle-icon" aria-hidden="true">${b.kind === 'stasis' ? html`<img src="./stasis.svg" width="16" height="16" alt="">` : BUNDLE_ICON}</span>
-        <button type="button" class="filename bundle-open" data-tooltip-truncated data-tooltip=${b.filename} @click=${() => this.dispatchEvent(new CustomEvent('managed-bundle-open', { detail: b, bubbles: true, composed: true }))}>${b.filename}</button>
+        <button type="button" class="filename bundle-open" data-tooltip-truncated data-tooltip=${b.filename} @click=${() => this._emit('managed-bundle-open', b)}>${b.filename}</button>
         ${b.provenance === 'build' ? html`<span class="bundle-provenance" data-tooltip="Generated on this server from the repository">Built</span>` : nothing}
       </span>
       <span class="meta bundle-uploader" data-tooltip-truncated data-tooltip=${b.uploadedByLogin ? `@${b.uploadedByLogin}` : ''}>${b.uploadedByLogin ? `@${b.uploadedByLogin}` : ''}</span>
-      <span class="meta bundle-date">${when}</span>
+      <span class="meta bundle-date">${uploadedOn(b)}</span>
       <span class="meta bundle-size">${formatBytes(b.byteSize)}</span>
       <span class="bundle-location" data-tooltip-truncated data-tooltip=${location}>${location}</span>
       <span class=${`status ${visible ? 'visible' : 'hidden'}`}>${visible ? 'Visible' : 'Hidden'}</span>
@@ -1412,100 +1268,22 @@ class ManagedAdminBundles extends ManagedPage {
         <a class="action" aria-label=${`Download ${b.filename}`} href=${`/api/admin/bundles/${encodeURIComponent(b.id)}`}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8m-3-3 3 3 3-3M3 11v3h10v-3"/></svg></a>
         <button type="button" class="action danger" aria-label=${`Delete ${b.filename}`} ?disabled=${b.canChangeRepo === false || this._deleting != null} data-tooltip=${b.canChangeRepo === false ? 'Repository access is required to detach or delete this bundle' : nothing} @click=${() => this._delete(b)}>${ADMIN_DELETE_ICON}</button>
       </span>
-      ${this._locationBundle === b.id ? this._locationEditor(b) : nothing}
+      ${this._locationId === b.id ? this._locationEditor(b) : nothing}
     </li>`
   }
 
   async _setVisible(bundle, visible) {
     if (this._visibilityBusy != null || bundle.canChangeRepo === false) return
     this._visibilityBusy = bundle.id
-    this._error = null
-    try {
-      await this.appState.mutate(() => setBundleVisible(bundle.id, visible, this._csrf), ['bundles', 'teams', 'history', 'scan-sources'])
-      bundle.visible = visible
-      this.requestUpdate()
-      await this._load()
-    } catch (err) { this._error = `Couldn't change bundle visibility: ${String(err?.message ?? err)}` }
-    finally { this._visibilityBusy = null }
+    try { await super._setVisible(bundle, visible) } finally { this._visibilityBusy = null }
   }
 
   _openLocation(bundle) {
-    if (this._locationBusy || bundle.canChangeRepo === false) return
-    this._closeLocation()
-    this._locationBundle = bundle.id
-    this._locationRepo = bundle.repoId ?? null
-    this._locationDirectory = bundle.repoDirectory ?? ''
-    this._error = null
-    if (bundle.kind === 'stasis') void this._loadLocationOrigin(bundle)
+    if (!this._locationBusy) super._openLocation(bundle)
   }
 
-  _closeLocation() {
-    this._locationOriginRequest?.abort()
-    this._locationOriginRequest = null
-    this._locationBundle = null
-    this._locationOrigin = null
-    this._locationOriginError = null
-  }
-
-  async _loadLocationOrigin(bundle) {
-    this._locationOriginRequest?.abort()
-    const request = new AbortController()
-    this._locationOriginRequest = request
-    this._locationOrigin = undefined
-    this._locationOriginError = null
-    try {
-      const repo = await fetchBundleOrigin(bundle.id, { signal: request.signal })
-      if (this._locationOriginRequest !== request) return
-      // A repository may have been connected after this catalogue was loaded.
-      if (repo?.repoId != null && this._data) {
-        this._data = { ...this._data, repos: [...(this._data.repos ?? []).filter(item => item.repoId !== repo.repoId), { repoId: repo.repoId, fullName: repo.github }] }
-      }
-      this._locationOrigin = typeof repo?.github === 'string' && repo.github
-        ? { github: repo.github, directory: typeof repo.directory === 'string' ? repo.directory : repo.root === true ? '/' : null } : null
-    } catch (err) {
-      if (this._locationOriginRequest !== request) return
-      this._locationOrigin = null
-      if (err?.name !== 'AbortError') this._locationOriginError = "Couldn't load the bundle’s suggested location."
-    }
-  }
-
-  _locationEditor(bundle) {
-    const repos = Array.isArray(this._data?.repos) ? this._data.repos : []
-    const origin = this._locationOrigin
-    const originGithub = reportRepoGithub({ repo: origin })?.toLowerCase()
-    const originRepo = originGithub && repos.find(repo => repo.fullName.toLowerCase() === originGithub)
-    const metadataHint = (value, field, apply) => locationHint('metadata', value, field, apply, this._locationBusy)
-    return html`<div class="location-editor">
-      <div class="location-field">
-        <div class="location-field-header"><span class="ui-hint">Repository</span>${origin ? metadataHint(origin.github, 'repository', originRepo ? () => {
-          this._locationRepo = originRepo.repoId
-          if (origin.directory != null) this._locationDirectory = origin.directory
-        } : null) : nothing}</div>
-        <repository-selector label="Repository for bundle" .options=${repoOptions(repos)} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector>
-      </div>
-      <div class="location-field">
-        <div class="location-field-header"><label for=${`bundle-dir-${bundle.id}`}>Directory (optional)</label>${origin ? metadataHint(origin.directory ?? 'Directory not specified', 'directory', origin.directory == null ? null : () => { this._locationDirectory = origin.directory }) : nothing}</div>
-        <input id=${`bundle-dir-${bundle.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} ?disabled=${this._locationBusy} @input=${event => { this._locationDirectory = event.target.value }}>
-      </div>
-      <div class="location-actions"><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => this._closeLocation()}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => void this._saveLocation(bundle)}>Save</button></div>
-      ${this._locationOriginError ? html`<p class="location-origin" role="status">${this._locationOriginError} <button type="button" class="origin-retry" @click=${() => void this._loadLocationOrigin(bundle)}>Retry</button></p>` : nothing}
-    </div>`
-  }
-
-  async _saveLocation(bundle) {
-    if (this._locationBusy || bundle.canChangeRepo === false) return
-    this._locationBusy = true
-    this._error = null
-    try {
-      await this.appState.mutate(() => setBundleRepo(bundle.id, this._locationRepo, this._locationDirectory.trim(), this._csrf), ['bundles', 'teams', 'repo-impact', 'history', 'scan-sources'])
-      this._closeLocation()
-      await this._load({ preserveError: true })
-    } catch (err) { this._error = `Couldn't set bundle location: ${String(err?.message ?? err)}` }
-    finally { this._locationBusy = false }
-  }
-
-  async _upload(files) {
-    await uploadFiles(this, files, file => uploadBundle(file, this._csrf), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources'])
+  _saveLocation(bundle) {
+    return bundle.canChangeRepo === false ? Promise.resolve() : super._saveLocation(bundle)
   }
 
   // Asks which reports use the bundle first, and says so in the confirmation;
@@ -1521,11 +1299,7 @@ class ManagedAdminBundles extends ManagedPage {
         return
       }
       if (!globalThis.confirm?.(bundleDeletion(b, usage))) return
-      try {
-        await this.appState.mutate(() => deleteBundle(b.id, this._csrf), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources'])
-      } catch (err) {
-        this._error = `Delete failed: ${String(err?.message ?? err)}`
-      }
+      await this._attempt('Delete failed', () => this.appState.mutate(() => deleteBundle(b.id, this._csrf), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources']))
       await this._load({ preserveError: true })
     } finally { this._deleting = null }
   }
@@ -1534,13 +1308,15 @@ customElements.define('managed-admin-bundles', ManagedAdminBundles)
 
 // Manage supplies its own navigation and authenticated model transport.
 class ManagedAdminScans extends ManagedPage {
-  static properties = { selection: { attribute: false }, _source: { state: true }, _error: { state: true } }
+  static view = 'manage-scans'
+  static properties = { selection: { attribute: false }, _source: { state: true } }
   static styles = unsafeCSS(commonStyles)
+  static collection = ['bundles', 'bundles', fetchBundles]
+
   constructor() {
     super()
-    this._loadModels = (signal, apply) => this.appState.load('models', 'scan models', requestSignal => fetchScanModels(requestSignal, managedFetch), { signal, apply })
     this._source = null
-    this._error = null
+    this._loadModels = (signal, apply) => this.appState.load('models', 'scan models', requestSignal => fetchScanModels(requestSignal, managedFetch), { signal, apply })
     this._loadReportSources = (consumerSignal, apply) => this.appState.load('scan-sources', 'scan report inputs', async signal => {
       const [catalogue, results] = await Promise.all([
         managedFetch('/api/admin/reports', { signal, credentials: 'same-origin' }),
@@ -1561,23 +1337,17 @@ class ManagedAdminScans extends ManagedPage {
     }, { signal: consumerSignal, apply })
   }
 
-  connectedCallback() {
-    super.connectedCallback()
-    void this._load()
+  // `<deepview-scan-page>` comes with Scans' own bundle and upgrades once it
+  // arrives, keeping the properties already set on it.
+  _load() {
+    loadScanPage().catch(err => { this._error = String(err?.message ?? err) })
+    return super._load()
   }
 
-  async _load() {
-    this._error = null
-    // `<deepview-scan-page>` comes with Scans' own bundle and upgrades once
-    // it arrives, keeping the properties already set on it.
-    loadScanPage().catch(err => { this._error = String(err?.message ?? err) })
-    await this._loadCollection('bundles', 'bundles', fetchBundles, data => {
-      this._source = managedScanSource(data)
-    })
-  }
+  _show(data) { this._source = managedScanSource(data) }
 
   render() {
-    return html`<div class="wrap">${adminNavigation('manage-scans', this._role, this.allowShare)}
+    return html`<div class="wrap">${this._nav()}
       ${this._error ? html`<p class="msg error" role="alert">Couldn’t load scan sources: ${this._error} <button type="button" class="btn" @click=${() => void this._load()}>Retry</button></p>` : nothing}
       <deepview-scan-page hide-heading .selection=${this.selection} .source=${this._source} .sourceLoading=${this._loading && this._source == null} .loadBundle=${loadManagedScanBundle} .loadModels=${this._loadModels} .loadReportSources=${this._loadReportSources} .createBundleHref=${repoId => Number.isSafeInteger(repoId) && repoId > 0 ? managedRoutePath({ view: 'manage-bundles', createRepoId: repoId }) : null}></deepview-scan-page>
     </div>`
@@ -1585,42 +1355,19 @@ class ManagedAdminScans extends ManagedPage {
 }
 customElements.define('managed-admin-scans', ManagedAdminScans)
 
-// Teams — full-view page for admin/manage. Create teams; per team, link repos
-// (with an optional subpath) and members (with per-member visibility
-// permissions — dependencies / security, both off by default). Own chunk,
-// fetches its own teams payload; the host supplies the session.
-class ManagedAdminTeams extends ManagedPage {
-  static properties = {
-    _data: { state: true },
-    _error: { state: true },
-    _busy: { state: true },
-    _renamingId: { state: true },
-    _repoChoices: { state: true },
-    _memberChoices: { state: true },
-  }
+const withoutKey = (map, key) => new Map([...map].filter(([id]) => id !== key))
 
+// Teams: their repositories (each with an optional path) and members (each
+// with the dependencies and security permissions, both off by default).
+class ManagedAdminTeams extends ManagedPage {
+  static view = 'manage-teams'
+  static properties = { _busy: { state: true }, _renamingId: { state: true }, _repoChoices: { state: true }, _memberChoices: { state: true } }
   static styles = [unsafeCSS(teamsStyles), unsafeCSS(commonStyles)]
+  static collection = ['teams', 'teams', fetchTeams]
 
   constructor() {
     super()
-    this._data = null
-    this._error = null
-    this._busy = false
-    this._renamingId = null
-    this._repoChoices = new Map()
-    this._memberChoices = new Map()
-  }
-
-  connectedCallback() {
-    super.connectedCallback()
-    void this._load()
-  }
-
-  async _load({ preserveError = false } = {}) {
-    if (!preserveError) this._error = null
-    await this._loadCollection('teams', 'teams', fetchTeams, data => {
-      this._data = data
-    })
+    Object.assign(this, { _busy: false, _renamingId: null, _repoChoices: new Map(), _memberChoices: new Map() })
   }
 
   // Run a mutation then reload; surfaces failures on the page. A team's
@@ -1639,8 +1386,13 @@ class ManagedAdminTeams extends ManagedPage {
     finally { this._busy = false; await this._load({ preserveError: true }) }
   }
 
+  // A team change POSTed (_do), then `done`.
+  _post(path, body, done = () => {}) {
+    return this._do(async () => { await postTeam(path, this._csrf, body); done() })
+  }
+
   render() {
-    return html`<div class="wrap">${adminNavigation('manage-teams', this._role, this.allowShare)}
+    return html`<div class="wrap">${this._nav()}
       <h1 class="sr-only">Teams</h1>
       <div class="page-intro"><p class="intro">Manage repository and finding access for each team.</p><span class="result-count">${this._data?.teams?.length ?? '…'} teams</span></div>
       <div class="create-team">
@@ -1677,7 +1429,7 @@ class ManagedAdminTeams extends ManagedPage {
             ${team.hidden ? html`<span class="muted ui-hint">Disabled</span>` : nothing}
             <span class="team-actions">
               <button class="icon-btn" aria-label=${`${team.hidden ? 'Restore' : 'Hide'} ${team.name}`} ?disabled=${this._busy}
-                @click=${() => this._do(() => postTeam('/api/admin/teams/set-hidden', this._csrf, { teamId: team.id, hidden: !team.hidden }))}>${adminIcon(team.hidden ? 'show' : 'hide')}</button>
+                @click=${() => this._post('/set-hidden', { teamId: team.id, hidden: !team.hidden })}>${adminIcon(team.hidden ? 'show' : 'hide')}</button>
               <button class="icon-btn" aria-label=${`Rename ${team.name}`} ?disabled=${this._busy} @click=${() => { this._renamingId = team.id }}>${ADMIN_EDIT_ICON}</button>
               <button class="icon-btn danger" aria-label=${`Delete ${team.name}`} ?disabled=${this._busy} @click=${() => this._deleteTeam(team)}>${ADMIN_DELETE_ICON}</button>
             </span>`}
@@ -1708,7 +1460,7 @@ class ManagedAdminTeams extends ManagedPage {
       <div class="sub-head">
         <h3 class="sub-title">npm scopes <span class="count">${scopes.length}</span>
           <mode-switch class="npm-review-toggle" label="Enable dependency review" .checked=${Boolean(team.dependencyReview)} .disabled=${this._busy}
-            @click=${() => { if (!this._busy) void this._do(() => postTeam('/api/admin/teams/set-dependency-review', this._csrf, { teamId: team.id, enabled: !team.dependencyReview })) }}></mode-switch>
+            @click=${() => { if (!this._busy) void this._post('/set-dependency-review', { teamId: team.id, enabled: !team.dependencyReview }) }}></mode-switch>
         </h3>
         <p class="muted ui-hint">Members can open private packages in these scopes. Everyone can open public packages.</p>
       </div>
@@ -1719,7 +1471,7 @@ class ManagedAdminTeams extends ManagedPage {
         ${scopes.length === 0 ? nothing : html`<ul class="npm-scope-list">${scopes.map(scope => html`<li class="npm-scope">
           <span>${scope}</span>
           <button class="icon-btn danger" aria-label=${`Remove ${scope} from ${team.name}`} ?disabled=${this._busy}
-            @click=${() => this._setNpmScopes(team, scopes.filter(other => other !== scope))}>${ADMIN_REMOVE_ICON}</button>
+            @click=${() => this._post('/set-npm-scopes', { teamId: team.id, scopes: scopes.filter(other => other !== scope) })}>${ADMIN_REMOVE_ICON}</button>
         </li>`)}</ul>`}
       </div>
     </div>`
@@ -1732,21 +1484,14 @@ class ManagedAdminTeams extends ManagedPage {
     if (scope === null) { this._error = `“${input.value.trim()}” is not an npm scope. Scopes look like @example.`; return }
     const scopes = Array.isArray(team.npmScopes) ? team.npmScopes : []
     if (scopes.includes(scope)) { input.value = ''; return }
-    void this._setNpmScopes(team, [...scopes, scope], () => { input.value = '' })
-  }
-
-  _setNpmScopes(team, scopes, done = () => {}) {
-    return this._do(async () => {
-      await postTeam('/api/admin/teams/set-npm-scopes', this._csrf, { teamId: team.id, scopes })
-      done()
-    })
+    void this._post('/set-npm-scopes', { teamId: team.id, scopes: [...scopes, scope] }, () => { input.value = '' })
   }
 
   _repoRow(team, r) {
     return html`<li class="repo-row">
       ${REPO_ICON}
       <span class="repo-copy"><span class="ln">${r.fullName}</span>${r.path ? html`<span class="path">/${r.path.replace(/^\/+/u, '')}</span>` : nothing}</span>
-      <button class="icon-btn danger" aria-label=${`Remove ${r.fullName}${r.path ? `/${r.path}` : ''} from ${team.name}`} ?disabled=${this._busy} @click=${() => this._do(() => postTeam('/api/admin/teams/remove-repo', this._csrf, { teamId: team.id, repoId: r.repoId, path: r.path ?? null }))}>${ADMIN_REMOVE_ICON}</button>
+      <button class="icon-btn danger" aria-label=${`Remove ${r.fullName}${r.path ? `/${r.path}` : ''} from ${team.name}`} ?disabled=${this._busy} @click=${() => this._post('/remove-repo', { teamId: team.id, repoId: r.repoId, path: r.path ?? null })}>${ADMIN_REMOVE_ICON}</button>
     </li>`
   }
 
@@ -1762,9 +1507,14 @@ class ManagedAdminTeams extends ManagedPage {
     </div>`
   }
 
+  // Admins and managers see all content, whatever a team grants them.
+  _fullAccess(member) {
+    return this._data.users?.some(user => user.id === member.userId && roleAtLeast(user.role, 'manage'))
+  }
+
   _memberRow(team, m) {
     const perms = Array.isArray(this._data.permissions) ? this._data.permissions : []
-    const fullContentAccess = this._data.users?.some(user => user.id === m.userId && roleAtLeast(user.role, 'manage'))
+    const fullContentAccess = this._fullAccess(m)
     return html`<li class="member-row">
       <span class="member">${adminAvatar(m.userId, m.login)}<span class="ln">${m.login}</span></span>
       <span class="perms">
@@ -1775,7 +1525,7 @@ class ManagedAdminTeams extends ManagedPage {
           ${VISIBILITY_PERMISSION_LABELS[p] ?? p}
         </label>`)}
       </span>
-      <button class="icon-btn danger" aria-label=${`Remove ${m.login} from ${team.name}`} ?disabled=${this._busy} @click=${() => this._do(() => postTeam('/api/admin/teams/remove-member', this._csrf, { teamId: team.id, userId: m.userId }))}>${ADMIN_REMOVE_ICON}</button>
+      <button class="icon-btn danger" aria-label=${`Remove ${m.login} from ${team.name}`} ?disabled=${this._busy} @click=${() => this._post('/remove-member', { teamId: team.id, userId: m.userId })}>${ADMIN_REMOVE_ICON}</button>
     </li>`
   }
 
@@ -1794,12 +1544,12 @@ class ManagedAdminTeams extends ManagedPage {
     const input = this.renderRoot.querySelector('.new-name')
     const name = input?.value.trim()
     if (!name) return
-    void this._do(async () => { await postTeam('/api/admin/teams', this._csrf, { name }); if (input) input.value = '' })
+    void this._post('', { name }, () => { if (input) input.value = '' })
   }
 
   _deleteTeam(team) {
     if (!globalThis.confirm?.(`Delete team “${team.name}”? Its repo + member links are removed.`)) return
-    void this._do(() => postTeam('/api/admin/teams/delete', this._csrf, { teamId: team.id }))
+    void this._post('/delete', { teamId: team.id })
   }
 
   _renameKey(e, team) {
@@ -1814,7 +1564,7 @@ class ManagedAdminTeams extends ManagedPage {
     const name = e.target.closest('.team-head')?.querySelector('.rename-input')?.value.trim() ?? ''
     this._renamingId = null
     if (name === '' || name === team.name) return
-    void this._do(() => postTeam('/api/admin/teams/rename', this._csrf, { teamId: team.id, name }))
+    void this._post('/rename', { teamId: team.id, name })
   }
 
   _addRepo(team, e) {
@@ -1822,11 +1572,8 @@ class ManagedAdminTeams extends ManagedPage {
     const repoId = this._repoChoices.get(team.id)
     if (!Number.isSafeInteger(repoId) || repoId <= 0) return
     const path = row?.querySelector('.add-repo-path')?.value ?? ''
-    void this._do(async () => {
-      await postTeam('/api/admin/teams/set-repo', this._csrf, { teamId: team.id, repoId, path })
-      const next = new Map(this._repoChoices)
-      next.delete(team.id)
-      this._repoChoices = next
+    void this._post('/set-repo', { teamId: team.id, repoId, path }, () => {
+      this._repoChoices = withoutKey(this._repoChoices, team.id)
       const input = row?.querySelector('.add-repo-path')
       if (input) input.value = ''
     })
@@ -1835,20 +1582,13 @@ class ManagedAdminTeams extends ManagedPage {
   _addMember(team) {
     const userId = this._memberChoices.get(team.id)
     if (!userId || team.members.some(member => member.userId === userId)) return
-    void this._do(async () => {
-      await postTeam('/api/admin/teams/set-member', this._csrf, { teamId: team.id, userId })
-      const next = new Map(this._memberChoices)
-      next.delete(team.id)
-      this._memberChoices = next
-    })
+    void this._post('/set-member', { teamId: team.id, userId }, () => { this._memberChoices = withoutKey(this._memberChoices, team.id) })
   }
 
   _togglePerm(team, m, perm, checked) {
-    if (this._data.users?.some(user => user.id === m.userId && roleAtLeast(user.role, 'manage'))) return
-    const perms = {}
-    for (const p of (this._data.permissions ?? [])) perms[p] = m[p] === true
-    perms[perm] = checked
-    void this._do(() => postTeam('/api/admin/teams/set-member', this._csrf, { teamId: team.id, userId: m.userId, ...perms }))
+    if (this._fullAccess(m)) return
+    const perms = { ...Object.fromEntries((this._data.permissions ?? []).map(p => [p, m[p] === true])), [perm]: checked }
+    void this._post('/set-member', { teamId: team.id, userId: m.userId, ...perms })
   }
 }
 customElements.define('managed-admin-teams', ManagedAdminTeams)
