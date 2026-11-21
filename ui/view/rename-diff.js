@@ -14,6 +14,7 @@
 import { computeFileHash } from '@preventive/report'
 import { bundleFilesAsMap } from './bundle-sources.js'
 import { fetchBundleRenameDiff, fetchBundleRenameDiffs, fetchNpmRenameDiff, fetchNpmRenameDiffs } from './client-managed.js'
+import { weakNotify } from './weak-notify.js'
 
 // Comparisons whose diffs are kept, the one read last last, each holding
 // every pair of its files diffed so far.
@@ -211,7 +212,7 @@ export function renameDiff(base, basePath, before, other, path, after, ignoreWhi
   }
   comparisons.set(key, comparison)
   evict()
-  comparison.notify = notify
+  comparison.notify = weakNotify(notify)
   if (before !== bundleFilesAsMap(base).get(basePath) || after !== bundleFilesAsMap(other).get(path)) return { status: 'error', message: MISMATCH, retry: false }
   const pair = `${basePath}\0${path}`
   let diff = comparison.diffs.get(pair)

@@ -7,6 +7,7 @@
 // few comparisons, for the session; a failure that may pass is asked again a
 // while after, its view painted again then.
 import { fetchBundleComparison, fetchNpmComparison } from './client-managed.js'
+import { weakNotify } from './weak-notify.js'
 
 // Comparisons kept, the one read last last; each holds every file each side differs in.
 const KEPT_COMPARISONS = 4
@@ -22,7 +23,7 @@ const empty = details => details?.integrity === '(empty)'
 // those worked out here by both details read, as nothing else names their
 // content: `state` as a view reads it,
 // `{ status: 'loading' }`, `{ status: 'ready', diff }` or `{ status: 'error',
-// message }`; `notify`, the view that last asked, and `waiting`, those that
+// message }`; `notify`, the view that last asked, held weakly (weak-notify.js), and `waiting`, those that
 // wait for it whole (bundleComparisonDiff), told once it comes; `retryAt`
 // where it failed for a reason that may pass; `failures` in a row before it.
 const comparisons = new Map()
@@ -118,7 +119,7 @@ function comparisonOf(base, other, scope, again = false) {
 // with its `diff`, or failed with a `message`; `notify` called once it comes.
 export function bundleComparison(base, other, scope, notify) {
   const comparison = comparisonOf(base, other, scope)
-  comparison.notify = notify
+  comparison.notify = weakNotify(notify)
   return comparison.state
 }
 

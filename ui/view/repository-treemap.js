@@ -5,12 +5,15 @@
 // (bundle-treemap.js), but with none of their text read: a file's cell opens
 // nothing, and its packages are told by their paths alone. Where the listing
 // leaves files out (those deepest, past as many as the server answers), it
-// says so. What was read is kept for the session that read it.
+// says so. What was read is kept for the session that read it, the last
+// KEPT_TREES directories read, each a whole commit's listing at most.
 import { LitElement, html, nothing } from 'lit'
 import { state } from '#client/index.js'
 import { fetchRepositoryTree } from './client-managed.js'
+import { readKept, trimKept } from './kept-entries.js'
 import './bundle-treemap.js'
 
+const KEPT_TREES = 4
 const trees = new Map()
 const shownElements = new Set()
 let keptFor = null
@@ -32,7 +35,7 @@ const repaint = () => { for (const element of shownElements) element.requestUpda
 // 'error' with its `error`.
 function treeRead({ repoId, commit, path }) {
   const key = `${repoId}\0${commit}\0${path}`
-  const held = sessionTrees().get(key)
+  const held = readKept(sessionTrees(), key)
   if (held) return held
   const loading = { key, status: 'loading' }
   trees.set(key, loading)
@@ -49,7 +52,10 @@ function treeRead({ repoId, commit, path }) {
     if (trees.get(key) !== loading) return
     if (err?.name === 'AbortError') trees.delete(key)
     else trees.set(key, { key, status: 'error', error: err?.message || 'Its files could not be read.' })
-  }).finally(repaint)
+  }).finally(() => {
+    trimKept(trees, KEPT_TREES, read => read.status === 'loading')
+    repaint()
+  })
   return loading
 }
 

@@ -1,7 +1,7 @@
 // Cached references to the static DOM scaffolding declared in index.html.
 // Looking these up once at module load is cheaper than repeatedly
 // querying — and keeps every consumer module's import list short.
-import { html, render as litRender } from 'lit'
+import { html, render as litRender, nothing } from 'lit'
 
 export const dropZone = document.querySelector('#drop-zone')
 export const report = document.querySelector('#report')
@@ -11,6 +11,24 @@ export const report = document.querySelector('#report')
 // `#file-list` lives in the shadow root, not exported here — only
 // sidebar.js touches it, through its own shadow-root reference.
 export const sidebar = document.querySelector('app-sidebar')
+
+// The slots Lit renders #report's views into: its children, or those of a
+// wrapper among them (render.js).
+const slots = new WeakSet()
+export function reportSlot(id) {
+  const slot = Object.assign(document.createElement('div'), { id })
+  slots.add(slot)
+  return slot
+}
+// #report's content replaced by `nodes`, the views in its slots cleared
+// through Lit first, as Lit clears what it removes itself, which disconnects
+// their directives. Removed without, a ref keeps the element it was last
+// given for good (Lit holds it by its callback, under the global object where
+// no host is given), and with it the whole view it was in.
+export function replaceReport(...nodes) {
+  for (const slot of report.querySelectorAll(':scope > div, :scope > div > div')) if (slots.has(slot)) litRender(nothing, slot)
+  report.replaceChildren(...nodes)
+}
 
 // Trigger a browser download for the given Blob via a transient
 // hidden anchor. Lit-rendered (rather than raw createElement) so

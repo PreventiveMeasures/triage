@@ -1,0 +1,35 @@
+diff --git a/state-element.js b/state-element.js
+index 627ed6c4b93eaea31b4b0d9f2165c7cfaf3e0ca6..2126610e00bce4a37549039ce0a5463d54c9b453 100644
+--- a/state-element.js
++++ b/state-element.js
+@@ -29,6 +29,13 @@ export class StateElement extends LitElement {
+     if (!this._render) {
+       this._render = this.render;
+       this.render = () => {
++        // One reaction at a time: a render for any other reason (a property
++        // changed) would leave the last one registered, holding the element.
++        if (this._dispose) this._dispose();
++        this._dispose = null;
++        // Rendered out of the document (an update asked before it left), it
++        // observes nothing: no disconnect would dispose a reaction made now.
++        if (!this.isConnected) return this._render();
+         let result;
+         const dispose = autorun(first => {
+           if (!first) {
+@@ -42,8 +49,15 @@ export class StateElement extends LitElement {
+         this._dispose = dispose;
+         return result;
+       };
++    } else if (this.hasUpdated && !this._dispose) {
++      // Back in the document, observing nothing since it left: drawn again,
++      // to observe what it reads.
++      this.requestUpdate();
+     }
+-    this._disposers.push(() => this._dispose && this._dispose());
++    this._disposers.push(() => {
++      if (this._dispose) this._dispose();
++      this._dispose = null;
++    });
+   }
+ 
+   disconnectedCallback() {
