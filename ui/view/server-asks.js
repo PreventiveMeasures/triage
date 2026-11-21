@@ -2,7 +2,6 @@
 // a comparison (pretty-source.js, rename-diff.js, type-only.js,
 // bundle-comparison.js), the last few kept, a failure that may pass asked
 // again a while after; and a session's answers (heldAnswers).
-import { state } from '#client/index.js'
 
 // Whether asking again for what failed with `status` may succeed.
 export const retryable = status => !(status >= 400 && status < 500 && status !== 429)
@@ -93,12 +92,13 @@ export const KEEP_MS = 2 * 60_000
 const RETRY_MS = 30_000
 
 // A session's answers, by key, as an Overview fact shows them, held for that
-// session and role alone, as are the facts whose details are `opened`.
+// session and role alone (`state.managedSession`), as are the facts whose
+// details are `opened`.
 // `ask(key, fetch, read)` gives what is held, asked of `fetch()` again once
 // older than KEEP_MS, or RETRY_MS after a failure, shown as it was meanwhile
 // (`refresh` added to it): 'loading', then 'ready' with `read(answer)`, or
 // 'error' with its `error`. `changed` is told as one comes.
-export function heldAnswers() {
+export function heldAnswers(state) {
   let keptFor = null
   const answers = {
     held: new Map(),

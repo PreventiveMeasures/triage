@@ -21,7 +21,7 @@ import { CHECKS, icon } from './repository-tiles.js'
 import { heldAnswers } from './server-asks.js'
 
 // By bundle, where it is, and session; the bundles whose details are open.
-const reviews = heldAnswers()
+const reviews = heldAnswers(state)
 
 // A repository's review set anew (the admin's repository page): what is
 // held asked again.

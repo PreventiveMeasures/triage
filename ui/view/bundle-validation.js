@@ -9,7 +9,7 @@ import { icon } from './repository-tiles.js'
 import { KEEP_MS, aborted, heldAnswers } from './server-asks.js'
 
 // By bundle, where it is, and session; the bundles whose details are open.
-const validations = heldAnswers()
+const validations = heldAnswers(state)
 
 // A bundle as what is held of it is named: by where it is too, as its own
 // code is checked there.
