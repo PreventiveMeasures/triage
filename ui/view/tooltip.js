@@ -1,44 +1,26 @@
-// Shared styled-tooltip primitive. A single fixed-position element
-// is appended to <body> at module load (escapes any view's
-// `overflow: hidden`) and repositioned per show. Consumers share it:
-// each calls `showTooltip(el)` / `hideTooltip()` and the
-// `[data-tooltip]` attribute drives the text. Used instead of native
-// `title=`, which reads as a webpage tooltip in the app shell
-// (delayed, light gray, OS chrome); we want an instant in-app one.
+// The shared styled tooltip: one fixed-position element on <body> (escaping
+// any view's `overflow: hidden`), repositioned per show and driven by a
+// target's `[data-tooltip]`. Instant and in-app, where a native `title=`
+// reads as a webpage's (delayed, OS chrome).
 //
-// `installGlobalTooltipListener` wires a document-level mouseover /
-// mouseout pair that shows / hides for any `[data-tooltip]` element
-// in the LIGHT DOM. Shadow-DOM consumers (e.g. the sidebar inside
-// `<app-sidebar>`) install their own scoped listener — events don't
-// bubble across the shadow boundary with their original target — and
-// can drive the same show / hide helpers (`showTooltip(el, …)`).
+// installGlobalTooltipListener covers the light DOM; a shadow root installs
+// its own listener (installShadowTooltipListener), since events don't cross
+// the boundary with their original target. A listener's `gate` can veto a
+// show (the sidebar's, for a label that isn't truncated); its `placement` is
+// 'cursor' (below the cursor, clamped to the viewport — in-column rows),
+// 'right' (beside the element's right edge, centered: the sidebar's
+// left-pinned rows) or 'right-start' (aligned to its top), and a target can
+// override it with `data-tooltip-placement`.
 //
-// `gate` lets a caller short-circuit the show: the sidebar's listener
-// only shows when the row's label is actually truncated (skip when
-// the label fits) while the bundle view shows unconditionally.
-//
-// A target whose details cost too much to compute on every hover can carry
-// a `prepareTooltip(el)` function: the show calls it, once the hover delay
-// has run out, to fill in the target's `data-tooltip-*` attributes.
-//
-// `data-tooltip-icon` puts a built-in icon (`commit`) before the text.
-//
-// A target can carry a lit template as its `tooltipContent` property, shown
-// in place of its `data-tooltip` text (which still marks it as having a
-// tooltip): styled content such as Compare's advisories and Socket scores.
-//
-// A commit a managed bundle records can carry `data-tooltip-commit-info`
-// (see `bundleCommitTooltip` in bundle-origin-links.js): the tags that point
-// to it go under the `data-tooltip-commit` reference, then its subject,
-// author and date.
-//
-// Placement: 'cursor' (default) anchors below the cursor and clamps
-// horizontally to the viewport — natural for in-column rows where
-// right-of-element would overlap the next column. 'right' anchors to
-// the hovered element's right edge, vertically centered — for the
-// sidebar, whose left-pinned rows leave the main-content gutter free.
-// 'right-start' aligns to the row's top instead. A target can override
-// its listener's placement with `data-tooltip-placement`.
+// What a target can add to its text:
+//   - `prepareTooltip(el)`, a function filling in `data-tooltip-*` once the
+//     hover delay has run out, for details too costly to compute per hover;
+//   - `data-tooltip-icon` (`commit`), a built-in icon before the text;
+//   - `tooltipContent`, a lit template shown in place of the text (Compare's
+//     advisories, Socket scores), `data-tooltip` still marking the target;
+//   - `data-tooltip-commit-info` (bundleCommitTooltip in
+//     bundle-origin-links.js): the tags pointing at `data-tooltip-commit`,
+//     then its subject, author and date.
 
 import { render } from 'lit'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, TAG_ICON_SVG } from './icons.js'
@@ -63,18 +45,28 @@ function readCommitInfo(value) {
   }
 }
 
+// An element of `className` (if any) holding literal `text`.
+function textEl(tag, className, text) {
+  const el = document.createElement(tag)
+  if (className) el.className = className
+  if (text !== undefined) el.textContent = text
+  return el
+}
+
+// A built-in icon (the only markup) before literal text.
+function iconText(tag, className, icon, text) {
+  const el = textEl(tag, className)
+  el.innerHTML = trustedHTML(icon)
+  el.append(textEl('span', '', text))
+  return el
+}
+
 // The commit's subject, then its author and commit date.
 function commitDetailsRow({ title, authorName, authorLogin, date }) {
-  const row = document.createElement('div')
-  row.className = 'tooltip-commit-details'
-  const headline = document.createElement('span')
-  headline.className = 'tooltip-commit-message'
-  headline.textContent = title
-  const meta = document.createElement('span')
-  meta.className = 'tooltip-commit-meta'
   const author = authorName && authorLogin && authorName !== authorLogin ? `${authorName} (@${authorLogin})` : authorName ?? (authorLogin && `@${authorLogin}`)
-  meta.textContent = [author, date === null ? '' : new Date(date).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })].filter(Boolean).join(' · ')
-  row.append(...title ? [headline] : [], meta)
+  const meta = textEl('span', 'tooltip-commit-meta', [author, date === null ? '' : new Date(date).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })].filter(Boolean).join(' · '))
+  const row = textEl('div', 'tooltip-commit-details')
+  row.append(...title ? [textEl('span', 'tooltip-commit-message', title)] : [], meta)
   return row
 }
 
@@ -170,97 +162,52 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   if (currentTarget === el && currentContent === content) return
   node.textContent = textIcon || rich ? '' : text
   if (rich) {
-    const body = document.createElement('div')
-    body.className = 'tooltip-rich'
+    const body = textEl('div', 'tooltip-rich')
     render(rich, body)
     node.append(body)
   }
-  if (textIcon) {
-    // Only the built-in icon is markup; the text stays literal.
-    const line = document.createElement('span')
-    line.className = 'tooltip-text'
-    line.innerHTML = trustedHTML(TEXT_ICONS[textIcon])
-    const label = document.createElement('span')
-    label.textContent = text
-    line.append(label)
-    node.append(line)
-  }
+  if (textIcon) node.append(iconText('span', 'tooltip-text', TEXT_ICONS[textIcon], text))
   if (packageName) {
-    const row = document.createElement('div')
-    row.className = 'tooltip-package'
+    const row = textEl('div', 'tooltip-package')
     // A target whose first icon is not its package's marks the one to show.
     const icon = (el.querySelector('[data-tooltip-package-icon] svg') ?? el.querySelector('svg'))?.cloneNode(true)
     if (icon) row.append(icon)
-    const label = document.createElement('span')
-    label.className = 'tooltip-package-details'
+    const label = textEl('span', 'tooltip-package-details')
     const count = (value, unit) => /^\d+$/u.test(value) ? `${Number(value).toLocaleString()} ${unit}` : ''
     // The size comes formatted, like `data-tooltip-stats`.
     for (const value of [packageName, version, count(files, files === '1' ? 'file' : 'files'), count(loc, 'LoC'), size].filter(Boolean)) {
-      const field = document.createElement('span')
-      field.textContent = value
-      label.append(field)
+      label.append(textEl('span', '', value))
     }
     row.append(label)
     node.append(row)
   }
   if (repo || commit) {
-    const row = document.createElement('div')
-    row.className = 'tooltip-repo'
-    // Only the built-in icon is markup; repository/path stays literal text.
-    if (repo) {
-      row.innerHTML = trustedHTML(GITHUB_ICON_SVG)
-      const label = document.createElement('span')
-      label.textContent = repo
-      row.append(label)
-    }
-    if (commit) {
-      const reference = document.createElement('span')
-      reference.className = 'tooltip-commit'
-      reference.innerHTML = trustedHTML(COMMIT_ICON_SVG)
-      const label = document.createElement('span')
-      label.textContent = commit.slice(0, 7)
-      reference.append(label)
-      row.append(reference)
-    }
+    const row = repo ? iconText('div', 'tooltip-repo', GITHUB_ICON_SVG, repo) : textEl('div', 'tooltip-repo')
+    if (commit) row.append(iconText('span', 'tooltip-commit', COMMIT_ICON_SVG, commit.slice(0, 7)))
     node.append(row)
     // Beside a repository path the tags would wrap in whatever width it left;
     // under it they take the tooltip's.
     if (commit && commitInfo?.tags.length) {
-      const tags = document.createElement('div')
-      tags.className = 'tooltip-tags'
-      for (const tag of commitInfo.tags.slice(0, MAX_TOOLTIP_TAGS)) {
-        const chip = document.createElement('span')
-        chip.className = 'tooltip-tag'
-        chip.innerHTML = trustedHTML(TAG_ICON_SVG)
-        const name = document.createElement('span')
-        name.textContent = tag
-        chip.append(name)
-        tags.append(chip)
-      }
+      const tags = textEl('div', 'tooltip-tags')
+      for (const tag of commitInfo.tags.slice(0, MAX_TOOLTIP_TAGS)) tags.append(iconText('span', 'tooltip-tag', TAG_ICON_SVG, tag))
       if (commitInfo.tags.length > MAX_TOOLTIP_TAGS) {
-        const more = document.createElement('span')
-        more.className = 'tooltip-tag-more'
-        more.textContent = `+${(commitInfo.tags.length - MAX_TOOLTIP_TAGS).toLocaleString()} more`
-        tags.append(more)
+        tags.append(textEl('span', 'tooltip-tag-more', `+${(commitInfo.tags.length - MAX_TOOLTIP_TAGS).toLocaleString()} more`))
       }
       node.append(tags)
     }
   }
   if (commitInfo?.details) node.append(commitDetailsRow(commitInfo.details))
   if (bundle || stats || built) {
-    const row = document.createElement('div')
-    row.className = 'tooltip-bundle'
+    const type = bundle === 'stasis' ? 'Stasis' : bundle === 'sourcemap' ? 'Sourcemap' : ''
+    const label = [type, built ? 'Built on server' : '', stats].filter(Boolean).join(' · ')
     if (bundle === 'stasis') {
+      const row = textEl('div', 'tooltip-bundle')
       const icon = document.createElement('img')
       icon.src = './stasis.svg'
       icon.alt = ''
-      row.append(icon)
-    } else row.innerHTML = trustedHTML(BUNDLE_ICON_SVG)
-    const label = document.createElement('span')
-    const type = bundle === 'stasis' ? 'Stasis' : bundle === 'sourcemap' ? 'Sourcemap' : ''
-    label.textContent = [type, built ? 'Built on server' : '', stats].filter(Boolean).join(' · ')
-    row.append(label)
-    node.append(row)
+      row.append(icon, textEl('span', '', label))
+      node.append(row)
+    } else node.append(iconText('div', 'tooltip-bundle', BUNDLE_ICON_SVG, label))
   }
   raise(node)
   // Measure before anchoring: fixed-position auto width can otherwise shrink

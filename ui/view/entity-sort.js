@@ -1,37 +1,19 @@
-// `<entity-sort>` — `Findings ↓ / Files ↓ / Reports ↓ / Name A→Z`
-// dropdown shared by the Packages and Repositories page toolbars.
+// `<entity-sort>` — the Packages and Repositories toolbars' sort dropdown,
+// emitting `sort-change` for events.js to write `state.${kind}SortBy`
+// (report.css draws the host's chevron).
 //
-// The host element carries the chevron `::after` directly via
-// `.packages-toolbar entity-sort` in report.css; the `<select>` is
-// the host's only child. The component picks the state slice from the
-// `kind="packages"|"repositories"` attribute and emits a
-// `sort-change(detail: { kind, value })` CustomEvent on native
-// change. events.js's single listener writes the matching
-// `state.${kind}SortBy` slot and calls render().
-//
-// The active sort is bound twice, same split as `<findings-sort>`
-// (see the comment there for the full reasoning): `?selected=` on
-// the options so the FIRST paint of a freshly-built element shows
-// the real sort — Lit commits the `<select>`'s own bindings before
-// its options exist, so `.value=` alone leaves the browser falling
-// back to the first option — and `.value=` through Lit's `live()`
-// for every later render, where a stale-filter clear in the
-// parent's pipeline has to move the native value because the
-// attribute is ignored once the user has picked something. The
-// Packages / Repositories pages rebuild their slot wholesale on
-// cross-view entry (`report.replaceChildren` in render.js), so returning
-// to the page with a non-default sort is exactly the first-paint
-// case.
-//
-// Properties:
-//   * `kind` — `"packages"` or `"repositories"`. Required (no
-//              sensible default; missing/unknown surfaces as a dev
-//              warn from the render-time guard).
+// The sort is bound twice, as in `<findings-sort>`: `?selected=` on the
+// options for a freshly built element's first paint — Lit commits the
+// select's own bindings before its options exist — and `.value=` through
+// `live()` for later renders, where a stale-filter clear must move a value
+// the user already picked. These pages rebuild their slot on cross-view
+// entry (render.js), so a return with a non-default sort is a first paint.
 import { nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 import { kindConfig } from './kind-config.js'
+import { emit } from './emit.js'
 
 const OPTIONS = [
   ['findings-desc', 'Findings ↓'],
@@ -54,10 +36,8 @@ class EntitySort extends StateElement {
 
   constructor() {
     super()
-    // No sensible default — `kind` discriminates which state slice
-    // the autorun reads. Leaving it empty surfaces a missing-attr
-    // host as a dev warn (via the guard in render()) rather than a
-    // silent route to one of the kinds.
+    // No default: a missing kind warns (kindConfig) rather than silently
+    // routing to one.
     this.kind = ''
   }
 
@@ -75,13 +55,7 @@ class EntitySort extends StateElement {
     </select>`
   }
 
-  _onChange = (e) => {
-    this.dispatchEvent(new CustomEvent('sort-change', {
-      detail: { kind: this.kind, value: e.target.value },
-      bubbles: true,
-      composed: true,
-    }))
-  }
+  _onChange = (e) => { emit(this, 'sort-change', { kind: this.kind, value: e.target.value }) }
 }
 
 customElements.define('entity-sort', EntitySort)

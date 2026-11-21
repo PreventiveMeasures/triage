@@ -1,47 +1,26 @@
-// `<toolbar-search>` — the SVG-icon-prefixed search field used by
-// the findings toolbar and the Files tab toolbar.
-//
-// The component picks its state slice from `kind="findings"|"files"`,
-// emits a `search-input(detail: { kind, value })` CustomEvent on
-// native `input`. The findings variant also shows a trailing negate
-// toggle while the query is non-empty, emitting `search-negate-toggle`
-// to flip `state.filterIncludeNegate`. It uses `live()` for the value
-// binding — the findings slice is reset by `resetFilters()` in
-// filters.js and overwritten by the graph "jump to findings" path in
-// events.js, both of which need the DOM `value` to follow state even
-// after user interaction has touched the field.
-//
-// The wrapping `.search-row` + adjacent `.result-count` span stay
-// in the parent template (those compose the search field with the
-// count and live alongside the search-row's wrapping breakpoints in
-// toolbar.css).
-//
-// Reactivity: extends StateElement, so reads of the matched state
-// slice during render() are tracked by observer-util. Lit reuses the
-// same `<input>` element across re-renders, so focus + cursor
-// position survive every keystroke.
-//
-// Attributes:
-//   * `kind` — `"findings"` (filters the findings list against
-//                state.filterInclude) or `"files"` (filters the
-//                Files tab tree against state.filesSearch).
+// `<toolbar-search>` — the icon-prefixed search field of the findings
+// toolbar (`kind="findings"`, state.filterInclude) and the Files tab
+// (`kind="files"`, state.filesSearch), emitting `search-input`. The findings
+// field also shows a negate toggle while it has a query, emitting
+// `search-negate-toggle`. The value binds through `live()`: resetFilters()
+// and the graph's "jump to findings" rewrite the findings slice after the
+// user has typed in the field. The `.search-row` around it and its
+// `.result-count` stay in the parent template.
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { live } from 'lit/directives/live.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 import { kindConfig } from './kind-config.js'
+import { emit } from './emit.js'
 
 const SEARCH_ICON = html`<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
   <circle cx="11" cy="11" r="7"/>
   <path d="m20 20-3.5-3.5"/>
 </svg>`
 
-// Trailing negate toggle (findings only): inverts the query so the
-// list keeps findings that DON'T match. Hidden while the field empty.
-// The glyph is the logic-NOT sign (¬) — a horizontal bar with a
-// right-hand descender — chosen over a circle-slash so it reads as
-// "negate the query", not "clear the field".
+// The logic-NOT sign (¬), which reads as "negate the query" where a
+// circle-slash would read as "clear the field".
 const NEGATE_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
   <path d="M3 6h10v4"/>
 </svg>`
@@ -60,10 +39,8 @@ class ToolbarSearch extends StateElement {
 
   constructor() {
     super()
-    // No sensible default — `kind` discriminates which state slice
-    // the autorun reads. Leaving it empty surfaces a missing-attr
-    // host as a dev warn (via the guard in render()) rather than a
-    // silent route to one of the kinds.
+    // No default: a missing kind warns (kindConfig) rather than silently
+    // routing to one.
     this.kind = ''
   }
 
@@ -82,8 +59,8 @@ class ToolbarSearch extends StateElement {
       ${this.kind === 'findings' && value ? this._negateToggle() : nothing}`
   }
 
-  // Reads `state.filterIncludeNegate` only when rendered (findings kind,
-  // non-empty query), so the files variant's autorun never tracks it.
+  // Reads `state.filterIncludeNegate` only when rendered, so the files
+  // variant's autorun never tracks it.
   _negateToggle() {
     const negate = state.filterIncludeNegate
     return html`<button
@@ -96,20 +73,9 @@ class ToolbarSearch extends StateElement {
     >${NEGATE_ICON}</button>`
   }
 
-  _onInput = (e) => {
-    this.dispatchEvent(new CustomEvent('search-input', {
-      detail: { kind: this.kind, value: e.target.value },
-      bubbles: true,
-      composed: true,
-    }))
-  }
+  _onInput = (e) => { emit(this, 'search-input', { kind: this.kind, value: e.target.value }) }
 
-  _onToggleNegate = () => {
-    this.dispatchEvent(new CustomEvent('search-negate-toggle', {
-      bubbles: true,
-      composed: true,
-    }))
-  }
+  _onToggleNegate = () => { emit(this, 'search-negate-toggle') }
 }
 
 customElements.define('toolbar-search', ToolbarSearch)

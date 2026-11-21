@@ -16,8 +16,18 @@ function besideOption(options, index, key) {
   return next < options.length ? next : Math.floor(index / columns) < lastRow ? options.length - 1 : index
 }
 
+// The options whose `text` holds every word of `query`, in label order
+// unless `sorted` is false: one section, no facets.
+export function matchingChoices(options, query, { text = option => option.label, sorted = true, pinned = [] } = {}) {
+  const words = query.normalize('NFKC').toLocaleLowerCase().trim().split(/\s+/u).filter(Boolean)
+  const matching = options.filter(option => words.every(word => text(option).normalize('NFKC').toLocaleLowerCase().includes(word)))
+  const visible = sorted ? matching.toSorted((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' })) : matching
+  return { pinned, sections: [{ label: null, options: visible }], facets: [], showFacets: false, count: visible.length, total: options.length }
+}
+
 // Shared presentation and keyboard behavior for repository, user, and bundle pickers.
-// Subclasses provide choices and labels; consumers own data and selection.
+// Subclasses provide labels and, beyond a plain search, choices; consumers
+// own data and selection.
 export class SearchableSelector extends LitElement {
   static properties = {
     options: { attribute: false }, value: { attribute: false },
@@ -168,6 +178,7 @@ export class SearchableSelector extends LitElement {
     </div>`
   }
 
+  choices() { return matchingChoices(this.options, this._query) }
   // The menu's least width, wider where it lists facets beside the options.
   get menuWidth() { return 360 }
   optionIcon(option) { return option.initials ? html`<span class="avatar" aria-hidden="true">${option.initials}</span>` : nothing }

@@ -1,33 +1,19 @@
-// Hydrate the supported-formats list on the empty drop-zone with
-// the same SVG markup the sidebar uses for its row icons. Stasis
-// uses its own logo directly in index.html, only on the landing page.
-// `index.html` ships empty
-// `<span class="drop-supported-icon" data-icon="…">` placeholders
-// keyed by bucket name; this module looks each one up and writes
-// the SVG via innerHTML. Single source of truth: report-bucket
-// stickers from `view/file-display.js`, bundle + workspace glyphs
-// from `view/icons.js` (both also feed the sidebar rows). Purely
-// informational, so no Lit component — a one-shot DOM populate at
-// boot is enough.
-
+// Hydrate the drop zone's supported-formats list: index.html's empty
+// `<span class="drop-supported-icon" data-icon="…">` placeholders get the
+// glyphs the sidebar rows draw (the report stickers and links glyph of
+// file-display.js, the bundle / workspace glyphs of icons.js), once at boot.
+// Stasis has its own logo in index.html.
 import { render } from 'lit'
 import { FILE_ICONS } from './file-display.js'
-import { BUNDLE_ICON_SVG, GITHUB_ICON_SVG, LINKS_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, GITHUB_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 import { sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
 import { trustedHTML } from './trusted-types.js'
 
-// `data-icon` value → raw SVG string. Sourcemaps keep the generic
-// bundle glyph shared with the sidebar.
+// `data-icon` → raw SVG. Sourcemaps keep the generic bundle glyph.
 const ICONS = {
-  'default': FILE_ICONS.default,
-  'claude-security': FILE_ICONS['claude-security'],
-  'codex-security': FILE_ICONS['codex-security'],
-  'deepsec': FILE_ICONS.deepsec,
-  'piolium': FILE_ICONS.piolium,
-  'markdown-generic': FILE_ICONS['markdown-generic'],
+  ...FILE_ICONS,
   'bundle': BUNDLE_ICON_SVG,
   'workspace': WORKSPACE_ICON_SVG,
-  'links': LINKS_ICON_SVG,
   'github': GITHUB_ICON_SVG,
 }
 

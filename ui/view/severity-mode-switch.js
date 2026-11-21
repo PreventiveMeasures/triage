@@ -1,25 +1,14 @@
-// `<severity-mode-switch>` — Corrected / Original segmented toggle for the
-// findings toolbar. Flips `state.severityMode`, the global lens through
-// which every finding's severity is displayed, counted, sorted, and
-// filtered (the one accessor is `displayedSeverity` in view/format.js).
-//
-// Unlike `<source-filter>` (a Set with a toggle-off "neither" state), this
-// is a single-string mode like `viewMode` — one of the two chips is ALWAYS
-// active, so there's no empty state. 'corrected' is the default.
-//
-// Reactivity: extends StateElement, so the active chip follows
-// `state.severityMode` mutations on its own. Light DOM (no shadow root) so
-// the `severity-mode-switch` rules in toolbar.css apply directly.
-//
-// Click dispatches a composed `severity-mode-change(detail: { mode })`;
-// events.js sets `state.severityMode`, persists it to localStorage, and
-// full-renders (the mode changes badges, chip counts, sort order, and the
-// header status bar — not just the badges).
+// `<severity-mode-switch>` — the findings toolbar's Corrected / Original
+// toggle for `state.severityMode`, the lens every severity is displayed,
+// counted, sorted and filtered through (`displayedSeverity` in format.js).
+// One chip is always active. Light DOM, for toolbar.css; a click emits
+// `severity-mode-change`, which events.js persists and full-renders.
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 import { ensureHostAria } from './host-aria.js'
+import { emit } from './emit.js'
 
 const MODES = [
   ['corrected', 'Corrected', 'Show corrected severities (application-specific re-ratings)'],
@@ -49,12 +38,7 @@ class SeverityModeSwitch extends StateElement {
   }
 
   _select(mode) {
-    if (mode === state.severityMode) return
-    this.dispatchEvent(new CustomEvent('severity-mode-change', {
-      detail: { mode },
-      bubbles: true,
-      composed: true,
-    }))
+    if (mode !== state.severityMode) emit(this, 'severity-mode-change', { mode })
   }
 }
 

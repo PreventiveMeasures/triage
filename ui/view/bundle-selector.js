@@ -1,6 +1,6 @@
 import { css, html, nothing } from 'lit'
 import { appMarkup } from './markup.js'
-import { SearchableSelector } from './searchable-selector.js'
+import { SearchableSelector, matchingChoices } from './searchable-selector.js'
 import { BUNDLE_ICON_SVG, NPM_ICON_SVG } from './icons.js'
 import { sourceMetrics } from '../scan/metrics.js'
 
@@ -101,10 +101,7 @@ class BundleSelector extends SearchableSelector {
   }
 
   choices() {
-    const words = this._query.normalize('NFKC').toLocaleLowerCase().trim().split(/\s+/u).filter(Boolean)
-    const matching = this.options.filter(option => words.every(word => `${option.label} ${option.detail}`.normalize('NFKC').toLocaleLowerCase().includes(word)))
-    const options = this.versions ? matching : matching.toSorted((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' }))
-    return { pinned: [], sections: [{ label: null, options }], facets: [], showFacets: false, count: options.length, total: this.options.length }
+    return matchingChoices(this.options, this._query, { text: option => `${option.label} ${option.detail}`, sorted: !this.versions })
   }
 }
 

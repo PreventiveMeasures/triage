@@ -1,3 +1,5 @@
+import { matchingChoices } from './searchable-selector.js'
+
 // Each user as a choice, by the name they chose and their login under it.
 // Its value is `user.id`, and its avatar the user `user.userId` names where it
 // is given (null for one with none, as a legacy login has), else `user.id`.
@@ -12,10 +14,7 @@ export function userOptions(users) {
   })
 }
 
+// The reset option, if any, stays pinned above the users matching `query`.
 export function userChoices(options, query) {
-  const words = query.normalize('NFKC').toLocaleLowerCase().trim().split(/\s+/u).filter(Boolean)
-  const users = options.filter(option => !option.reset)
-  const visible = users.filter(option => words.every(word => option.label.normalize('NFKC').toLocaleLowerCase().includes(word)))
-    .toSorted((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base', numeric: true }))
-  return { pinned: options.filter(option => option.reset), sections: [{ label: null, options: visible }], facets: [], showFacets: false, count: visible.length, total: users.length }
+  return matchingChoices(options.filter(option => !option.reset), query, { pinned: options.filter(option => option.reset) })
 }
