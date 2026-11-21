@@ -81,6 +81,7 @@ export {
   isEncryptionEnabled,
   isPasskeyEnvironmentSupported,
   isUnlocked,
+  isWipingInThisTab,
   onVaultStateChange,
   unlockEncryption,
   wipeAllVaultData,
