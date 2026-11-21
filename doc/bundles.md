@@ -143,9 +143,9 @@ Every read of a repository must pass both gates, each time:
 
 ## Repository risk scan
 
-Admins open the scan from Manage's **Risk** tab.
+Admins open the scan from Manage's **Risk** tab, which opens on choosing a team, one click from a team's scan or every repository's.
 It reads the npm, pnpm and Yarn 1 lockfiles of every active repository at its default branch's head, and can be limited to one team or one repository.
-Each scope has its own page: `/manage/risk/all`, `/manage/risk/team/:team` and `/manage/risk/repository/:repoId`.
+Each scope has its own page: `/manage/risk/all`, `/manage/risk/team/:team` and `/manage/risk/repository/:repoId`, and `/manage/risk/team` and `/manage/risk/repository` to choose one.
 For a team, it reads only the lockfiles in the team's directories and the directories above them, since a workspace's root lockfile installs their packages too.
 It reads with the admin's own GitHub access through the same gates as browsing, and checks them again before it shows each repository.
 Closing the page, going back or forward to another scope's page, or leaving the response idle for 5 minutes, stops the scan.

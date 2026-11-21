@@ -1717,7 +1717,7 @@ export async function navigateToAdminPage(view, options = {}) {
 
 // The scope Risk opens on: the one `options` names, else, where it `keep`s
 // one and Risk is shown already, the one it shows, so its tab clicked there
-// keeps it; none opens All.
+// keeps it; none opens a team to choose.
 function riskRoute(view, options, { keep = false } = {}) {
   if (view !== 'manage-repo-risk') return {}
   const { riskScope, riskTarget } = keep && options.riskScope == null && state.currentView === view ? state.riskSelection ?? {} : options

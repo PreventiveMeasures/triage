@@ -286,11 +286,11 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     if (changed.has('selection') || changed.has('_choices') && this._awaiting) this._follow()
   }
 
-  // The scope the route names: a team by its slug, a repository by its id,
-  // each once _choices list it. Another than the one scanning stops the
-  // scan, as leaving the page does.
+  // The scope the route names, a team to choose where it names none: a team
+  // by its slug, a repository by its id, each once _choices list it. Another
+  // than the one scanning stops the scan, as leaving the page does.
   _follow() {
-    const { riskScope: scope = 'all', riskTarget: target = null } = this.selection ?? {}
+    const { riskScope: scope = 'team', riskTarget: target = null } = this.selection ?? {}
     const listed = target == null ? null : scope === 'team' ? this._choices?.teams?.filter(team => team.slug === target).map(team => team.id)
       : this._choices?.repos?.filter(repo => repo.repoId === target).map(repo => String(repo.repoId))
     const id = listed?.length === 1 ? listed[0] : ''

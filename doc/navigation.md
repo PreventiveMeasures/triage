@@ -96,7 +96,7 @@ Build the UI with `pnpm build` before starting a managed or combined server.
 | `/my/{profile,reviews}` | Profile and linked GitHub accounts, My reviews |
 
 On bundle, repository and npm version pages, `…/code/:file` opens Code at a file, and `…/compare[/:other[/code]]` opens Compare with another bundle, commit or version.
-Older names still open: `/diff` opens Code, `history` opens Commits, `/manage/code/` links open the `/repo/` page, and `/manage/risk` and `/manage/repositories/risk` open `/manage/risk/all`.
+Older names still open: `/diff` opens Code, `history` opens Commits, `/manage/code/` links open the `/repo/` page, and `/manage/risk` and `/manage/repositories/risk` open `/manage/risk/team`.
 
 Teams, reports and bundles have persistent, server-assigned slugs: the last UUID component when it is unique, and otherwise the full ID.
 Finding IDs are percent-encoded as one path component, and a finding opens only under a team or report.

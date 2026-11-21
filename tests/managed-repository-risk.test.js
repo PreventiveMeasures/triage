@@ -851,8 +851,8 @@ test('a scan that fails as a whole throws once its lines are read', async () => 
 test('Risk is a manage page whose scopes are pages of their own: all, a team\'s by its slug, a repository\'s by its id, or one to choose', () => {
   const parse = path => parseManagedRoute(new URL(`https://triage.example${path}`))
   for (const [path, route] of [
-    ['/manage/risk/all', { view: 'manage-repo-risk' }],
-    ['/manage/risk/team', { view: 'manage-repo-risk', riskScope: 'team' }],
+    ['/manage/risk/all', { view: 'manage-repo-risk', riskScope: 'all' }],
+    ['/manage/risk/team', { view: 'manage-repo-risk' }],
     ['/manage/risk/team/a1b2c3d4', { view: 'manage-repo-risk', riskScope: 'team', riskTarget: 'a1b2c3d4' }],
     ['/manage/risk/repository', { view: 'manage-repo-risk', riskScope: 'repo' }],
     ['/manage/risk/repository/42', { view: 'manage-repo-risk', riskScope: 'repo', riskTarget: 42 }],
@@ -862,9 +862,9 @@ test('Risk is a manage page whose scopes are pages of their own: all, a team\'s 
   }
   assert.deepEqual(parse('/manage/risk/team/a1b2c3d4/'), { view: 'manage-repo-risk', riskScope: 'team', riskTarget: 'a1b2c3d4' }, 'a trailing slash')
   for (const path of ['/manage/risk', '/manage/repositories/risk']) {
-    assert.deepEqual(parse(path), { view: 'manage-repo-risk' }, `${path} opens All`)
+    assert.deepEqual(parse(path), { view: 'manage-repo-risk' }, `${path} opens a team to choose`)
   }
-  assert.equal(managedRoutePath({ view: 'manage-repo-risk', riskScope: 'all' }), '/manage/risk/all', 'All named or not')
+  assert.equal(managedRoutePath({ view: 'manage-repo-risk', riskScope: 'team' }), '/manage/risk/team', 'a team to choose, named or not')
   for (const path of ['/manage/risk/all/1', '/manage/risk/repo/1', '/manage/risk/repository/0', '/manage/risk/repository/x', '/manage/risk/team/a.b', '/manage/risk/team/a/b', '/manage/risk/organization']) {
     assert.equal(parse(path), null, path)
   }

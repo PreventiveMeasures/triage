@@ -681,7 +681,7 @@ const riskChoices = () => ({ teams: [{ id: 't1', slug: 'a1', name: 'One' }, { id
 // The page told of what changed, as Lit tells it.
 const told = (page, ...names) => page.willUpdate(new Map(names.map(name => [name, undefined])))
 
-test('the page scans the scope its route names: a team by its slug and a repository by its id, each once listed, saying where a link\'s isn\'t', () => {
+test('the page scans the scope its route names, a team to choose where it names none: a team by its slug and a repository by its id, each once listed, saying where a link\'s isn\'t', () => {
   const page = new (customElements.get('managed-admin-repo-risk'))()
   const follow = selection => { page.selection = selection; told(page, 'selection') }
   const shown = () => [page._scope, page._target, page._unlisted]
@@ -692,6 +692,8 @@ test('the page scans the scope its route names: a team by its slug and a reposit
   assert.deepEqual(shown(), ['team', 't2', null])
   follow({ riskScope: 'repo', riskTarget: 7 })
   assert.deepEqual(shown(), ['repo', '7', null])
+  follow({ riskScope: 'all' })
+  assert.deepEqual(shown(), ['all', '', null])
   follow({ riskScope: 'team' })
   assert.deepEqual(shown(), ['team', '', null], 'one to choose')
   follow({ riskScope: 'team', riskTarget: 'gone' })
@@ -700,8 +702,9 @@ test('the page scans the scope its route names: a team by its slug and a reposit
   follow({ riskScope: 'repo', riskTarget: 8 })
   assert.deepEqual(shown(), ['repo', '', 'repo'])
   assert.match(templateText(page.render()), /This link’s repository isn’t connected\. Choose a repository\./u)
+  follow({ riskScope: 'all' })
   follow(null)
-  assert.deepEqual(shown(), ['all', '', null], 'none names All')
+  assert.deepEqual(shown(), ['team', '', null], 'none names a team to choose')
   // Teams read again, the scope it shows stays.
   page._choose('team', 't1')
   page._choices = riskChoices()
