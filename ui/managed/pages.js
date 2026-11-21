@@ -465,16 +465,9 @@ class ManagedAdminRepos extends ManagedPage {
     const key = `repo-impact:${repo.id}`
     Object.assign(this, { _detail: repo, _reviewDraft: null, _actionError: null, _impact: this.appState.read(key) ?? null, _impactFresh: false, _impactLoading: true })
     this._resetRemoval()
-    this._impactRequest?.abort()
-    const request = new AbortController()
-    this._impactRequest = request
-    void this.appState.load(key, 'repository data', signal => fetchRepositoryImpact(repo.id, signal), {
-      signal: request.signal, apply: impact => { this._impact = impact },
-    }).then(impact => { if (!request.signal.aborted) this._impactFresh = true; return impact }).catch((err) => {
-      if (!request.signal.aborted && err?.name !== 'AbortError' && !this._impact) this._actionError = `Couldn't load repository data: ${err?.message ?? err}`
-    }).finally(() => {
-      if (this._impactRequest === request) this._impactLoading = false
-    })
+    void this._read('_impactRequest', key, 'repository data', signal => fetchRepositoryImpact(repo.id, signal), {
+      apply: impact => { this._impact = impact }, answered: () => { this._impactFresh = true }, settled: () => { this._impactLoading = false },
+      failed: err => { if (!this._impact) this._actionError = `Couldn't load repository data: ${err?.message ?? err}` } })
   }
 
   render() {
@@ -614,6 +607,7 @@ class ManagedAdminRepos extends ManagedPage {
 
   // One repository's change at a time (`_busy`), its failure shown as `Couldn't ${failure}: …`.
   async _act(repo, failure, work) {
+    if (this._busy != null) return
     this._busy = repo.id
     this._actionError = null
     try { await work() } catch (err) {
@@ -776,7 +770,6 @@ class ManagedAdminRepos extends ManagedPage {
   }
 
   async _saveDependencyReview(repo, setting) {
-    if (this._busy != null) return
     await this._act(repo, `save ${repo.fullName}'s dependency review`, async () => {
       const dependencyReview = await this.appState.mutate(() => setRepositoryDependencyReview(repo.id, setting, this._csrf), ['repos'])
       // Pull requests' dependencies read with their review before are read
@@ -808,7 +801,6 @@ class ManagedAdminRepos extends ManagedPage {
   }
 
   async _setActive(repo, active) {
-    if (this._busy != null) return
     const verb = active ? (repo.active === false ? 'reactivate' : 'add') : 'deactivate'
     await this._act(repo, `${verb} ${repo.fullName}`, async () => {
       await this.appState.mutate(() => selectRepository(repo.id, active, this._csrf), ['repos', 'reports', 'bundles', 'teams', 'users', 'history'])
@@ -905,13 +897,33 @@ class ManagedUploadsPage extends ManagedPage {
     return { items, filtered, count }
   }
 
-  _toolbar(count) {
+  // The page, its `intro` and drop `card` its subclass's.
+  _page(intro, card) {
     const { kind } = this.constructor
+    return html`
+      ${this._drop.overlay(`Drop ${kind}s to upload`)}
+      <div class="wrap">${this._nav()}
+        <h1 class="sr-only">${kind[0].toUpperCase()}${kind.slice(1)}s</h1>
+        <div class="page-intro">${intro}</div>
+        ${this._localImport.renderPanel(this._busy || !this._csrf)}
+        ${card}
+        ${this._body()}
+      </div>`
+  }
+
+  // Those shown, under the toolbar counting them (`_count`), as the subclass
+  // lists them (`_items`); or why there are none.
+  _body() {
+    const { kind, uploadCopy } = this.constructor
+    const { items, filtered, count } = this._filtered()
     return html`<div class="collection-toolbar" role="search">
       <input type="search" aria-label=${`Search ${kind}s`} placeholder=${`Search ${kind}s or repositories…`} .value=${this._query} @input=${e => { this._query = e.target.value }}>
       <select aria-label=${`${kind[0].toUpperCase()}${kind.slice(1)} visibility`} .value=${this._visibility} @change=${e => { this._visibility = e.target.value }}><option value="all">${`All ${kind}s`}</option><option value="visible">Visible to teams</option><option value="hidden">${`Hidden ${kind}s`}</option></select>
-      ${count}
-    </div>`
+      ${this._count(filtered, count)}
+    </div>
+      ${errorMessage(this._error)}
+      ${this._list(this._data, `Loading ${kind}s…`, () => filtered.length > 0 ? this._items(filtered)
+        : items.length === 0 ? emptyState(`No ${kind}s uploaded yet`, uploadCopy) : emptyState(`No matching ${kind}s`, 'Try a different search or visibility filter.'))}`
   }
 
   // `work`, its failure shown as `${failure}: …`.
@@ -1018,6 +1030,7 @@ class ManagedAdminReports extends ManagedUploadsPage {
   static setRepo = setReportRepo
   static locationFamilies = ['reports', 'repo-impact', 'history', 'scan-sources']
   static hintSource = 'report'
+  static uploadCopy = 'Drop a report here or browse files above.'
   static properties = { _preview: { state: true }, _previewLoading: { state: true } }
   static styles = [unsafeCSS(reportsStyles), unsafeCSS(locationStyles), unsafeCSS(commonStyles), unsafeCSS(localImportStyles)]
 
@@ -1045,24 +1058,15 @@ class ManagedAdminReports extends ManagedUploadsPage {
   _originRepo(origin, repos) { return origin.repoId != null && repos.find(repo => repo.repoId === origin.repoId) }
 
   render() {
-    return html`
-      ${this._drop.overlay('Drop reports to upload')}
-      <div class="wrap">${this._nav()}
-        <h1 class="sr-only">Reports</h1>
-        <div class="page-intro"><p class="intro">Upload reports. New reports stay hidden until you make them visible.</p>${this._localImport.renderAction()}</div>
-        ${this._localImport.renderPanel(this._busy || !this._csrf)}
-        <div class="drop-card">${this._drop.card('Upload reports', 'Drop files anywhere on this page.', this._busy)}</div>
-        ${this._data?.repoScopes?.length ? html`<p class="intro">Team paths: ${this._data.repoScopes.map(scope => `${this._data.repos.find(repo => repo.repoId === scope.repoId)?.fullName ?? scope.repoId}/${scope.path ?? ''}`).join(', ')}</p>` : nothing}
-        ${this._body()}
-      </div>`
+    return this._page(html`<p class="intro">Upload reports. New reports stay hidden until you make them visible.</p>${this._localImport.renderAction()}`,
+      html`<div class="drop-card">${this._drop.card('Upload reports', 'Drop files anywhere on this page.', this._busy)}</div>
+        ${this._data?.repoScopes?.length ? html`<p class="intro">Team paths: ${this._data.repoScopes.map(scope => `${this._data.repos.find(repo => repo.repoId === scope.repoId)?.fullName ?? scope.repoId}/${scope.path ?? ''}`).join(', ')}</p>` : nothing}`)
   }
 
-  _body() {
-    const { items: reports, filtered, count } = this._filtered()
-    return html`${this._toolbar(html`<span class="result-count" role="status">${this._data == null ? '… reports' : count}</span>`)}
-      ${errorMessage(this._error)}
-      ${this._list(this._data, 'Loading reports…', () => filtered.length > 0 ? html`<div class="report-list"><div class="report-list-head" aria-hidden="true"><span class="report-heading">Report</span><span>Repository</span><span>Uploaded by</span><span>Date</span><span class="size-heading">Size</span><span>Visibility</span><span class="actions-heading">Actions</span></div><ul class="reports">${filtered.map(report => this._row(report))}</ul></div>`
-        : reports.length === 0 ? emptyState('No reports uploaded yet', 'Drop a report here or browse files above.') : emptyState('No matching reports', 'Try a different search or visibility filter.'))}`
+  _count(_filtered, count) { return html`<span class="result-count" role="status">${this._data == null ? '… reports' : count}</span>` }
+
+  _items(reports) {
+    return html`<div class="report-list"><div class="report-list-head" aria-hidden="true"><span class="report-heading">Report</span><span>Repository</span><span>Uploaded by</span><span>Date</span><span class="size-heading">Size</span><span>Visibility</span><span class="actions-heading">Actions</span></div><ul class="reports">${reports.map(report => this._row(report))}</ul></div>`
   }
 
   _row(report) {
@@ -1106,22 +1110,17 @@ class ManagedAdminReports extends ManagedUploadsPage {
     const wasOpen = this._preview === report.id
     this._cancelPreview()
     if (wasOpen) return
-    const request = new AbortController()
-    this._previewRequest = request
-    const isCurrent = () => this._previewRequest === request && !request.signal.aborted
     const key = `report-preview:${report.id}`
     this._preview = report.id
     this._previewText = this.appState.read(key) ?? ''
     this._previewLoading = this.appState.read(key) === undefined ? report.id : null
-    try {
-      await this.appState.load(key, 'report preview', async signal => {
-        const res = await managedFetch(`/api/admin/reports/${encodeURIComponent(report.id)}`, { credentials: 'same-origin', signal })
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const text = await res.text()
-        return text.slice(0, 4000) + (text.length > 4000 ? '\n…' : '')
-      }, { signal: request.signal, apply: text => { this._previewText = text } })
-    } catch (err) { if (isCurrent() && err?.name !== 'AbortError' && !this._previewText) this._previewText = `Preview unavailable: ${err?.message ?? err}` }
-    finally { if (isCurrent()) this._previewLoading = null }
+    await this._read('_previewRequest', key, 'report preview', async signal => {
+      const res = await managedFetch(`/api/admin/reports/${encodeURIComponent(report.id)}`, { credentials: 'same-origin', signal })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const text = await res.text()
+      return text.slice(0, 4000) + (text.length > 4000 ? '\n…' : '')
+    }, { apply: text => { this._previewText = text }, settled: () => { this._previewLoading = null },
+      failed: err => { if (!this._previewText) this._previewText = `Preview unavailable: ${err?.message ?? err}` } })
   }
 
   async _delete(report) {
@@ -1167,6 +1166,7 @@ class ManagedAdminBundles extends ManagedUploadsPage {
   static setRepo = setBundleRepo
   static locationFamilies = ['bundles', 'teams', 'repo-impact', 'history', 'scan-sources']
   static hintSource = 'metadata'
+  static uploadCopy = 'Drop source archives here or browse files above.'
   static properties = {
     createRepoId: { attribute: false }, installTooltips: { attribute: false },
     _visibilityBusy: { state: true }, _deleting: { state: true }, _creating: { state: true },
@@ -1213,29 +1213,24 @@ class ManagedAdminBundles extends ManagedUploadsPage {
         @bundle-created=${event => this._emit('managed-bundle-open', event.detail)}></managed-create-bundle>
     </div>`
     }
-    return html`
-      ${this._drop.overlay('Drop bundles to upload')}
-      <div class="wrap">${this._nav()}
-        <h1 class="sr-only">Bundles</h1>
-        <div class="page-intro"><p class="intro">Source bundles for your repositories.</p><div class="bundle-actions">${this._localImport.renderAction()}<button type="button" class="local-import-toggle create-bundle-action" ?disabled=${!this._data} @click=${() => this._showCreate(true)}>Create</button></div></div>
-        ${this._localImport.renderPanel(this._busy || !this._csrf)}
-        <section class="drop-card" aria-label="Upload bundles">${this._drop.card('Upload source bundles', 'Drop source archives anywhere on this page.', this._busy)}</section>
-        ${this._body()}
-      </div>`
+    return this._page(html`<p class="intro">Source bundles for your repositories.</p><div class="bundle-actions">${this._localImport.renderAction()}<button type="button" class="local-import-toggle create-bundle-action" ?disabled=${!this._data} @click=${() => this._showCreate(true)}>Create</button></div>`,
+      html`<section class="drop-card" aria-label="Upload bundles">${this._drop.card('Upload source bundles', 'Drop source archives anywhere on this page.', this._busy)}</section>`)
   }
 
-  _body() {
-    const { items: bundles, filtered, count } = this._filtered()
+  // How many shown, of how many bytes, and how many of them unattached.
+  _count(filtered, count) {
     const loaded = this._data != null
     const unassigned = filtered.filter(bundle => bundle.repoId == null).length
     const bytes = filtered.reduce((sum, bundle) => sum + (Number.isFinite(bundle.byteSize) ? bundle.byteSize : 0), 0)
-    const groups = [...Map.groupBy(filtered, (bundle) => bundle.repoFullName || 'Unattached')].toSorted(([a], [b]) => a === 'Unattached' ? -1 : b === 'Unattached' ? 1 : a.localeCompare(b))
-    return html`${this._toolbar(html`<span class="summary result-count" role="status"><span>${loaded ? count : '… bundles'}</span><span>${loaded ? formatBytes(bytes) : '…'}</span>
+    return html`<span class="summary result-count" role="status"><span>${loaded ? count : '… bundles'}</span><span>${loaded ? formatBytes(bytes) : '…'}</span>
         ${!loaded || unassigned ? html`<span class="unassigned">${loaded ? `${unassigned} unattached` : '… unattached'}</span>` : nothing}
-      </span>`)}
-      ${errorMessage(this._error)}
-      ${this._list(this._data, 'Loading bundles…', () => filtered.length > 0 ? html`<div class="bundle-groups">${groups.map(([name, items]) => html`<section class="bundle-group"><div class="bundle-group-head"><strong>${name}</strong><span>${items.length} ${items.length === 1 ? 'bundle' : 'bundles'}</span></div><ul class="bundles">${items.map((b) => this._row(b))}</ul></section>`)}</div>`
-        : bundles.length > 0 ? emptyState('No matching bundles', 'Try a different search or visibility filter.') : emptyState('No bundles uploaded yet', 'Drop source archives here or browse files above.'))}`
+      </span>`
+  }
+
+  // By repository, the unattached first.
+  _items(bundles) {
+    const groups = [...Map.groupBy(bundles, (bundle) => bundle.repoFullName || 'Unattached')].toSorted(([a], [b]) => a === 'Unattached' ? -1 : b === 'Unattached' ? 1 : a.localeCompare(b))
+    return html`<div class="bundle-groups">${groups.map(([name, items]) => html`<section class="bundle-group"><div class="bundle-group-head"><strong>${name}</strong><span>${items.length} ${items.length === 1 ? 'bundle' : 'bundles'}</span></div><ul class="bundles">${items.map((b) => this._row(b))}</ul></section>`)}</div>`
   }
 
   _row(b) {
@@ -1424,19 +1419,13 @@ class ManagedAdminTeams extends ManagedPage {
             </span>`}
       </div>
       <div class="team-body">
-      <div class="sub">
-        <h3 class="sub-title">Repositories <span class="count">${team.repos.length}</span></h3>
-        ${team.repos.length === 0 ? html`<p class="muted ui-hint">No repositories linked.</p>`
-          : html`<ul class="links">${team.repos.map((r) => this._repoRow(team, r))}</ul>`}
-        ${this._addRepoRow(team)}
+      ${[['Repositories', team.repos, 'No repositories linked.', r => this._repoRow(team, r), this._addRepoRow(team)],
+        ['Members', team.members, 'No members.', m => this._memberRow(team, m), this._addMemberRow(team)]].map(([title, items, none, row, add]) => html`<div class="sub">
+        <h3 class="sub-title">${title} <span class="count">${items.length}</span></h3>
+        ${items.length === 0 ? html`<p class="muted ui-hint">${none}</p>` : html`<ul class="links">${items.map(row)}</ul>`}
+        ${add}
       </div>
-      <div class="sub">
-        <h3 class="sub-title">Members <span class="count">${team.members.length}</span></h3>
-        ${team.members.length === 0 ? html`<p class="muted ui-hint">No members.</p>`
-          : html`<ul class="links">${team.members.map((m) => this._memberRow(team, m))}</ul>`}
-        ${this._addMemberRow(team)}
-      </div>
-      ${this._npmScopes(team)}
+      `)}${this._npmScopes(team)}
       </div>
     </section>`
   }
@@ -1557,13 +1546,11 @@ class ManagedAdminTeams extends ManagedPage {
   }
 
   _addRepo(team, e) {
-    const row = e.target.closest('.add-row')
+    const input = e.target.closest('.add-row')?.querySelector('.add-repo-path')
     const repoId = this._repoChoices.get(team.id)
     if (!Number.isSafeInteger(repoId) || repoId <= 0) return
-    const path = row?.querySelector('.add-repo-path')?.value ?? ''
-    void this._post('/set-repo', { teamId: team.id, repoId, path }, () => {
+    void this._post('/set-repo', { teamId: team.id, repoId, path: input?.value ?? '' }, () => {
       this._repoChoices = withoutKey(this._repoChoices, team.id)
-      const input = row?.querySelector('.add-repo-path')
       if (input) input.value = ''
     })
   }

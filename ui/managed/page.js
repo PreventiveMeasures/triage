@@ -48,18 +48,26 @@ export class ManagedPage extends LitElement {
   // Keep the last successful result while refreshing. Late responses from an
   // older load or an unmounted page must never replace newer content.
   async _loadCollection(key, label, load, apply) {
-    this._loadRequest?.abort()
-    const request = new AbortController()
-    this._loadRequest = request
     this._loading = true
+    // Background errors use the host toast; only a first-load failure needs
+    // an inline empty/error state. Keep existing content and layout intact.
+    await this._read('_loadRequest', key, label, load, { apply, settled: () => { this._loading = false },
+      failed: err => { if (this.appState.read(key) === undefined) this._error = String(err?.message ?? err) } })
+  }
+
+  // `load`'s answers as `key` into `apply`, under the request held as `slot`
+  // until the next aborts and replaces it: then `answered`, or `failed` with
+  // its error, unless aborted; and `settled`, unless replaced.
+  async _read(slot, key, label, load, { apply, answered, failed, settled }) {
+    this[slot]?.abort()
+    const request = this[slot] = new AbortController()
     try {
       await this.appState.load(key, label, load, { signal: request.signal, apply })
+      if (!request.signal.aborted) answered?.()
     } catch (err) {
-      // Background errors use the host toast; only a first-load failure needs
-      // an inline empty/error state. Keep existing content and layout intact.
-      if (!request.signal.aborted && err?.name !== 'AbortError' && this.appState.read(key) === undefined) this._error = String(err?.message ?? err)
+      if (!request.signal.aborted && err?.name !== 'AbortError') failed(err)
     } finally {
-      if (this._loadRequest === request) this._loading = false
+      if (this[slot] === request) settled()
     }
   }
 
