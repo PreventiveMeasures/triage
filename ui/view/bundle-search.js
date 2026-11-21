@@ -1,28 +1,11 @@
-// `<bundle-search>` — the search bar atop the bundle Search tab: a
-// github-style, full-bundle code search. A lens-prefixed text input
-// (bound to `state.bundleSearchQuery`), an inline clear button shown
-// only while the query is non-empty, and two trailing modifiers — an
-// `Aa` case-sensitivity toggle (`state.bundleSearchCase`) and a `.*`
-// regular-expression toggle (`state.bundleSearchRegex`).
-//
-// Distinct from `<bundle-code-search>` (the Code tab's compact rail
-// filter): this drives the full-width Search tab, where every match
-// renders with its surrounding lines. The two keep separate query
-// state so typing in one never disturbs the other.
-//
-// Events (bubble + composed):
-//   * `search-input(detail: { kind: 'bundle-search', value })` — on
-//     native input and on clear click (value ''). events.js writes
-//     `state.bundleSearchQuery` and re-renders.
-//   * `bundle-search-regex-toggle` — on `.*` click. events.js flips
-//     `state.bundleSearchRegex` and re-renders.
-//   * `bundle-search-case-toggle` — on `Aa` click. events.js flips
-//     `state.bundleSearchCase` and re-renders.
-//
-// Both state reads happen inside render(), so the StateElement autorun
-// fires on either mutation. Lit reuses the `<input>` across re-renders
-// so the caret survives every keystroke; `live()` lets the external
-// resets (bundle change) push the cleared value back into the DOM.
+// `<bundle-search>`: the Search tab's bar, its query
+// (`state.bundleSearchQuery`) with a clear button while there is one, and
+// its `Aa` case (`state.bundleSearchCase`) and `.*` regular-expression
+// (`state.bundleSearchRegex`) toggles; its state is apart from the Code
+// rail's `<bundle-code-search>`. It emits `search-input` (`{ kind:
+// 'bundle-search', value }`), `bundle-search-regex-toggle` and
+// `bundle-search-case-toggle`, which events.js writes to state. `live()`
+// lets a reset (another bundle) clear the kept `<input>`.
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { live } from 'lit/directives/live.js'
@@ -80,35 +63,17 @@ class BundleSearch extends StateElement {
       </span>`
   }
 
-  _onInput = (e) => {
-    this._dispatchInput(e.target.value)
+  _emit(type, detail) {
+    this.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }))
   }
 
-  _onClear = () => {
-    this._dispatchInput('')
-  }
+  _onInput = (e) => { this._emit('search-input', { kind: 'bundle-search', value: e.target.value }) }
 
-  _dispatchInput(value) {
-    this.dispatchEvent(new CustomEvent('search-input', {
-      detail: { kind: 'bundle-search', value },
-      bubbles: true,
-      composed: true,
-    }))
-  }
+  _onClear = () => { this._emit('search-input', { kind: 'bundle-search', value: '' }) }
 
-  _onToggleRegex = () => {
-    this.dispatchEvent(new CustomEvent('bundle-search-regex-toggle', {
-      bubbles: true,
-      composed: true,
-    }))
-  }
+  _onToggleRegex = () => { this._emit('bundle-search-regex-toggle') }
 
-  _onToggleCase = () => {
-    this.dispatchEvent(new CustomEvent('bundle-search-case-toggle', {
-      bubbles: true,
-      composed: true,
-    }))
-  }
+  _onToggleCase = () => { this._emit('bundle-search-case-toggle') }
 }
 
 customElements.define('bundle-search', BundleSearch)

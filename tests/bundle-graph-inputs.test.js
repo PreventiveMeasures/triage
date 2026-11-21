@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
-import { bundleEntryPackages, bundleFlowEntries, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphReason } from '../ui/view/bundle-graph-inputs.js'
+import { bundleEntryPackages, bundleFlowEntries, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphReason } from '../ui/view/bundle-graph-inputs.js'
+import { bundleReasons as bundleGraphReasons } from '../common/bundle-reasons.js'
 import { bundlePkgOf } from '../common/bundle-pkg-of.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundlePackageDirs } from '../common/bundle-sources.js'

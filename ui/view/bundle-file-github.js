@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { appMarkup } from './markup.js'
 import { repoDirectory, reportRepoGithub } from '@preventive/report'
 import { bundleCommitHash } from '../../common/bundle-commit.js'
-import { bundleCommitTooltip } from './bundle-origin-links.js'
+import { bundleCommitTooltip, encodePath } from './bundle-origin-links.js'
 import { bundleSourcePackageInfo } from './bundle-source-package.js'
 import { moduleEcosystem } from './bundle-source-tree.js'
 import { isOwnSourcePath } from '../../common/bundle-pkg-of.js'
@@ -13,7 +13,7 @@ function fileLink(github, directory, file, commit, pkg) {
   const path = [directory, file].filter(Boolean).join('/')
   const hash = bundleCommitHash(commit)
   return {
-    href: `https://github.com/${github}/blob/${hash ?? 'HEAD'}/${path.split('/').map(encodeURIComponent).join('/')}`,
+    href: `https://github.com/${github}/blob/${hash ?? 'HEAD'}/${encodePath(path)}`,
     github, path, commit: hash,
     package: typeof pkg?.name === 'string' && pkg.name ? { name: pkg.name, version: pkg.version, ecosystem: pkg.ecosystem } : null,
   }

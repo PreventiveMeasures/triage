@@ -1,35 +1,11 @@
-// `<bundle-code-search>` — the search row at the top of the Bundle
-// / Code rail: SVG-prefixed text input (bound to
-// `state.bundleCodeSearchQuery`), an inline clear button shown only
-// while the query is non-empty, and Files / Code / Issues / Largest mode tabs
-// (bound to `state.bundleCodeSearchMode`, which drives both the
-// filtered dataset and the input placeholder).
-//
-// One component, not two: the pieces share a single flex shell and
-// read each other's state (placeholder flips on mode change). The
-// host element IS that flex shell (element selector in report.css).
-//
-// Properties:
-//   * `modes` — array of available modes, parent-computed. `'issues'`
-//     is offered only when the bundle has issues to search, so the
-//     parent passes `['files','code','largest']` or
-//     `['files','code','issues','largest']`.
-//
-// Events (bubble + composed:true):
-//   * `search-input(detail: { kind: "bundle-code", value })` — on
-//     native `input` and on clear click (`value: ""`). events.js
-//     writes `state.bundleCodeSearchQuery` and re-renders.
-//   * `bundle-search-mode-change(detail.mode)` — on mode-tab click.
-//     events.js writes `state.bundleCodeSearchMode` and re-renders.
-//
-// Both state reads happen inside render(), so the StateElement
-// autorun fires on either mutation. Lit reuses the `<input>` across
-// re-renders so the caret survives every keystroke.
-//
-// Active-tab fallback: if the stored mode isn't in the parent-passed
-// `modes` (was on `'issues'`, switched to a bundle without issues),
-// render-bundle.js falls the rail body back to `'files'`, and the
-// mode-tab highlight has to follow or nothing reads as active.
+// `<bundle-code-search>`: the Code rail's search row, its query
+// (`state.bundleCodeSearchQuery`) with a clear button while there is one,
+// and the `modes` its parent offers (`issues` only where the bundle has
+// issues) as tabs (`state.bundleCodeSearchMode`, which picks the placeholder
+// too). A stored mode not offered reads as Files, as the rail falls back to.
+// It emits `search-input` (`{ kind: 'bundle-code', value }`) and
+// `bundle-search-mode-change` (`{ mode }`), which events.js writes to state.
+// Lit keeps the `<input>` across renders, so the caret survives typing.
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { live } from 'lit/directives/live.js'
@@ -116,28 +92,16 @@ class BundleCodeSearch extends StateElement {
       </span>` : nothing}`
   }
 
-  _onInput = (e) => {
-    this._dispatchInput(e.target.value)
+  _emit(type, detail) {
+    this.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }))
   }
 
-  _onClear = () => {
-    this._dispatchInput('')
-  }
+  _onInput = (e) => { this._emit('search-input', { kind: 'bundle-code', value: e.target.value }) }
 
-  _dispatchInput(value) {
-    this.dispatchEvent(new CustomEvent('search-input', {
-      detail: { kind: 'bundle-code', value },
-      bubbles: true,
-      composed: true,
-    }))
-  }
+  _onClear = () => { this._emit('search-input', { kind: 'bundle-code', value: '' }) }
 
   _selectMode(mode) {
-    this.dispatchEvent(new CustomEvent('bundle-search-mode-change', {
-      detail: { mode },
-      bubbles: true,
-      composed: true,
-    }))
+    this._emit('bundle-search-mode-change', { mode })
   }
 }
 
