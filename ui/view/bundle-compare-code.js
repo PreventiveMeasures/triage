@@ -10,6 +10,7 @@
 // delegate.
 import { LitElement, html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
+import { keyed } from 'lit/directives/keyed.js'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from './style-map.js'
@@ -213,9 +214,10 @@ const AFFECTS_LISTED = 5
 const affectedFiles = paths => (paths ? (paths.length > AFFECTS_LISTED ? `\nAffects files: ${paths.length.toLocaleString()}` : `\nAffects files:\n${paths.join('\n')}`) : '')
 
 const action = (label, run) => html`<button type="button" class="bundle-compare-code-action" @click=${run}>${label}</button>`
-// What a file shows in place of a diff, and what it offers.
-// A space between the parts after the first, as the built templates had.
-const message = (text, ...more) => html`<div class="bundle-compare-code-message"><p>${text}</p>${more.map((part, i) => i ? [' ', part] : part)}</div>`
+// What a file shows in place of a diff, and what it offers: a space between
+// the parts after the first, as the built templates had; drawn anew where
+// its `kind` changes, so a button pressed doesn't stay focused as another's.
+const message = (kind, text, ...more) => keyed(kind, html`<div class="bundle-compare-code-message"><p>${text}</p>${more.map((part, i) => i ? [' ', part] : part)}</div>`)
 const size = value => formatBytes(value ?? 0)
 // A file's size, or its two sides', by its kind of change.
 const sizes = (kind, before, after) => kind === 'added' ? size(after) : kind === 'removed' ? size(before) : `${size(before)} → ${size(after)}`
@@ -1124,7 +1126,7 @@ export class BundleCompareCode extends LitElement {
     const withRecorded = text => `${text}${recorded ? ` ${recorded}` : ''}`
     const same = withRecorded(kind === 'renamed' ? (recorded ? 'Renamed, its contents the same.' : 'Renamed without changes.') : 'The contents are the same.')
     // Its bytes the same (bundle-compare-diff.js): no diff to compute, however large.
-    if (textual && modified === false) return message(same)
+    if (textual && modified === false) return message('same', same)
     if (!textual) {
       if (kind === 'changed' && modified === false) {
         return html`<div class="bundle-compare-code-message">Binary file, its bytes the same · ${size(bundleFileByteLength(after))}. ${recorded}</div>`
@@ -1133,14 +1135,14 @@ export class BundleCompareCode extends LitElement {
         recorded ? ` ${recorded}` : ''}</div>`
     }
     if (large) {
-      return message(`This diff is large (${(countLines(before) + countLines(after)).toLocaleString()} lines across both sides) and may take a few seconds to compute.`,
+      return message('large', `This diff is large (${(countLines(before) + countLines(after)).toLocaleString()} lines across both sides) and may take a few seconds to compute.`,
         action('Show diff', () => { this._forced.add(path); this.requestUpdate() }))
     }
     const showRenames = action('Show renamed names', () => this._setRenames(false)), showTypes = action('Show type-only changes', () => this._setTypes(false))
     // Proven by the server to change types alone, what runs left as it was (type-only.js).
-    if (typesHidden) return message(withRecorded('Only types changed in this file.'), showTypes)
+    if (typesHidden) return message('types', withRecorded('Only types changed in this file.'), showTypes)
     if (changes?.status === 'loading' && prefs.ignoreRenames) return html`<div class="bundle-compare-code-message" aria-busy="true">Hiding renamed names…</div>`
-    if (changes?.status === 'error' && prefs.ignoreRenames) return message(`Couldn't hide renamed names: ${changes.message}`, showRenames)
+    if (changes?.status === 'error' && prefs.ignoreRenames) return message('renames', `Couldn't hide renamed names: ${changes.message}`, showRenames)
     if (model.blocks.length > 0) return null
     // Its printed copies the same, its texts not: its layout changed alone, the
     // copies each checked by the server to read as its text does.
@@ -1149,7 +1151,7 @@ export class BundleCompareCode extends LitElement {
     const renamed = !reformatted && hiding
     const hidden = [typesFolded && 'types', spaced && 'whitespace', renamed && 'renamed names'].filter(Boolean)
     const told = reformatted ? 'No actual code changes in this file.' : hidden.length > 0 ? `Only ${hidden.join(' and ')} changed in this file.` : null
-    return message(told ? withRecorded(told) : same,
+    return message('told', told ? withRecorded(told) : same,
       warned.length > 0 ? html`<p>${readsSaid(warned)}</p>` : nothing,
       reformatted ? action('Show as published', () => { state.bundleSourcePretty = false; this.requestUpdate() }) : nothing,
       typesFolded ? showTypes : nothing,
@@ -1607,13 +1609,16 @@ export class BundleCompareCode extends LitElement {
 
   _fold(row, lit) {
     const more = `Show ${EXPAND_STEP} more lines`, some = row.count > EXPAND_STEP
+    // A button showing more lines one way; Show all's is the row's own.
     const button = (change, label, tooltip, path) => html`<button type="button" aria-label=${label} data-tooltip=${tooltip} @click=${() => lit.expand(row.run, change)}>
           <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d=${path}></path></svg>
         </button>`
     return html`<div class="diff-row diff-fold" role="row">
       <span class="diff-fold-actions">
-        ${some && row.down ? button('top', `${more} below`, more, 'M8 3v9m-4-4 4 4 4-4') : nothing} ${some && row.up ? button('bottom', `${more} above`, more, 'M8 13V4M4 8l4-4 4 4') : nothing} ${
-          button('all', `Show all ${row.count} unchanged lines`, 'Show all', 'm4 6 4-4 4 4M4 10l4 4 4-4')}
+        ${some && row.down ? button('top', `${more} below`, more, 'M8 3v9m-4-4 4 4 4-4') : nothing} ${some && row.up ? button('bottom', `${more} above`, more, 'M8 13V4M4 8l4-4 4 4') : nothing} <button type="button" aria-label=${`Show all ${row.count} unchanged lines`} data-tooltip="Show all"
+          @click=${() => lit.expand(row.run, 'all')}>
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4-4 4 4M4 10l4 4 4-4"></path></svg>
+        </button>
       </span>
       <span class="diff-fold-label">${row.count.toLocaleString()} unchanged ${row.count === 1 ? 'line' : 'lines'} · ${row.b + 1}–${row.b + row.count}</span>
     </div>`

@@ -506,9 +506,7 @@ class RepositoryPulse extends Shown {
     // The year shown while a later one is read, said at the bar's end.
     const updating = shown?.answer.stats && (progress(shown.answer) !== null || shown.answer.pending)
     return html`<div class="history-bar">
-        ${activityPicker('pulse')}
-        ${modeButtons('Period', PERIODS, weeks, period => () => this.pick(period))}
-        ${shown ? html`<span class="pulse-range">${rangeName(shown.answer.since, now)}</span>` : nothing}
+        ${activityPicker('pulse')}${modeButtons('Period', PERIODS, weeks, period => () => this.pick(period))}${shown ? html`<span class="pulse-range">${rangeName(shown.answer.since, now)}</span>` : nothing}
         ${updating ? html`<span class="pulse-updating" role="status">${this.renderWaiting(shown, waitingTexts(shown.answer, true))}</span>` : nothing}
       </div>
       ${shown ? html`<div class=${`pulse-scroll${faded ? ' is-reading' : ''}`} aria-busy=${String(entry.status !== 'ready')}>${this.renderPulse(shown, now)}</div>`
@@ -673,14 +671,16 @@ class RepositoryPulse extends Shown {
     const [from, to, week] = columnSpan(column, answer.stats.contributors)
     const people = everyone ? periodContributors(answer.stats.contributors, from, to).slice(0, COLUMN_CONTRIBUTORS) : []
     const middle = (at + 0.5) / columns.length
-    // Its values, each its key's kind, figure and name.
-    const rows = [[apart.agents || apart.releases ? ' is-none' : '', number(column.commits), column.commits === 1 ? 'commit' : 'commits'],
-      ...apart.agents ? [['', number(column.agents), 'with agents']] : [], ...apart.releases ? [[' is-release', number(column.releases), column.releases === 1 ? 'release' : 'releases']] : [],
-      ...column.additions === null ? [] : [[' is-added', `+${number(column.additions)}`, 'added'], [' is-removed', `−${number(column.deletions)}`, 'removed']]]
     return html`<div class=${`pulse-tip${middle > 0.6 ? ' is-left' : ''}`} style=${styleMap({ '--x': `${middle}` })} aria-hidden="true">
       <span class="pulse-tip-when">${columnName(column, now)}${column.day ? column.from === today ? html` <span>today</span>` : nothing
-        : now < column.to ? html` <span>so far</span>` : nothing}</span>${rows.map(([key, value, name]) => html`
-      <span class="pulse-tip-row"><span class=${`pulse-tip-key${key}`}></span><strong>${value}</strong> ${name}</span>`)}
+        : now < column.to ? html` <span>so far</span>` : nothing}</span>
+      <span class="pulse-tip-row"><span class=${`pulse-tip-key${apart.agents || apart.releases ? ' is-none' : ''}`}></span><strong>${number(column.commits)}</strong> ${
+  column.commits === 1 ? 'commit' : 'commits'}</span>
+      ${apart.agents ? html`<span class="pulse-tip-row"><span class="pulse-tip-key"></span><strong>${number(column.agents)}</strong> with agents</span>` : nothing}
+      ${apart.releases ? html`<span class="pulse-tip-row"><span class="pulse-tip-key is-release"></span><strong>${number(column.releases)}</strong> ${column.releases === 1
+        ? 'release' : 'releases'}</span>` : nothing}
+      ${column.additions === null ? nothing : html`<span class="pulse-tip-row"><span class="pulse-tip-key is-added"></span><strong>+${number(column.additions)}</strong> added</span>
+        <span class="pulse-tip-row"><span class="pulse-tip-key is-removed"></span><strong>−${number(column.deletions)}</strong> removed</span>`}
       ${people.length > 0 ? html`<span class="pulse-tip-people">${week ? html`<span class="pulse-tip-note">Its week’s</span>` : nothing}
         ${people.map(person => html`<span class="pulse-tip-person">${contributor(person)}<strong>${number(person.commits)}</strong></span>`)}</span>` : nothing}
     </div>`
@@ -864,8 +864,7 @@ class RepositoryPulse extends Shown {
     const all = repo ? `https://github.com/${repo}/${items === 'pulls' ? 'pulls' : 'issues'}?q=${encodeURIComponent(`${search}${range}${by}`)}` : null
     const { who, to, scope } = narrowedWords(narrowing)
     return html`<section class="pulse-panel pulse-list" aria-label=${title}>
-      <div class="pulse-head"><h3>${title}</h3>${narrowing ? html`<span class="pulse-narrowed">${to}</span>` : nothing}
-        ${modeButtons(`${title} shown`, kinds.map(([name, label]) => [name, html`${label}<span class="n">${told?.[name] ? number(told[name].count) : '–'}</span>`]), kind,
+      <div class="pulse-head"><h3>${title}</h3>${narrowing ? html`<span class="pulse-narrowed">${to}</span>` : nothing}${modeButtons(`${title} shown`, kinds.map(([name, label]) => [name, html`${label}<span class="n">${told?.[name] ? number(told[name].count) : '–'}</span>`]), kind,
           name => () => this.showList(items, name))}
       </div>
       ${narrowing?.nobody ? html`<p class="pulse-note">${who}’s commits name no GitHub account to find their ${title.toLowerCase()} by.</p>`

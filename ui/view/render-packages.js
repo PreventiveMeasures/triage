@@ -100,8 +100,7 @@ export function entityRow(kind, { classes, key, version = nothing, name, label, 
   >
     <span class="packages-dot" style=${styleMap({ background: pkgColor(key) })}></span>
     <div class="packages-row-text">
-      ${name}
-      <span class="packages-row-meta">${plural(bucket.findings.length, 'finding')} · ${countsLine(bucket)}</span>
+      ${name}${kind === 'repository' ? ' ' : nothing}<span class="packages-row-meta">${plural(bucket.findings.length, 'finding')} · ${countsLine(bucket)}</span>
     </div>
     ${present.length > 0 ? html`<div class="packages-row-chips">
       ${present.map((s) => html`<span class=${`tree-count-chip ${s}`} data-tooltip=${s.replaceAll('_', ' ')}>${counts[s]}</span>`)}

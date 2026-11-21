@@ -30,6 +30,7 @@
 import { LitElement, html, render as litRender, nothing, svg } from 'lit'
 import { styleMap } from './style-map.js'
 import { classMap } from 'lit/directives/class-map.js'
+import { keyed } from 'lit/directives/keyed.js'
 import { bundleFileKinds, bundleFileSizes, bundlePackageDirs } from '../../common/bundle-sources.js'
 import { bundleScopes, scopeOptions } from '../../common/bundle-reasons.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
@@ -541,14 +542,15 @@ class BundleTreemap extends LitElement {
 
   // A cell: a directory's box (no package line: its children have theirs),
   // a capped directory's block, or a file. A directory's tooltip path ends
-  // in a slash.
+  // in a slash. A box and a block or file are never the same element, so one
+  // that turns into the other is drawn anew (and its tooltip with it).
   _cell(c) {
     const { node, kind } = c
     const dir = kind === 'dir'
     const block = kind !== 'file'
     const pos = { left: `${c.x}px`, top: `${c.y}px`, width: `${c.w}px`, height: `${c.h}px` }
     const { color, label } = dir ? {} : this._paint(node)
-    return html`<div
+    return keyed(dir, html`<div
       class=${`bundle-treemap-node bundle-treemap-${dir ? 'dir' : `leaf bundle-treemap-${kind}`}`}
       style=${styleMap(dir ? pos : { ...pos, background: color, color: readableTextOn(color) })}
       data-treemap-into=${block ? node.path : nothing}
@@ -557,7 +559,7 @@ class BundleTreemap extends LitElement {
       data-tt-pkg=${label ?? nothing}
       data-tt-color=${dir ? nothing : color}
       data-tt-meta=${nodeMeta(node, this._meta.total)}
-    ><span class=${dir ? 'bundle-treemap-dirname' : 'bundle-treemap-label'}>${kind === 'agg' ? `${node.name}/` : node.name}</span></div>`
+    ><span class=${dir ? 'bundle-treemap-dirname' : 'bundle-treemap-label'}>${kind === 'agg' ? `${node.name}/` : node.name}</span></div>`)
   }
 
   // A sunburst arc, the radial `_cell`. Every arc paints its hue, as rings

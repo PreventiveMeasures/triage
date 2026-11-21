@@ -67,12 +67,12 @@ const LANES = ['removed', 'added', 'changed']
 let _pendingSwap = null
 
 // A move from one version to another, `label` its words for screen readers,
-// the new one tinted by its `direction`, a `glyph` after it where given.
+// the new one tinted by its `direction`, a `glyph` after it (and a space
+// before it) where given.
 const versionMove = (label, from, to, direction, glyph = null) => html`<span class="bundle-compare-ver" aria-label=${label}>
       <span class="bundle-compare-ver-from">${from}</span>
       <span class="bundle-compare-ver-arrow" aria-hidden="true">→</span>
-      <span class=${`bundle-compare-ver-to ${direction}`}>${to}</span>
-      ${glyph ? html`<span class=${`bundle-compare-ver-dir ${direction}`} aria-hidden="true">${glyph}</span>` : nothing}
+      <span class=${`bundle-compare-ver-to ${direction}`}>${to}</span>${glyph ? [' ', html`<span class=${`bundle-compare-ver-dir ${direction}`} aria-hidden="true">${glyph}</span>`] : nothing}
     </span>`
 
 class BundleCompare extends LitElement {

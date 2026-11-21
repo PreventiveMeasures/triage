@@ -90,9 +90,10 @@ const REPORT_DT = 'application/x-deepview-report'
 const SOURCE_WS_DT = 'application/x-deepview-source-ws'
 const BUNDLE_DT = 'application/x-deepview-bundle'
 
-// The payload type mid-drag (null otherwise), whose Reports / Bundles header
-// shows as the detach target even with no unfiled row to sit above.
-let dragging = null
+// The payload types mid-drag, whose Reports / Bundles header shows as the
+// detach target even with no unfiled row to sit above. Each kind is held
+// apart: one whose dragend was lost stays until a dragend clears both.
+const dragging = new Set()
 
 // Section headers per report bucket, in render order. Named buckets carry
 // their producer's name (DeepSec is Vercel's tool, Piolium Vigolium's);
@@ -450,13 +451,13 @@ export async function renderSidebar({ revealSelection = false } = {}) {
     ${GROUP_ORDER.map((g) => {
       const list = buckets.get(g).toSorted(byReportName)
       const isDefault = g === 'default'
-      if (list.length === 0 && !(isDefault && dragging === REPORT_DT)) return null
+      if (list.length === 0 && !(isDefault && dragging.has(REPORT_DT))) return null
       return html`
         ${groupHeaderTemplate(GROUP_LABELS[g], isDefault)}
         ${list.map((n) => fileItemTemplate(n))}
       `
     })}
-    ${unfiledBundles.length > 0 || dragging === BUNDLE_DT ? html`<li class="file-group-header bundles-header" data-default-bundles="true">
+    ${unfiledBundles.length > 0 || dragging.has(BUNDLE_DT) ? html`<li class="file-group-header bundles-header" data-default-bundles="true">
     <span class="group-label">Bundles</span>
   </li>` : null}
     ${repeat(unfiledBundles, (b) => b.integrity, (b) => bundleItemTemplate(b))}
@@ -621,6 +622,7 @@ const SIDEBAR_CLICKS = [
     if (searchActive || el.disabled) return
     const team = el.dataset.teamSection !== undefined
     const id = team ? el.closest('[data-team-id]')?.dataset.teamId : el.closest('[data-workspace-id]')?.dataset.workspaceId
+    if (!id && !team) return
     if (id) (team ? teamSections : workspaceSections).toggle(id, team ? el.dataset.teamSection : el.dataset.workspaceSection)
     await renderSidebar()
   }],
@@ -676,7 +678,10 @@ const SIDEBAR_CLICKS = [
   }],
   ['[data-action="leave-workspace"]', leaveWorkspaceRow],
   // The dblclick rename intercepts before this fires.
-  ['.file-item.workspace-item[data-workspace-id]', (el) => openWorkspace(el.dataset.workspaceId)],
+  ['.file-item.workspace-item[data-workspace-id]', (el) => {
+    const id = el.dataset.workspaceId
+    if (id) openWorkspace(id)
+  }],
   // The same file again re-opens it from another view (Bundles, Files) into
   // its findings; 'links' already shows a links file's row.
   ['.file-item[data-file]', (el) => {
@@ -1054,9 +1059,10 @@ function onSidebarDragstart(e) {
   }
   const bundle = row.matches('[data-bundle-integrity]')
   const id = bundle ? row.dataset.bundleIntegrity : row.dataset.file
-  dragging = bundle ? BUNDLE_DT : REPORT_DT
+  const type = bundle ? BUNDLE_DT : REPORT_DT
+  dragging.add(type)
   e.dataTransfer.effectAllowed = 'move'
-  e.dataTransfer.setData(dragging, id)
+  e.dataTransfer.setData(type, id)
   e.dataTransfer.setData(SOURCE_WS_DT, row.dataset.workspaceId ?? '')
   e.dataTransfer.setData('text/plain', id)
   row.classList.add('dragging')
@@ -1066,8 +1072,8 @@ function onSidebarDragstart(e) {
 function onSidebarDragend() {
   for (const el of root.querySelectorAll('.dragging')) el.classList.remove('dragging')
   clearDragOver()
-  if (dragging) {
-    dragging = null
+  if (dragging.size > 0) {
+    dragging.clear()
     renderSidebar()
   }
 }

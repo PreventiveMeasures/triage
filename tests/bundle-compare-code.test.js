@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
+import { keyed } from 'lit/directives/keyed.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { computeFileHash } from '@preventive/report'
 import { renamedDiffs } from '@preventive/compare/names.js'
@@ -152,10 +153,13 @@ CompareCode.prototype.willUpdate = function (changed) {
   return willUpdate.call(this, changed)
 }
 
-// Template text with class maps spelled out, so rows can be matched by class.
+// Template text with class maps spelled out, so rows can be matched by class,
+// and what a `keyed` draws, its key aside.
+const KEYED = keyed(null, null)._$litDirective$
 function renderText(value) {
   if (Array.isArray(value)) return value.map(renderText).join('')
   if (value?.strings) return value.strings.map((text, i) => text + renderText(value.values[i])).join('')
+  if (value?._$litDirective$ === KEYED) return renderText(value.values[1])
   if (value?._$litDirective$) {
     const [first] = value.values
     if (first && typeof first === 'object' && !Array.isArray(first) && !first.strings) {

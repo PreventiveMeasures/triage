@@ -228,10 +228,8 @@ class RepositoryIssues extends Shown {
     const counted = which => counts ? html`<span class="n">${number(counts[which])}</span>` : nothing
     const shown = now ? filterIssues(now.items, this._filter) : []
     return html`<div class="history-bar issues-bar">
-        ${activityPicker(this.kind)}
-        ${modeButtons(this.kind === 'pulls' ? 'Pull requests' : 'Issues', [['open', html`Open${counted('open')}`], ['closed', html`Closed${counted('closed')}`]], listState,
-          picked => () => this.pick(picked))}
-        <input class="issues-filter" type="search" placeholder="Filter" aria-label=${`Filter the ${noun} read`} .value=${this._filter}
+        ${activityPicker(this.kind)}${modeButtons(this.kind === 'pulls' ? 'Pull requests' : 'Issues', [['open', html`Open${counted('open')}`], ['closed', html`Closed${counted('closed')}`]], listState,
+          picked => () => this.pick(picked), { spaced: true })}<input class="issues-filter" type="search" placeholder="Filter" aria-label=${`Filter the ${noun} read`} .value=${this._filter}
           @input=${event => { this._filter = event.target.value }}>
         ${now && this._filter.trim() ? html`<span class="history-summary">${shown.length} of ${now.items.length} read</span>` : nothing}
       </div>

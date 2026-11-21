@@ -182,7 +182,7 @@ class ExportViewDialog extends AppDialog {
 customElements.define('export-view-dialog', ExportViewDialog)
 
 // Takes the serialized Markdown, the text the download would write: what to
-// show is the caller's. Resolves on close, or when it can't show.
+// show is the caller's. Resolves, to nothing, on close, or when it can't show.
 export function openExportViewDialog(markdown) {
-  return openAppDialog('export-view-dialog', { markdown }, { conflict: () => undefined })
+  return openAppDialog('export-view-dialog', { markdown }, { conflict: () => undefined }).then(() => undefined)
 }

@@ -451,7 +451,7 @@ class RepositoryHistory extends Shown {
         ${activityPicker('commits')}
         ${mode === 'path' ? html`<span class="history-scope">Commits touching <code>${this.repository.path}</code></span>`
           : refused ? html`<span class="history-scope">Every branch needs your GitHub sign-in.</span>`
-          : modeButtons('Branches', [['all', 'All branches'], ['unmerged', 'Unmerged']], mode, picked => () => this.pick(picked))}
+          : modeButtons('Branches', [['all', 'All branches'], ['unmerged', 'Unmerged']], mode, picked => () => this.pick(picked), { spaced: true })}
         ${ready ? html`<span class="history-summary">${count}${branches > 0 ? ` on ${branches} branch${branches === 1 ? '' : 'es'}` : ''}</span>` : nothing}
       </div>
       ${ready ? this.renderCommits(mode, entry, more, layout, defaultBranch) : readingBody(entry, 'Reading the history…', () => rereadHistory(key))}`

@@ -465,7 +465,8 @@ function npmNewHostTag(hosts) {
   const { was } = hosts[0]
   const note = `${was ? `None of ${was}'s files` : 'No file of the version compared with'} named ${hosts.length === 1 ? 'it' : 'them'}`
   return html`<span class="npm-new-host" data-tooltip=${`${label}: ${hosts.map(({ host, line }) => `${host}, line ${line}`).join('; ')} · ${note}`}
-    .tooltipContent=${tipBox(label, tipFiles(hosts.map(({ host, line }) => [host, `line ${line}`])), note)}>${label}</span>`
+    .tooltipContent=${tipBox(label, html`<div class="compare-tip-rows is-files">${hosts.map(({ host, line }) => html`<span class="compare-tip-path">${host}</span><span class="compare-tip-said">line ${line}</span>`)}</div>`,
+    note)}>${label}</span>`
 }
 
 // Compare's files (bundle-compare.js `source.files`) as the Overview's: type
@@ -511,10 +512,12 @@ function scoreBadge(risk) {
   const said = raised.map(({ id, severity }) => [FINDING_LABELS.get(id) ?? id, severity])
   const note = lowered && said.length > 0 ? `Lowered by ${Math.round(lowered.by * 100)}%: out ${outFor(lowered.days)}${lowered.tier === null ? '' : `, its package npm's ${npmTierName(lowered.tier)} by downloads`}` : null
   const tooltip = [`Risk ${value} of 100`, ...said.length === 0 ? ['Nothing found that calls for a look'] : said.map(([label, severity]) => `${label}, ${severity}`), ...note ? [note] : []].join('\n')
-  return html`<li><span class=${`npm-extension npm-risk-score ${SCORE_TINTS[level]}`} data-tooltip=${tooltip} .tooltipContent=${tipBox(`Risk ${value} of 100`,
-    said.length === 0 ? html`<span class="compare-tip-none">Nothing found that calls for a look</span>`
-      : html`<div class="compare-tip-rows">${said.map(([label, severity]) => html`<span class="npm-risk-finding">${label}</span><span class=${`compare-tip-said npm-risk-severity sev-${severity}`}>${severity}</span>`)}</div>`,
-    note)}>${socketGauge(value)}<span>Risk</span><span class="npm-extension-count">${value}</span></span></li>`
+  return html`<li><span class=${`npm-extension npm-risk-score ${SCORE_TINTS[level]}`} data-tooltip=${tooltip} .tooltipContent=${html`<div class="compare-tip">
+      <div class="compare-tip-head">Risk ${value} of 100</div>
+      ${said.length === 0 ? html`<span class="compare-tip-none">Nothing found that calls for a look</span>`
+        : html`<div class="compare-tip-rows">${said.map(([label, severity]) => html`<span class="npm-risk-finding">${label}</span><span class=${`compare-tip-said npm-risk-severity sev-${severity}`}>${severity}</span>`)}</div>`}
+      ${note ? html`<div class="compare-tip-note">${note}</div>` : nothing}
+    </div>`}>${socketGauge(value)}<span>Risk</span><span class="npm-extension-count">${value}</span></span></li>`
 }
 
 // What calls for a look at a version as the server's risk tells it, chips
@@ -716,9 +719,9 @@ function listBadge(classes, label, rows, said, value = null, open = null, labell
 }
 
 // A chip with a styled tooltip (`tip`, `tooltip` its text): a button where
-// `click` opens what it says (`popup` the kind it opens), else a span.
-const tipChip = (classes, tooltip, tip, content, click = null, popup = nothing) => click
-  ? html`<li><button type="button" class=${`npm-extension ${classes}`} aria-haspopup=${popup}
+// `click` opens what it says, else a span.
+const tipChip = (classes, tooltip, tip, content, click = null) => click
+  ? html`<li><button type="button" class=${`npm-extension ${classes}`}
     data-tooltip=${tooltip}
     .tooltipContent=${tip} @click=${click}>${content}</button></li>`
   : html`<li><span class=${`npm-extension ${classes}`}
@@ -788,7 +791,9 @@ function advisoriesBadge(sides, affecting) {
   sides.length > 1 ? `${brought} new · ${fixed} fixed` : null)
   const text = `Advisories affecting ${sides.map(({ version }, i) => `${version}: ${affecting[i].length}`).join(', ')}`
   const content = html`<span>Advisories</span><span class="npm-extension-count">${fromTo(was.length, now.length)}</span>`
-  return tipChip(`npm-compare-advisories ${tint}`, text, tooltip, content, sides.length > 1 ? () => openCompareAdvisories(sides, affecting) : null, 'dialog')
+  return sides.length > 1 ? html`<li><button type="button" class=${`npm-extension npm-compare-advisories ${tint}`} aria-haspopup="dialog"
+    data-tooltip=${text} .tooltipContent=${tooltip} @click=${() => openCompareAdvisories(sides, affecting)}>${content}</button></li>`
+    : html`<li><span class=${`npm-extension npm-compare-advisories ${tint}`} data-tooltip=${text} .tooltipContent=${tooltip}>${content}</span></li>`
 }
 
 // A tooltip's `[name, value, flagged]` lines, `name: value`, bold where flagged, muted where none.
@@ -798,8 +803,7 @@ const tipLines = lines => html`<span class="compare-tip-lines">${lines.map(([nam
 // A styled tooltip: its `head`, its `body`, and a `note` under them where it has one.
 const tipBox = (head, body, note = null) => html`<div class="compare-tip">
   <div class="compare-tip-head">${head}</div>
-  ${body}
-  ${note ? html`<div class="compare-tip-note">${note}</div>` : nothing}
+  ${body}${note ? html`<div class="compare-tip-note">${note}</div>` : nothing}
 </div>`
 // Its rows of files (or hosts), `[path, said]` each.
 const tipFiles = rows => html`<div class="compare-tip-rows is-files">${rows.map(([path, said]) => html`<span class="compare-tip-path">${path}</span><span class="compare-tip-said">${said}</span>`)}</div>`

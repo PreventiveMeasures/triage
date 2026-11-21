@@ -164,10 +164,8 @@ class RepositoryAgents extends Shown {
     const picked = agentsOf(entry).includes(named) ? named : 'all'
     const shown = filterSessions(sessions, picked, this._filter)
     return html`<div class="history-bar issues-bar">
-        ${activityPicker('agents')}
-        ${modeButtons('Agents', [['all', html`All${counted('all')}`], ...agentsOf(entry).map(agent => [agent, html`${agentIcon(agent)}${agentName(agent)}${counted(agent)}`])],
-          picked, agent => () => this.pick(agent), agent => agent === 'all' ? nothing : `agent-pick is-${agent}`)}
-        <input class="issues-filter" type="search" placeholder="Filter" aria-label="Filter the sessions read" .value=${this._filter}
+        ${activityPicker('agents')}${modeButtons('Agents', [['all', html`All${counted('all')}`], ...agentsOf(entry).map(agent => [agent, html`${agentIcon(agent)}${agentName(agent)}${counted(agent)}`])],
+          picked, agent => () => this.pick(agent), { kindOf: agent => agent === 'all' ? nothing : `agent-pick is-${agent}`, spaced: true })}<input class="issues-filter" type="search" placeholder="Filter" aria-label="Filter the sessions read" .value=${this._filter}
           @input=${event => { this._filter = event.target.value }}>
         ${ready ? this.renderStats(entry) : nothing}
         ${ready ? readGauge(pullsReadShare(entry), `${entry.pulls.length} pull request${entry.pulls.length === 1 ? '' : 's'} read`, entry.loadingMore) : nothing}

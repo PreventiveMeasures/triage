@@ -158,9 +158,9 @@ export function readMore(entry, { held, ask, merge, error, repaint }) {
 
 // A group of buttons (`label`) picking one of `options` (each its value and
 // content), `picked`'s pressed; `click(value)` a button's click, `kindOf(value)`
-// its class.
-export const modeButtons = (label, options, picked, click, kindOf = () => nothing) => html`<div class="history-modes" role="group" aria-label=${label}>${options.map(([value,
-  content]) => html`<button type="button" class=${kindOf(value)} aria-pressed=${String(value === picked)} @click=${click(value)}>${content}</button>`)}</div>`
+// its class; `spaced`, a space between the first and second, as some had.
+export const modeButtons = (label, options, picked, click, { kindOf = () => nothing, spaced = false } = {}) => html`<div class="history-modes" role="group" aria-label=${label}>${
+  options.map(([value, content], at) => html`${spaced && at === 1 ? ' ' : nothing}<button type="button" class=${kindOf(value)} aria-pressed=${String(value === picked)} @click=${click(value)}>${content}</button>`)}</div>`
 
 // A list's button reading its next page (`more`), and why the last failed.
 export const moreButton = (entry, more, label, kind = 'history-more') => entry.more || entry.moreError ? html`<div class=${kind}>

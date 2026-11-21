@@ -316,7 +316,7 @@ test('a week, each day\'s figures written on it, today\'s named; the commits age
   const axis = text.match(/class=pulse-axis is-each aria-hidden="true">[^]*?<\/div>/u)[0]
   assert.deepEqual([...axis.matchAll(/>([^<]+)<\/span>/gu)].map(([, label]) => label), ['Sun 11', 'Mon 12', 'Tue 13', 'Wed 14', 'Thu 15', 'Fri 16', 'Sat 17'])
   assert.match(axis, /class=is-today>Thu 15</u)
-  assert.match(text, /<span class=pulse-tip-key is-none><\/span><strong>1<\/strong> commit<\/span>\s*<span class="pulse-tip-row"><span class=pulse-tip-key><\/span><strong>1<\/strong> with agents/u)
+  assert.match(text, /<span class=pulse-tip-key is-none><\/span><strong>1<\/strong> commit<\/span>\s*<span class="pulse-tip-row"><span class="pulse-tip-key"><\/span><strong>1<\/strong> with agents/u)
 })
 
 test('a contributor clicked: their commits alone in the plots, named over them, the rest of the contributors faded, whatever the period; again, or their name over the plots, everyone\'s', async t => {
@@ -408,7 +408,7 @@ test('releases apart: at the foot of each column\'s commits in their own color, 
   assert.match(columns[2], /aria-label=Tue, Oct 13: 1 commit, 1 with agents, 0 releases[^]*<span class=pulse-part style=--part: 1><\/span><\/span>/u)
   assert.match(columns[3], /<span class=pulse-part is-without style=--part: 1><\/span><\/span>/u)
   assert.match(columns[3], /^ role=img\s+aria-label=Wed, Oct 14:/u)
-  assert.match(text, /<span class=pulse-tip-key is-none><\/span><strong>1<\/strong> commit<\/span>[^]*<strong>0<\/strong> with agents[^]*<span class="pulse-tip-row"><span class=pulse-tip-key is-release><\/span><strong>1<\/strong> release<\/span>/u)
+  assert.match(text, /<span class=pulse-tip-key is-none><\/span><strong>1<\/strong> commit<\/span>[^]*<strong>0<\/strong> with agents[^]*<span class="pulse-tip-row"><span class="pulse-tip-key is-release"><\/span><strong>1<\/strong> release<\/span>/u)
   // Five commits, one a release: one of the other four with agents; the week
   // before's (Sunday to Thursday) five, one a release, none of the other four.
   assert.match(text, /With agents<\/span><\/span>\s*<span class="pulse-tile-value">25%<\/span>\s*<span class="pulse-tile-note">↑ from 0% the week before<\/span>\s*<span class="pulse-tile-note">1 of 4 commits, 1 release apart</u)

@@ -143,11 +143,11 @@ class WorkspaceShareLinkDialog extends PasswordDialog {
 
 customElements.define('workspace-share-link-dialog', WorkspaceShareLinkDialog)
 
-// Resolves on close; rejects when the dialog can't open.
+// Resolves, to nothing, on close; rejects when the dialog can't open.
 export function openWorkspaceShareLinkDialog({ id, name, privateKeyBase64 } = {}) {
   return openAppDialog('workspace-share-link-dialog', {
     workspaceId: id ?? '',
     initialName: name ?? '',
     privateKeyBase64: privateKeyBase64 ?? '',
-  }, { conflict: rejectStacked })
+  }, { conflict: rejectStacked }).then(() => undefined)
 }

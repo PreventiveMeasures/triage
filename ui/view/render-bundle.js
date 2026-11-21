@@ -1578,9 +1578,12 @@ function renderBundleSearchView(details, entry = null) {
 
 // One button of the bundle slide's tab strip, inert while an npm version
 // opens; `onTab` opening its tab where no bundle is shown to switch.
-const bundleTab = (key, label, tab, opening = false, onTab = null) => html`<button type="button" class=${classMap({ 'bundles-tab': true, active: tab === key })}
-  data-bundle-tab="${onTab ? nothing : key}" aria-selected=${String(tab === key)} role="tab" ?disabled=${!onTab && opening}
-  @click=${onTab ? () => { if (key !== tab) onTab(key) } : nothing}>${label}</button>`
+// Two templates, so a strip switching between them draws its buttons anew.
+const bundleTab = (key, label, tab, opening = false, onTab = null) => onTab
+  ? html`<button type="button" class=${classMap({ 'bundles-tab': true, active: tab === key })} aria-selected=${String(tab === key)} role="tab"
+    @click=${() => { if (key !== tab) onTab(key) }}>${label}</button>`
+  : html`<button type="button" class=${classMap({ 'bundles-tab': true, active: tab === key })}
+    data-bundle-tab="${key}" aria-selected=${String(tab === key)} role="tab" ?disabled=${opening}>${label}</button>`
 
 // The tabs an npm version shows, each `[key, label]`: Review where the reader
 // publishes dependency reviews to some team, as their session says (an

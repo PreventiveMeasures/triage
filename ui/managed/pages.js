@@ -903,11 +903,9 @@ class ManagedUploadsPage extends ManagedPage {
     return html`
       ${this._drop.overlay(`Drop ${kind}s to upload`)}
       <div class="wrap">${this._nav()}
-        <h1 class="sr-only">${kind[0].toUpperCase()}${kind.slice(1)}s</h1>
+        <h1 class="sr-only">${`${kind[0].toUpperCase()}${kind.slice(1)}s`}</h1>
         <div class="page-intro">${intro}</div>
-        ${this._localImport.renderPanel(this._busy || !this._csrf)}
-        ${card}
-        ${this._body()}
+        ${this._localImport.renderPanel(this._busy || !this._csrf)}${card}${this._body()}
       </div>`
   }
 
@@ -916,11 +914,12 @@ class ManagedUploadsPage extends ManagedPage {
   _body() {
     const { kind, uploadCopy } = this.constructor
     const { items, filtered, count } = this._filtered()
-    return html`<div class="collection-toolbar" role="search">
+    const toolbar = html`<div class="collection-toolbar" role="search">
       <input type="search" aria-label=${`Search ${kind}s`} placeholder=${`Search ${kind}s or repositories…`} .value=${this._query} @input=${e => { this._query = e.target.value }}>
       <select aria-label=${`${kind[0].toUpperCase()}${kind.slice(1)} visibility`} .value=${this._visibility} @change=${e => { this._visibility = e.target.value }}><option value="all">${`All ${kind}s`}</option><option value="visible">Visible to teams</option><option value="hidden">${`Hidden ${kind}s`}</option></select>
       ${this._count(filtered, count)}
-    </div>
+    </div>`
+    return html`${toolbar}
       ${errorMessage(this._error)}
       ${this._list(this._data, `Loading ${kind}s…`, () => filtered.length > 0 ? this._items(filtered)
         : items.length === 0 ? emptyState(`No ${kind}s uploaded yet`, uploadCopy) : emptyState(`No matching ${kind}s`, 'Try a different search or visibility filter.'))}`
@@ -1060,7 +1059,7 @@ class ManagedAdminReports extends ManagedUploadsPage {
   render() {
     return this._page(html`<p class="intro">Upload reports. New reports stay hidden until you make them visible.</p>${this._localImport.renderAction()}`,
       html`<div class="drop-card">${this._drop.card('Upload reports', 'Drop files anywhere on this page.', this._busy)}</div>
-        ${this._data?.repoScopes?.length ? html`<p class="intro">Team paths: ${this._data.repoScopes.map(scope => `${this._data.repos.find(repo => repo.repoId === scope.repoId)?.fullName ?? scope.repoId}/${scope.path ?? ''}`).join(', ')}</p>` : nothing}`)
+        ${this._data?.repoScopes?.length ? html`<p class="intro">Team paths: ${this._data.repoScopes.map(scope => `${this._data.repos.find(repo => repo.repoId === scope.repoId)?.fullName ?? scope.repoId}/${scope.path ?? ''}`).join(', ')}</p>` : nothing} `)
   }
 
   _count(_filtered, count) { return html`<span class="result-count" role="status">${this._data == null ? '… reports' : count}</span>` }

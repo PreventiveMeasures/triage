@@ -8,6 +8,7 @@
 // ahead of where it plays, as a video buffers, waiting where not read yet.
 // It plays as it opens, unless the reader asks for less motion.
 import { LitElement, html, nothing, svg } from 'lit'
+import { keyed } from 'lit/directives/keyed.js'
 import { fetchRepositoryChanges, fetchRepositoryTree } from './client-managed.js'
 import { activityPicker, activitySubtab, pickActivitySubtab, watchActivitySubtabs } from './repository-activity.js'
 import { githubOf, rereadHistory, revisionHistory, subjectLinks, unwatchHistories, watchHistories } from './repository-history.js'
@@ -715,9 +716,7 @@ class RepositoryReplay extends Shown {
       ? `${number(total)} commit${total === 1 ? '' : 's'} by ${number(people)}, ${day(replay.commits[0].committedAt)} – ${day(replay.commits.at(-1).committedAt)}${
         inPart ? ', drawn in part: more files than are read' : ''}` : ''
     return html`<div class="history-bar">
-        ${activityPicker('replay')}
-        ${modeButtons('Commits played', REPLAY_COUNTS.map(count => [count, `Last ${number(count)}`]), replay.count, count => () => this.pickCount(count))}
-        ${summary ? html`<span class="history-summary">${summary}</span>` : nothing}
+        ${activityPicker('replay')}${modeButtons('Commits played', REPLAY_COUNTS.map(count => [count, `Last ${number(count)}`]), replay.count, count => () => this.pickCount(count))}${summary ? html`<span class="history-summary">${summary}</span>` : nothing}
       </div>
       <div class="replay-stage">
         <canvas class="replay-canvas" role="img" aria-label=${last ? `The repository’s files as of ${day(last.committedAt)}, ${number(replay.next)} of ${number(total)} commits played`
@@ -763,14 +762,15 @@ class RepositoryReplay extends Shown {
 
   // What it waits for, over the canvas: its history read, how many commits
   // so far, what they change read, the next commit's; or why it can't play,
-  // and a button to read again.
+  // and a button to read again: drawn anew for each failure, so the alert
+  // is new and nothing keeps the focus of the last one's button.
   renderStatus(replay, history, buffered) {
-    const [failed, retry] = history?.entry.status === 'error' ? [history.entry.error, () => rereadHistory(history.key)]
-      : replay.error ? [replay.error, () => { replay.error = null; repaint() }]
-      : history?.entry.status === 'ready' && history.entry.moreError ? [history.entry.moreError, () => history.more()] : []
+    const [failure, failed, retry] = history?.entry.status === 'error' ? ['history', history.entry.error, () => rereadHistory(history.key)]
+      : replay.error ? ['replay', replay.error, () => { replay.error = null; repaint() }]
+      : history?.entry.status === 'ready' && history.entry.moreError ? ['more', history.entry.moreError, () => history.more()] : []
     if (retry) {
-      return html`<div class="replay-status is-error"><p role="alert">${failed}</p>
-        <button type="button" @click=${retry}>Retry</button></div>`
+      return keyed(failure, html`<div class="replay-status is-error"><p role="alert">${failed}</p>
+        <button type="button" @click=${retry}>Retry</button></div>`)
     }
     if (history) {
       const read = history.entry.status === 'ready' ? history.entry.commits.length : 0
