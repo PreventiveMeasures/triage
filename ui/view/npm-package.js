@@ -204,21 +204,15 @@ export function npmVersionList(name, signal = undefined) {
       private: data.private === true, teamScoped: data.teamScoped === true }))
 }
 
-function tagsByVersion(distTags = {}) {
-  const tags = new Map()
-  for (const [tag, version] of Object.entries(distTags)) tags.set(version, [...tags.get(version) ?? [], tag])
-  return tags
-}
-
 // A package's versions to pick from, newest first, `version` among them
 // however the list stands: `{ id, detail, date, age? }`, its dist-tags its
 // detail, and how long ago where too recently to trust yet.
 function versionChoices(list, version, now = Date.now()) {
-  const tags = tagsByVersion(list.distTags)
+  const tags = Map.groupBy(Object.entries(list.distTags ?? {}), ([, tagged]) => tagged)
   const versions = list.versions?.includes(version) ? list.versions : [version, ...list.versions ?? []]
   return versions.map(id => {
     const time = list.times?.[id]
-    return { id, detail: tags.get(id)?.join(', ') ?? '', ...time && { date: time.slice(0, 10) },
+    return { id, detail: tags.get(id)?.map(([tag]) => tag).join(', ') ?? '', ...time && { date: time.slice(0, 10) },
       ...time && npmRecentRelease(list, time, now) && { age: npmAge(time, now) } }
   })
 }
