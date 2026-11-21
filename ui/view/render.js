@@ -363,30 +363,35 @@ const anyCount = (counts, selected) => Object.values(counts).some((n) => n > 0) 
 // the end the export button, context filters and App lens. Row two: the
 // severity lens and chips, analyzer and repo dropdowns, mark colors and
 // the search with its "X of Y". Each control is offered only where it can
-// do something (`flags`, from renderImpl); the self-gating components
-// (`<triage-selector>`, `<download-button>`) go in unconditionally.
-function toolbarTemplate({ filteredCount, allCount, triageCounts, counts, colorCounts, analyzerSelect, repoOptions, flags }) {
-  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasIssue, hasFix, hasFlagged, hasDuplicates, hasCrossContext, hasAppStacked, showSecurity, showSeverityMode, revalidateOptions, showPartial, canDropLayer, canDetailLayer, canUpstreamLens, confirmedLocked } = flags
+// do something (what renderImpl found of the set); the self-gating
+// components (`<triage-selector>`, `<download-button>`) go in
+// unconditionally.
+function toolbarTemplate({ filteredCount, allCount, triageCounts, counts, colorCounts, analyzerSelect, repoOptions, showSource, hasAnyConfidence,
+  hasAnyPriority, treeAvailable, hasMultipleFiles, isKanban, hasComment, hasIssue, hasFix, hasFlagged, hasDuplicates, hasCrossContext, hasAppStacked, showSecurity,
+  hasCorrectedSeverity, revalidateOptions, showPartial, canDropLayer, canDetailLayer, canUpstreamLens, confirmedLocked }) {
   // Graph replaces the whole body with the graph2 canvas (see render()).
-  const viewModes = showGraphMode ? 'kanban,focus,table,list,grouped,graph' : 'kanban,focus,table,list,grouped'
+  const viewModes = treeAvailable ? 'kanban,focus,table,list,grouped,graph' : 'kanban,focus,table,list,grouped'
   // The confidence block shows for a range or an outcome to offer; an
   // unscored finding disables the range but leaves the outcome dropdown
   // usable (conf-filter.js). The App switch's stops: can-drop where taking
   // the layer off hands a ruled-out finding back, can-detail where the app
   // view folds rows or holds the partial line back; conflicts swap it for
-  // an inspection button.
+  // an inspection button. A workspace's stacked reports are where
+  // narrowing to one repo helps (a single report's repo is on the header
+  // chip); the severity lens shows while a correction exists, or while
+  // parked in 'original' so the reader can always flip back.
   return html`<div class="toolbar">
     <div class="toolbar-row">
       <view-mode-buttons modes=${viewModes}></view-mode-buttons>
       <findings-sort
-        ?show-file=${showFileSort}
-        ?show-confidence=${showConfidence}
-        ?show-priority=${showPriority}
+        ?show-file=${hasMultipleFiles}
+        ?show-confidence=${hasAnyConfidence}
+        ?show-priority=${hasAnyPriority}
       ></findings-sort>
       ${showSource ? html`<source-filter></source-filter>` : nothing}
-      ${!confirmedLocked && (showConfidence || revalidateOptions.length > 0)
+      ${!confirmedLocked && (hasAnyConfidence || revalidateOptions.length > 0)
         ? html`<conf-filter
-            ?range-disabled=${!showConfidence}
+            ?range-disabled=${!hasAnyConfidence}
             .revalidateOptions=${revalidateOptions}
             ?has-partial=${showPartial}
           ></conf-filter>`
@@ -394,7 +399,7 @@ function toolbarTemplate({ filteredCount, allCount, triageCounts, counts, colorC
       ${hasComment || hasIssue || hasFix || hasFlagged || state.filterComment || state.filterIssue || state.filterFix || state.filterFlagged
         ? html`<annotation-filter .hasComment=${hasComment} .hasIssue=${hasIssue} .hasFix=${hasFix} .hasFlagged=${hasFlagged}></annotation-filter>`
         : nothing}
-      ${kanbanMode ? nothing : html`<triage-selector .counts=${triageCounts}></triage-selector>`}
+      ${isKanban ? nothing : html`<triage-selector .counts=${triageCounts}></triage-selector>`}
       <div class="toolbar-end">
         <download-button></download-button>
         ${(!state.currentWorkspace && (hasDuplicates || state.filterDuplicates)) || hasCrossContext || hasAppStacked || showSecurity || state.filterCrossContext || state.filterAppStacked
@@ -411,7 +416,7 @@ function toolbarTemplate({ filteredCount, allCount, triageCounts, counts, colorC
       </div>
     </div>
     <div class="toolbar-row sev-row">
-      ${showSeverityMode ? html`<severity-mode-switch></severity-mode-switch>` : nothing}
+      ${hasCorrectedSeverity || state.severityMode === 'original' ? html`<severity-mode-switch></severity-mode-switch>` : nothing}
       ${anyCount(counts, state.filterSeverities) ? html`<severity-chips .counts=${counts}></severity-chips>` : nothing}
       ${analyzerSelect.shown
         ? html`<analyzer-select
@@ -421,7 +426,7 @@ function toolbarTemplate({ filteredCount, allCount, triageCounts, counts, colorC
             .groups=${analyzerSelect.groups}
           ></analyzer-select>`
         : nothing}
-      ${showRepo && repoOptions.length > 1 ? html`<repo-filter .options=${repoOptions}></repo-filter>` : nothing}
+      ${state.currentWorkspace && repoOptions.length > 1 ? html`<repo-filter .options=${repoOptions}></repo-filter>` : nothing}
       ${anyCount(colorCounts, state.filterColors) ? html`<triage-filter .counts=${colorCounts}></triage-filter>` : nothing}
       <div class="search-row">
         <toolbar-search kind="findings"></toolbar-search>
@@ -999,17 +1004,18 @@ export function render() {
 // An empty slot div for #report, for Lit to render a view into.
 const reportSlot = (id) => Object.assign(document.createElement('div'), { id })
 
-// #report's one slot div, reused across renders: Lit's part cache is keyed
-// on the container, so a fresh div would rebuild the whole DOM every render
+// #report's slot divs, reused across renders: Lit's part cache is keyed on
+// the container, so a fresh div would rebuild the whole DOM every render
 // (scroll lost, layout flashing). Replaced only on arrival from another view.
-function ensureReportSlot(id) {
-  let slot = document.querySelector(`#${id}`)
-  if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
-    slot = reportSlot(id)
-    report.replaceChildren(slot)
+function ensureReportSlots(...ids) {
+  let slots = ids.map((id) => document.querySelector(`#${id}`))
+  if (slots.some((slot) => !slot || !report.contains(slot)) || report.firstElementChild !== slots[0]) {
+    slots = ids.map(reportSlot)
+    report.replaceChildren(...slots)
   }
-  return slot
+  return slots
 }
+const ensureReportSlot = (id) => ensureReportSlots(id)[0]
 
 // A view painted whole into its slot of #report: `build()` its template
 // (none skips the paint), shown under `title`.
@@ -1038,6 +1044,37 @@ export function renderEmptyWorkspace() {
   const slot = ensureReportSlot('empty-workspace-slot')
   litRender(html`${headerTemplate([], [], false, null, 0)}<p class="workspace-content-empty">No findings available.</p>`, slot)
   showReport()
+}
+
+// The views painted whole into a slot of their own, by `state.currentView`:
+// paint()'s arguments off the state, or none where there is nothing to paint.
+const PAINTED_VIEWS = {
+  // A lockfile dropped in local or e2e mode (lockfile-drop.js), never saved.
+  lockfile: ({ droppedLockfile: lockfile }) => lockfile && ['dropped-lockfile-slot', () => renderDroppedLockfile(lockfile), `DeepView — ${lockfile.name}`],
+  reviews: () => ['dependency-reviews-slot', () => withCompare(() => html`<dependency-review-list .session=${state.managedSession}></dependency-review-list>`), 'DeepView — my reviews'],
+  profile: () => ['managed-profile-slot', () => html`<managed-profile .session=${state.managedSession} .linkError=${state.profileLinkError}></managed-profile>`, 'DeepView — profile'],
+  // The npm viewer's lookup page; a package it opens shows as a bundle, its
+  // header already while it opens, in the slot it then shows in.
+  npm: ({ npmOpening: opening }) => opening
+    ? ['bundles-slot', () => renderNpmOpening(opening), `DeepView — ${npmPackageInput(opening.name, opening.spec)}`]
+    : ['npm-slot', () => renderNpmLookup(), 'DeepView — npm packages'],
+  // A repository's directory opening, or why it didn't; once open it shows
+  // as a bundle, in the same slot.
+  'repository-code': ({ repositoryCodeOpening: opening }) =>
+    ['bundles-slot', () => opening && renderRepositoryCodeOpening(opening), `DeepView — ${opening?.repo ?? 'code'}`],
+  // Cross-report aggregations off the OPFS-wide finding index
+  // (bundle-finding-index.js), not `state.reports`.
+  packages: () => ['packages-slot', renderPackagesView, 'DeepView — packages'],
+  repositories: () => ['repositories-slot', renderRepositoriesView, 'DeepView — repositories'],
+  // A links file: which findings it ties together and which reports hold
+  // them (render-links.js). It carries no findings, so `state.reports` stays
+  // empty while it is up. The sync badge is built here, from the workspace /
+  // remote state this module holds: a links file is a workspace member
+  // like any other.
+  links: ({ currentLinks }) => currentLinks && ['links-slot', () => {
+    const preview = getLinksPreview()
+    return html`${renderLinksView(syncBadgeTemplate())}${preview ? kanbanDetailTemplate(preview.group, null, [], preview) : nothing}`
+  }, `DeepView — ${currentLinks.name}`],
 }
 
 // The managed admin pages, each a <managed-admin-*> element of the lazily
@@ -1312,15 +1349,12 @@ function renderImpl() {
   // value (group.js reads `state.showRevalidation` itself, as getMergedGroups
   // is reachable outside a render).
   const canDropLayer = configureReportRevalidation({ held: Boolean(managedDetailsFolded()) })
-  // The paint-only views, which need no loaded report.
-  // A lockfile dropped in local or e2e mode (lockfile-drop.js), never saved:
-  // gone, it leaves for the findings.
-  if (state.currentView === 'lockfile') {
-    if (state.droppedLockfile) {
-      return paint('dropped-lockfile-slot', () => renderDroppedLockfile(state.droppedLockfile), `DeepView — ${state.droppedLockfile.name}`)
-    }
-    state.currentView = 'findings'
-  }
+  // The paint-only views, which need no loaded report; one with nothing to
+  // paint leaves for the findings.
+  const painted = PAINTED_VIEWS[state.currentView]
+  const toPaint = painted?.(state)
+  if (toPaint) return paint(...toPaint)
+  if (painted) state.currentView = 'findings'
   if (['workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies'].includes(state.currentView)) {
     const kind = state.currentView.slice(10)
     const context = workspaceContent(state, listWorkspaces(), getKind)
@@ -1353,45 +1387,6 @@ function renderImpl() {
       document.title = npm ? `DeepView — ${npm.name}@${npm.version}` : repository ? `DeepView — ${repositoryCodeName(repository)}` : 'DeepView — bundles'
       return
     }
-  }
-  if (state.currentView === 'reviews') {
-    return paint('dependency-reviews-slot', () => withCompare(() => html`<dependency-review-list .session=${state.managedSession}></dependency-review-list>`), 'DeepView — my reviews')
-  }
-  if (state.currentView === 'profile') {
-    return paint('managed-profile-slot', () => html`<managed-profile .session=${state.managedSession} .linkError=${state.profileLinkError}></managed-profile>`, 'DeepView — profile')
-  }
-  // The npm viewer's lookup page; a package it opens shows as a bundle, its
-  // header already while it opens, in the slot it then shows in.
-  if (state.currentView === 'npm') {
-    const opening = state.npmOpening
-    return paint(opening ? 'bundles-slot' : 'npm-slot', () => opening ? renderNpmOpening(opening) : renderNpmLookup(),
-      opening ? `DeepView — ${npmPackageInput(opening.name, opening.spec)}` : 'DeepView — npm packages')
-  }
-  // A repository's directory opening, or why it didn't; once open it shows
-  // as a bundle, in the same slot.
-  if (state.currentView === 'repository-code') {
-    const opening = state.repositoryCodeOpening
-    return paint('bundles-slot', () => opening && renderRepositoryCodeOpening(opening), `DeepView — ${opening?.repo ?? 'code'}`)
-  }
-  // Cross-report aggregations off the OPFS-wide finding index
-  // (bundle-finding-index.js), not `state.reports`.
-  if (state.currentView === 'packages') return paint('packages-slot', renderPackagesView, 'DeepView — packages')
-  if (state.currentView === 'repositories') return paint('repositories-slot', renderRepositoriesView, 'DeepView — repositories')
-  // A links file: which findings it ties together and which reports hold
-  // them (render-links.js). It carries no findings, so `state.reports` stays
-  // empty while it is up. The sync badge is built here, from the workspace /
-  // remote state this module holds: a links file is a workspace member
-  // like any other. Without `currentLinks` it falls back to the findings.
-  if (state.currentView === 'links') {
-    if (state.currentLinks) {
-      return paint('links-slot', () => {
-        const preview = getLinksPreview()
-        return html`${renderLinksView(syncBadgeTemplate())}${
-          preview ? kanbanDetailTemplate(preview.group, null, [], preview) : nothing
-        }`
-      }, `DeepView — ${state.currentLinks.name}`)
-    }
-    state.currentView = 'findings'
   }
   // The optional local/E2E scan surface; its host owns navigation and transport.
   if (state.currentView === 'scan' && customElements.get('local-scan-page')) {
@@ -1642,15 +1637,8 @@ function renderImpl() {
 
   if (state.currentView === 'files') {
     const findingCounts = computeFindingCountsByFile(mergedGroups, state.severityMode)
-    // The slots are reused across renders, so Lit diffs the tree in place
-    // (scroll and expand state kept); rebuilt only on arrival.
-    let fHeader = document.querySelector('#header-slot')
-    let treeSlot = document.querySelector('#tree-view-slot')
-    if (!fHeader || !treeSlot || !report.contains(fHeader) || !report.contains(treeSlot)) {
-      fHeader = reportSlot('header-slot')
-      treeSlot = reportSlot('tree-view-slot')
-      report.replaceChildren(fHeader, treeSlot)
-    }
+    // Lit diffs the tree in place (scroll and expand state kept).
+    const [fHeader, treeSlot] = ensureReportSlots('header-slot', 'tree-view-slot')
     litRender(headerTpl, fHeader)
     litRender(treeData ? renderTreeView(treeData, findingCounts) : loadingTemplate('files'), treeSlot)
     showReport()
@@ -1662,131 +1650,71 @@ function renderImpl() {
   // spans the page); `.with-details` widens it for the table's list +
   // details, and graph mode lifts the cap for the canvas, which brings the
   // view-mode chooser into its own topbar instead of a toolbar above it.
-  const tableWithDetails =
-    state.viewMode === 'table' &&
-    state.tableSelectedGid &&
-    filtered.some((g) => groupKey(g) === state.tableSelectedGid)
+  const tableWithDetails = state.viewMode === 'table' && state.tableSelectedGid && filtered.some((g) => groupKey(g) === state.tableSelectedGid)
   let g2DataForBody = null
   if (state.viewMode === 'graph' && treeData && !detailsWaiting) {
     g2DataForBody = buildGraph2Data()
     // The tree gone since the gate above (a workspace switch race).
     if (!g2DataForBody) state.viewMode = 'kanban'
   }
-  const renderGraphInBody = !!g2DataForBody
-  let wrapperClass = 'findings-content'
-  if (tableWithDetails) wrapperClass += ' with-details'
-  if (renderGraphInBody) wrapperClass += ' with-graph'
-  if (isKanban) wrapperClass += ' with-kanban'
-  if (state.viewMode === 'focus') wrapperClass += ' with-focus'
-
-  let toolbarTpl = nothing
-  let emptyStateTpl = nothing
-  let bodyTemplate = nothing
+  const wrapperClass = ['findings-content', tableWithDetails && 'with-details', g2DataForBody && 'with-graph', isKanban && 'with-kanban',
+    state.viewMode === 'focus' && 'with-focus'].filter(Boolean).join(' ')
   const selectedGroup = findingDetailGroup(filtered, state, prevFocusedIdx)
   // Reset on every path, so a graph render can't reattach a stale list.
   pendingTableItems = null
 
-  if (!renderGraphInBody) {
-    toolbarTpl = toolbarTemplate({
-      filteredCount: filtered.length, allCount: allGroups.length, triageCounts, counts, colorCounts,
+  // Outside graph mode, the toolbar, the empty-state line and the body, by
+  // slot. The empty-state line, `typeLabel` (analyzer-controlled) escaped
+  // by Lit: an empty bucket of a load with findings says they were all
+  // triaged. Kanban sits out the filters line: each empty column says it
+  // already, and as a flex child of `.with-kanban` the line would push the
+  // board down whenever a filter empties the view.
+  const bodySlots = g2DataForBody ? null : {
+    'toolbar-slot': toolbarTemplate({
+      filteredCount: filtered.length, allCount: allGroups.length, triageCounts, counts, colorCounts, repoOptions,
       // Counts use the scope-filtered rows; the option lists stay stable so
       // values those filters exclude can still show zero.
       analyzerSelect: { shown: runFiltersShown, analyzers: analyzerOptions, models: modelOptions, validationModels: validationModelOptions, groups: scopeRows(allGroups) },
-      repoOptions,
-      flags: {
-        showSource,
-        showConfidence: hasAnyConfidence,
-        showPriority: hasAnyPriority,
-        showGraphMode: treeAvailable,
-        showFileSort: hasMultipleFiles,
-        kanbanMode: isKanban,
-        // A workspace's stacked reports are where narrowing to one repo
-        // helps; a single report's repo is on the header chip.
-        showRepo: !!state.currentWorkspace,
-        hasComment,
-        revalidateOptions,
-        showPartial,
-        canDropLayer,
-        canDetailLayer,
-        canUpstreamLens,
-        confirmedLocked,
-        hasIssue,
-        hasFix,
-        hasFlagged,
-        hasDuplicates,
-        hasCrossContext,
-        hasAppStacked,
-        showSecurity,
-        // While a correction exists, or while parked in 'original' so the
-        // reader can always flip back.
-        showSeverityMode: hasCorrectedSeverity || state.severityMode === 'original',
-      },
-    })
-    // The empty-state line, `typeLabel` (analyzer-controlled) escaped by Lit.
-    // An empty bucket of a load with findings says they were all triaged.
-    // Kanban sits out the filters line: each empty column says it already,
-    // and as a flex child of `.with-kanban` the line would push the board
-    // down whenever a filter empties the view.
-    if (state.shownTriage && allGroups.length === 0) {
-      emptyStateTpl = notice(MUTED, `No ${state.shownTriage} findings.`)
-    } else if (filtered.length === 0 && allGroups.length > 0 && !isKanban) {
-      emptyStateTpl = notice(MUTED, 'No findings match the current filters.')
-    } else if (allGroups.length === 0) {
-      emptyStateTpl = notice(GREEN, mergedGroups.length > 0 ? `All ${typeLabel} issues triaged.` : `No ${typeLabel} issues found.`)
-    }
-
-    bodyTemplate = treesLoading ? loadingTemplate('graph') : detailsWaiting === 'loading' ? loadingTemplate('findings')
-      : detailsWaiting ? html`<p class="triage-loading" role="status">${DETAILS_FAILED}</p>` : findingsBodyTemplate(filtered, selectedGroup, groupStates)
+      showSource, hasAnyConfidence, hasAnyPriority, treeAvailable, hasMultipleFiles, isKanban, hasComment, hasIssue, hasFix, hasFlagged, hasDuplicates,
+      hasCrossContext, hasAppStacked, showSecurity, hasCorrectedSeverity, revalidateOptions, showPartial, canDropLayer, canDetailLayer, canUpstreamLens, confirmedLocked,
+    }),
+    'empty-state-slot': state.shownTriage && allGroups.length === 0 ? notice(MUTED, `No ${state.shownTriage} findings.`)
+      : filtered.length === 0 && allGroups.length > 0 && !isKanban ? notice(MUTED, 'No findings match the current filters.')
+      : allGroups.length === 0 ? notice(GREEN, mergedGroups.length > 0 ? `All ${typeLabel} issues triaged.` : `No ${typeLabel} issues found.`)
+      : nothing,
+    'findings-body-slot': treesLoading ? loadingTemplate('graph') : detailsWaiting === 'loading' ? loadingTemplate('findings')
+      : detailsWaiting ? html`<p class="triage-loading" role="status">${DETAILS_FAILED}</p>` : findingsBodyTemplate(filtered, selectedGroup, groupStates),
   }
 
   // The chrome is rebuilt only when its shape changes (arrival from another
   // view, or into / out of graph mode); within a shape every render diffs
   // into the existing slots, so scroll, focus and the <finding-table>
   // survive without capture-restore.
+  const shape = bodySlots ? Object.keys(bodySlots) : ['findings-graph-slot']
   let headerSlot = document.querySelector('#header-slot')
   let wrapper = report.querySelector(':scope > .findings-content')
-  const hadGraphSlot = wrapper && wrapper.querySelector(':scope > #findings-graph-slot')
-  const hadBodySlot = wrapper && wrapper.querySelector(':scope > #findings-body-slot')
-  const wantedShape = renderGraphInBody ? 'graph' : 'body'
-  const haveShape = hadGraphSlot ? 'graph' : (hadBodySlot ? 'body' : null)
-  const shapeMatches = wrapper && haveShape === wantedShape
-  if (!headerSlot || !wrapper || !report.contains(headerSlot) || !report.contains(wrapper) || !shapeMatches) {
+  if (!headerSlot || !report.contains(headerSlot) || !wrapper?.querySelector(`:scope > #${shape.at(-1)}`)) {
     headerSlot = reportSlot('header-slot')
     wrapper = Object.assign(document.createElement('div'), { className: wrapperClass })
-    wrapper.append(...(renderGraphInBody
-      ? [reportSlot('findings-graph-slot')]
-      : [reportSlot('toolbar-slot'), reportSlot('empty-state-slot'), reportSlot('findings-body-slot')]))
+    wrapper.append(...shape.map(reportSlot))
     report.replaceChildren(headerSlot, wrapper)
   } else if (wrapper.className !== wrapperClass) {
     wrapper.className = wrapperClass
   }
 
   litRender(headerTpl, headerSlot)
-  // Always render into the slots present: `nothing` clears what the last
-  // render left there.
-  const toolbarSlot = document.querySelector('#toolbar-slot')
-  if (toolbarSlot) litRender(toolbarTpl, toolbarSlot)
-  const emptyStateSlot = document.querySelector('#empty-state-slot')
-  if (emptyStateSlot) litRender(emptyStateTpl, emptyStateSlot)
-  const bodySlot = document.querySelector('#findings-body-slot')
-  if (bodySlot) litRender(bodyTemplate, bodySlot)
-
-  // Graph mode: the canvas, the view-mode chooser as an extra row of its own
-  // topbar, and the triage counts tallied above (in the main bundle, so the
-  // lazy graph bundle stays free of `groupState` / `state`).
-  if (g2DataForBody) {
-    const graphSlot = document.querySelector('#findings-graph-slot')
-    if (graphSlot) {
-      const options = {
-        extraTopRow: html`<view-mode-buttons
-        modes="kanban,focus,table,list,grouped,graph"
-      ></view-mode-buttons>`,
-        triageCounts,
-        triageStates: ['inprogress', 'fixed', 'invalid', 'deleted', 'ignored'],
-      }
-      attachGraphLayout(graphSlot, g2DataForBody, options,
-        refreshGraph2Sidebar, refreshGraph2TopPkgs)
-    }
+  if (bodySlots) {
+    // Every slot drawn, `nothing` clearing what the last render left there.
+    for (const [id, template] of Object.entries(bodySlots)) litRender(template, document.querySelector(`#${id}`))
+  } else {
+    // Graph mode: the canvas, the view-mode chooser as an extra row of its
+    // own topbar, and the triage counts tallied above (in the main bundle,
+    // so the lazy graph bundle stays free of `groupState` / `state`).
+    attachGraphLayout(document.querySelector('#findings-graph-slot'), g2DataForBody, {
+      extraTopRow: html`<view-mode-buttons modes="kanban,focus,table,list,grouped,graph"></view-mode-buttons>`,
+      triageCounts,
+      triageStates: ['inprogress', 'fixed', 'invalid', 'deleted', 'ignored'],
+    }, refreshGraph2Sidebar, refreshGraph2TopPkgs)
   }
 
   // Hand the <finding-table> its rows and selection by property (object
