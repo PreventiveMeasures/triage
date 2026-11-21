@@ -38,9 +38,8 @@ import { refreshScanNavigation } from './scan-navigation.js'
 import { startIndexWalks } from './index-walks.js'
 import { beginViewNavigation, currentViewGeneration, deleteCurrent, deleteCurrentBundle, goHome, leaveWorkspace, persistLastBundle, resetForClientModeTransition, switchToFile, switchToManagedDeduplication, switchToManagedTeam, switchToWorkspace, switchToWorkspaceContent } from './ingest.js'
 import { reportWorkspaceFor } from './finding-link.js'
-import { exportWorkspace } from './workspace-export.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
-import { openDeleteBundleDialog, openDeleteReportDialog, openDetachBundleDialog, openDetachReportDialog, openLeaveWorkspaceDialog, openNewWorkspaceDialog, openPersistenceDegradedDialog, openWorkspaceShareLinkDialog } from './lazy-dialogs.js'
+import { openDeleteBundleDialog, openDeleteReportDialog, openDetachBundleDialog, openDetachReportDialog, openLeaveWorkspaceDialog, openNewWorkspaceDialog, openPersistenceDegradedDialog, openWorkspaceExportDialog, openWorkspaceShareLinkDialog } from './lazy-dialogs.js'
 // Up front, not in the dialogs' bundle (lazy-dialogs.js says why).
 import { openProxyAuthDialog } from './dialogs/proxy-auth-dialog.js'
 import { FILE_ICONS, displayName, groupOf, isLinksFile, reportGroup } from './file-display.js'
@@ -718,9 +717,10 @@ const SIDEBAR_CLICKS = [
         .catch((err) => alert(`Failed to open share dialog: ${err.message}`))
     }
   }],
+  // The dialog collects the password (or explicit opt-out) and downloads.
   ['[data-action="export-workspace"]', (el) => {
     const ws = workspaceOf(el)
-    if (ws) exportWorkspace(ws).catch((err) => alert(`Failed to open export dialog: ${err.message}`))
+    if (ws) openWorkspaceExportDialog({ workspace: ws }).catch((err) => alert(`Failed to open export dialog: ${err.message}`))
   }],
   ['[data-action="leave-workspace"]', leaveWorkspaceRow],
   // The dblclick rename intercepts before this fires.
