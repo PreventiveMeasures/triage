@@ -98,6 +98,9 @@ function pullEntry(repoId, number) {
 // first answer it asks since, as what it shows may be as old.
 const REVIEWS_EVERY_MS = 30_000
 const REVIEWS_BEFORE_MS = KEEP_MS
+// The versions a request asks of, past which more requests do: less than the
+// server takes in one (http.ts MAX_CHANGED_ASKED).
+const REVIEWS_ASKED_TOGETHER = 2000
 // How long past the time one is read again its tab is told to.
 const AGAIN_PAST_MS = 50
 
@@ -606,26 +609,40 @@ class TeamDependencies extends StateElement {
   // the server's time each answer tells (fetchTeamReviewChanges), its first
   // answer's time less REVIEWS_BEFORE_MS, while its page is seen; and makes
   // those pull requests stale, for each to be asked again alone (pullEntry).
+  // Each pull request's versions are those it listed while shown
+  // (`_watched`), a version that passed since, which its answer lists no
+  // more, still asked of, lest its review revoked be missed; asked as many
+  // as REVIEWS_ASKED_TOGETHER a request, its time moved on once all are told,
+  // to the earliest they tell.
   async _askReviews() {
     const csrfToken = state.managedSession?.csrfToken, team = this.team
     if (!team || !csrfToken || this._askingReviews || globalThis.document?.hidden) return
+    if (this._watched?.team !== team) this._watched = { team, versions: new Map() }
     const since = this._reviewsSince?.team === team ? this._reviewsSince.at : null
-    // Each shown pull request's versions, those it adds and those its lockfiles lock otherwise.
-    const listed = (this._listed ?? []).filter(({ entry }) => entry.status === 'ready')
-      .map(pull => ({ pull, versions: [...addedVersions(pull.entry).versions, ...unreviewedVersions(pull.entry).versions].filter(pkg => pkg.version) }))
-    const asked = since === null ? [] : [...new Map(listed.flatMap(({ versions }) => versions.map(pkg => [`${pkg.name}@${pkg.version}`, pkg]))).values()]
+    const watched = this._watched.versions
+    const listed = (this._listed ?? []).filter(({ entry }) => entry.status === 'ready').map(pull => {
+      const key = `${pull.repo.repoId}#${pull.item.number}`
+      const versions = watched.get(key) ?? watched.set(key, new Set()).get(key)
+      for (const pkg of [...addedVersions(pull.entry).versions, ...unreviewedVersions(pull.entry).versions]) if (pkg.version) versions.add(`${pkg.name}@${pkg.version}`)
+      return { pull, versions }
+    })
+    const asked = since === null ? [] : [...new Set(listed.flatMap(({ versions }) => [...versions]))].map(key => {
+      const at = key.lastIndexOf('@')
+      return { name: key.slice(0, at), version: key.slice(at + 1) }
+    })
     this._askingReviews = true
     try {
-      const told = await fetchTeamReviewChanges(team, since, asked, csrfToken)
-      if (team !== this.team || told.now === null) return
-      const changes = new Set(told.versions.map(({ name, version }) => `${name}@${version}`))
+      const told = []
+      for (let at = 0; at === 0 || at < asked.length; at += REVIEWS_ASKED_TOGETHER) told.push(await fetchTeamReviewChanges(team, since, asked.slice(at, at + REVIEWS_ASKED_TOGETHER), csrfToken))
+      if (team !== this.team || told.some(one => one.now === null)) return
+      const changes = new Set(told.flatMap(one => one.versions.map(({ name, version }) => `${name}@${version}`)))
       if (changes.size > 0) {
-        staleReviews(listed.filter(({ versions }) => versions.some(pkg => changes.has(`${pkg.name}@${pkg.version}`)))
-          .map(({ pull: { repo, item } }) => ({ repoId: repo.repoId, number: item.number })))
+        staleReviews(listed.filter(({ versions }) => [...versions].some(key => changes.has(key))).map(({ pull: { repo, item } }) => ({ repoId: repo.repoId, number: item.number })))
       }
-      this._reviewsSince = { team, at: since === null ? told.now - REVIEWS_BEFORE_MS : told.now }
+      const now = Math.min(...told.map(one => one.now))
+      this._reviewsSince = { team, at: since === null ? now - REVIEWS_BEFORE_MS : now }
     } catch {
-      // Asked again on its next turn.
+      // Asked again on its next turn, from where it last was.
     } finally {
       this._askingReviews = false
     }

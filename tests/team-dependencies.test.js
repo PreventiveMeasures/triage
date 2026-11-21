@@ -113,7 +113,8 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchPullDependenciesOf(repoId, numbers, options) { asked.dependencies.push([repoId, numbers, options]); return new Promise(() => {}) },
   fetchTeamReviewChanges(teamId, since, versions, csrfToken) {
     asked.reviews.push([teamId, since, versions.map(({ name, version }) => `${name}@${version}`).toSorted(), csrfToken])
-    return reviewChanges.length > 0 ? Promise.resolve(reviewChanges.shift()) : new Promise(() => {})
+    const next = reviewChanges.shift()
+    return next === undefined ? new Promise(() => {}) : next instanceof Error ? Promise.reject(next) : Promise.resolve(next)
   },
 } })
 const opened = []
@@ -993,11 +994,10 @@ test('a tab showing asks which of the versions it lists had reviews counting for
     '31#2': { cut: false, review: terms, lockfiles: [dir({ added: [wants('untouched')], unreviewed: [wants('reviewed', { version: '2.0.0' })] })] },
     '31#3': { cut: false, review: terms, lockfiles: [dir({ added: [wants('untouched')] })] },
   })
-  // Each as it is told once asked again: the first's version reviewed once since.
-  for (const number of [1, 2, 3]) {
-    answers.set(`31#${number}`, number === 1 ? { number, cut: false, review: terms, lockfiles: [dir({ added: [wants('reviewed', { reviews: 1 })] })] }
-      : { number, ...dependencies[`31#${number}`] })
-  }
+  // Each as it is told once asked again: the first's version reviewed once since, the second's other version passing, so listed no more.
+  answers.set('31#1', { number: 1, cut: false, review: terms, lockfiles: [dir({ added: [wants('reviewed', { reviews: 1 })] })] })
+  answers.set('31#2', { number: 2, cut: false, review: terms, lockfiles: [dir({ added: [wants('untouched')] })] })
+  answers.set('31#3', { number: 3, ...dependencies['31#3'] })
   Object.assign(state, { managedSession: { id: 'review-changes', role: 'triage', csrfToken: 'csrf' }, teamDependenciesTab: 'pulls', teamDependenciesSort: 'newest' })
   const view = shown([repo(31, 'org/watched')])
   // Drawn till its team's read, of every repository this file's tests added, is told.
@@ -1029,6 +1029,21 @@ test('a tab showing asks which of the versions it lists had reviews counting for
     assert.equal(asked.reviews.at(-1)[1], 530_000, 'since the last answer')
     await read(view)
     assert.deepEqual(asked.dependencies, [], 'none asked again where none changed')
+    assert.deepEqual(asked.reviews.at(-1)[2], ['reviewed@1.0.0', 'reviewed@2.0.0', 'untouched@1.0.0'], 'one that passed since, listed no more, still asked of')
+
+    // Past as many as a request asks of, several, its time the earliest they tell, once all are told.
+    for (let at = 0; at < 2500; at++) view._watched.versions.get('31#3').add(`many-${at}@1.0.0`)
+    const before = asked.reviews.length
+    reviewChanges.push(new Error('Busy.'))
+    await view._askReviews()
+    assert.equal(view._reviewsSince.at, 560_000, 'one failing: from where it was, asked again')
+    reviewChanges.push({ now: 600_000, versions: [] }, { now: 590_000, versions: [{ name: 'many-2400', version: '1.0.0' }] })
+    await view._askReviews()
+    assert.deepEqual(asked.reviews.slice(before + 1).map(([, at, versions]) => [at, versions.length]), [[560_000, 2000], [560_000, 503]])
+    assert.equal(view._reviewsSince.at, 590_000)
+    asked.dependencies.length = 0
+    await read(view)
+    assert.deepEqual(reasked(), [[31, 3]])
   } finally {
     Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest' })
   }
