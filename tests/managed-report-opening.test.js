@@ -20,11 +20,21 @@ const source = (id, extra = {}) => ({ id, severity: 'high', confidence: 9, file:
 const uncovered = (prefix = '') => ({ findings: [[app(`${prefix}A`), source(`${prefix}S`, { revalidate: 'confirmed' })], source(`${prefix}U`)] })
 // A pass that answered everything it shows: it opens on Confirmed already.
 const covered = { findings: [[app('CA'), source('CS', { revalidate: 'confirmed' })]] }
+// Enough confirmed rows to tune the opening floor to 7, and a finding the pass
+// never reached at 6 beneath it: it opens on Confirmed, but a `severity` not
+// LOW keeps it from being an App view (common/finding-filters.js canLockConfirmed).
+const belowFloor = severity => ({ findings: [
+  ...Array.from({ length: 26 }, (_, i) => [app(`B${i}`), source(`BS${i}`, { revalidate: 'confirmed' })]),
+  source('BM', { severity, confidence: 6 }),
+] })
 const report = (id, data, confirmedDefault) => ({ id, filename: `${id}.json`, data, ...confirmedDefault ? { confirmedDefault: true } : {} })
 
-test('the switch is offered only for a report with Confirmed findings that opens on the confidence range', () => {
+test('the switch is offered only for a report with Confirmed findings that is no App view on its own, by the stricter rule', () => {
   assert.equal(managedReportConfirmedDefaultOffered('uncovered.json', structuredClone(uncovered())), true)
-  assert.equal(managedReportConfirmedDefaultOffered('covered.json', structuredClone(covered)), false, 'it opens on Confirmed already')
+  assert.equal(managedReportConfirmedDefaultOffered('covered.json', structuredClone(covered)), false, 'it is an App view already')
+  assert.equal(managedReportConfirmedDefaultOffered('medium.json', belowFloor('medium')), true,
+    'it opens on Confirmed, but would hide a finding not LOW in the 6–10 band')
+  assert.equal(managedReportConfirmedDefaultOffered('low.json', belowFloor('low')), false, 'a LOW one below the floor may stay hidden')
   assert.equal(managedReportConfirmedDefaultOffered('source.json', { findings: [source('X')] }), false, 'no pass, no Confirmed to open on')
   assert.equal(managedReportConfirmedDefaultOffered('import.json', { source: 'codex-security', findings: [{ id: 'I', severity: 'high', file: 'a.js' }] }), false,
     'another analyzer\'s unjudged findings')
@@ -54,6 +64,9 @@ test('a team whose only uncovered findings are in switched reports is an App tea
     'another report\'s violations keep the team out')
   assert.deepEqual(managedTeamAppMetadata([report('r', uncovered(), true), report('s', { findings: [source('U')] })]), { appMode: false },
     'the same finding in a report nobody switched keeps the team out')
+  assert.deepEqual(managedTeamAppMetadata([report('m', belowFloor('medium'))]), { appMode: false })
+  assert.deepEqual(managedTeamAppMetadata([report('m', belowFloor('medium'), true)]), { appMode: true, appFindings: 26 },
+    'nor does one it opens on Confirmed without, once switched')
   assert.deepEqual(managedTeamAppMetadata([report('r', { findings: uncovered().findings.map(group => Array.isArray(group)
     ? group.map(f => ({ ...f, _confirmedDefault: true })) : { ...group, _confirmedDefault: true }) })]), { appMode: false },
   'a stamp a report wrote itself counts for nothing')

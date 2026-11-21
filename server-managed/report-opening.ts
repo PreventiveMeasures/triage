@@ -1,7 +1,7 @@
 // Whether a stored report may be switched to open on Confirmed (Manage →
 // Reports), told of its content alone: where its pass leaves Confirmed rows of
-// its own but the opening rule keeps it on the confidence range
-// (common/workspace-app.js confirmedDefaultOffered). A switched report's
+// its own but it is no App view on its own, by the stricter rule App mode
+// keeps (common/workspace-app.js confirmedDefaultOffered). A switched report's
 // findings count as covered wherever Confirmed would hide them
 // (common/finding-filters.js confirmedCoverage), both for the outcome a view
 // opens on and for its team's App mode.

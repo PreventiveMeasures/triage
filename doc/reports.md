@@ -92,8 +92,9 @@ The server works this classification out as it builds the team's workspace and s
 A view opens on Confirmed only when Confirmed would hide no finding that the opening confidence range shows; otherwise it opens on the range.
 A team opens as an App team, collapsed to its App findings with its outcome fixed to Confirmed, under the same rule and a stricter one for the 6–10 band.
 Managers and admins can switch a report past that check in **Manage → Reports**, with the Confirmed action, for reports they manage.
-The action is offered only where it changes something: the report, on its own, has findings its revalidation pass confirmed, but would open on the confidence range.
-It is not offered for reports with no pass, reports that already open on Confirmed, or reports whose copies of a finding contradict each other.
+The action is offered only where it changes something: the report, on its own, has findings its revalidation pass confirmed, but is not an App view by the stricter rule.
+That is, Confirmed would hide a finding the opening range shows, or a finding that is not LOW and scores 6–10, which a large report's opening range can leave below its floor while still opening on Confirmed.
+It is not offered for reports with no pass, reports that are already an App view on their own, or reports whose copies of a finding contradict each other.
 A switched report's findings count as covered wherever Confirmed would hide them, both for the outcome a view opens on and for whether its team is an App team.
 A team whose only uncovered findings are in switched reports opens as an App team.
 A finding that a report nobody switched also carries still counts as uncovered, so one report's switch never hides another report's findings.

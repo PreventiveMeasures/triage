@@ -138,9 +138,9 @@ CREATE INDEX IF NOT EXISTS managed_bundle_uploaded_at_idx ON managed_bundle(uplo
 -- the report's declared primary bundle (from its bundleHashes), kept so a later
 -- bundle upload of that integrity can re-link. confirmed_offered is whether
 -- the report, alone, may be switched to open on Confirmed (Manage → Reports,
--- report-opening.ts): 1 where its pass leaves Confirmed rows but the opening
--- rule keeps it on the confidence range, 0 where the switch would change
--- nothing, NULL where it is yet to be read (one uploaded before the column).
+-- report-opening.ts): 1 where its pass leaves Confirmed rows but it is no App
+-- view on its own, 0 where the switch would change nothing, NULL where it is
+-- yet to be read (one uploaded before the column).
 -- confirmed_default is that switch, as a manager set it.
 CREATE TABLE IF NOT EXISTS managed_report (
   id               TEXT PRIMARY KEY,

@@ -1085,8 +1085,8 @@ class ManagedAdminReports extends ManagedPage {
     const canAssignLocation = report.repoEmbedded !== true && report.canChangeRepo !== false
     const canMakeVisible = report.repoEmbedded === true || report.repoId != null
     const location = report.repoFullName ? `${report.repoFullName}${report.repoDirectory ? `/${report.repoDirectory}` : ''}` : 'No repository assigned'
-    // Offered only where the report has Confirmed findings but would open on
-    // the confidence range; kept where it was set, so it can be switched off.
+    // Offered only where the report has Confirmed findings but is no App view
+    // on its own; kept where it was set, so it can be switched off.
     const opening = report.confirmedOffered === true || report.confirmedDefault === true
     const when = Number.isFinite(report.uploadedAt) ? new Date(report.uploadedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''
     return html`<li class=${`report${report.visible === false ? ' content-hidden' : ''}`}>
