@@ -390,14 +390,19 @@ export const pathOrder = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0
 export interface TarReading { symlinksAbove?: number; maxEntries?: number; maxFiles?: number; maxBytes?: number }
 
 // The regular files of a tar stream, by package path: npm drops the first
-// component (`package/`, or whatever the archive used), and a file at the top
-// is not extracted. The stream is read by @preventive/archive, which refuses
-// one malformed, a name or a symlink that would climb out of it -- a symlink
-// past `symlinksAbove` levels above it, none unless given -- and a name
-// repeated as another entry, and gives up past `maxEntries` before reading
-// on; a file under another top directory at the same path replaces an
-// earlier one, as extraction would. Directories, links and devices hold no
-// file content and are skipped.
+// component (`package/`, or whatever the archive used). The stream is read by
+// @preventive/archive, which refuses one malformed, a name or a symlink that
+// would climb out of it -- a symlink past `symlinksAbove` levels above it,
+// none unless given -- and a name repeated as another entry, and gives up past
+// `maxEntries` before reading on; a file under another top directory at the
+// same path replaces an earlier one, as extraction would. Directories,
+// symlinks and devices hold no file content and are skipped, as every
+// installer skips them. A file at the top, under no directory, and a hard link
+// are refused (`tarball-installs-differ`): installers lay them out apart, so
+// no one set of files read here would be what each installs. npm extracts
+// neither; pnpm installs a file at the top at the package's top, over one at
+// that path below the package directory where it comes after it, and pnpm 10
+// and 11 write a hard link as an empty file.
 export function readNpmTar(tar: Uint8Array, { symlinksAbove = 0, maxEntries = MAX_NPM_TAR_ENTRIES, maxFiles = MAX_NPM_PACKAGE_FILES,
   maxBytes = MAX_NPM_PACKAGE_BYTES }: TarReading = {}): NpmPackageFile[] {
   let entries: Entry[]
@@ -409,8 +414,9 @@ export function readNpmTar(tar: Uint8Array, { symlinksAbove = 0, maxEntries = MA
   const files = new Map<string, Uint8Array>()
   let total = 0
   for (const { name, type, data } of entries) {
-    const slash = name.indexOf('/')
-    if ((type !== 'file' && type !== 'contiguous-file') || slash === -1) continue
+    const file = type === 'file' || type === 'contiguous-file', slash = name.indexOf('/')
+    if (type === 'hardlink' || (file && slash === -1)) throw new NpmPackageError(422, 'tarball-installs-differ')
+    if (!file) continue
     const path = name.slice(slash + 1)
     total += data.length - (files.get(path)?.length ?? 0)
     files.set(path, data)

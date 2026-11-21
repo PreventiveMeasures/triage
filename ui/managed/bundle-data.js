@@ -93,6 +93,7 @@ export const patchParams = patch => patch ? { patchHash: patch.hash,
 const NPM_ERRORS = {
   ...PATCH_ERRORS,
   'bad-tarball': "This package's tarball couldn't be read.",
+  'tarball-installs-differ': "This package's tarball installs differently with npm and pnpm, so it isn't shown: it holds a file outside its package directory, or a hard link.",
   'upstream-invalid': "The npm registry's answer for this package couldn't be read.",
   'upstream-too-large': "The npm registry's answer for this package is too large to read here.",
   400: 'Not an npm package name and version.',

@@ -23,7 +23,7 @@ import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from './style-map.js'
 import { appMarkup } from './markup.js'
-import { hidesMixedWhitespace, layoutDir, renameParts, rootLabel, wordRanges } from '@preventive/compare/view.js'
+import { layoutDir, renameParts, rootLabel } from '@preventive/compare/view.js'
 import { comparisonEntries, fileContents, resolutionChange } from './bundle-compare-files.js'
 export { fileEntries, fileContents } from './bundle-compare-files.js'
 import { state } from '#client/index.js'
@@ -34,8 +34,8 @@ import { fileIconFormat, isNotTextFormat, sourceFileIcon, sourcePackageIcon } fr
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
-import { EXPAND_STEP, alignedBlock, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, markedCounts, textLines, typeFolds, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
-import { changeBlocks } from '../../common/line-diff.js'
+import { EXPAND_STEP, alignedBlock, changedRanges, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, markedCounts, textLines, typeFolds, whitespaceHidden, whitespaceInsensitive, whitespaceKept } from './bundle-compare-code-model.js'
+import { blocksHold, changeBlocks } from '../../common/line-diff.js'
 import { buildSearchMatcher } from './bundle-search-scan.js'
 import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
 import { railHitText } from './search-marks.js'
@@ -46,6 +46,7 @@ import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npm
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
 import { packageJsonInstallScripts } from '../../risk/npm/install-scripts.js'
+import { npmCodePath } from '../../risk/files/readability.js'
 import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
 import './mode-switch.js'
@@ -133,6 +134,7 @@ const setAside = ({ pretty, spacesHidden, hiding, typesHidden, typesFolded }) =>
   (typesHidden || typesFolded) && HIDE_TYPES].filter(Boolean)
 const WHITESPACE_KEPT = {
   mixed: 'Whitespace changes are shown: hiding them would hide blanks of more than one kind changing.',
+  literal: 'Whitespace changes are shown: hiding them would hide blanks changing within a string, a template or a regular expression, whose value they are part of.',
 }
 // The format a stasis bundle records for one of its files, its own spelling
 // of the file's language; undefined for another kind of bundle, or a file it
@@ -197,9 +199,21 @@ const RENAME_REASONS = {
   'block-function': 'the file declares a function in a block outside strict code',
   unverified: "the old side with the new names couldn't be checked to read as before",
 }
-// What a file reads names through (renamedDiff's `reads`: a function's name,
-// told where one is renamed, its source, a stack), where its renamed names are hidden.
-const readsSaid = reads => `Renamed names are hidden, though the file reads ${reads.map(read => `.${read}`).join(', ')}, which a rename may change.`
+// What a diff with renamed names hidden is, where the server's blocks don't
+// take the old side it gave to the new side drawn.
+const UNHELD = { status: 'error', message: "The server's diff doesn't take this file's old side to its new one as shown.", retry: false }
+// What a rename hidden may change that the server could not check, said where
+// a file's renamed names are hidden, a sentence each: what it reads names
+// through (renamedDiff's `reads`: a function's name, told where one is
+// renamed, its source, a stack), and what a name renamed at a script's top
+// level was taken as its own for (`assumed`), which it is not where the
+// script runs as a classic one: its top level's names are globals there,
+// other scripts reading them, and one it now declares may stand over another's.
+const ASSUMED = { module: 'as the other side is a module', minified: 'as a minifier renamed them all' }
+const caveats = ({ reads, assumed = [] }) => [
+  ...reads.length > 0 ? [`Renamed names are hidden, though the file reads ${reads.map(read => `.${read}`).join(', ')}, which a rename may change.`] : [],
+  ...assumed.length > 0 ? [`Renamed names are hidden, though some are names at the top level of a script, taken as its own ${assumed.map(why => ASSUMED[why] ?? why).join(' and ')}: run as a classic script, they are globals, which a rename may change.`] : [],
+]
 
 // A file's line model by what it was diffed with: the settings, and whether
 // its sides were pretty-printed (see _pretty).
@@ -748,10 +762,11 @@ export class BundleCompareCode extends LitElement {
         return null
       }
       // As _fileState diffs it: whitespace changes hidden where the setting and
-      // the file's language hide them, but for blanks of more than one kind.
+      // the file's language hide them, but for blanks of more than one kind or
+      // within a literal (whitespaceKept).
       const hide = prefs.ignoreWhitespace && !this._unlisted(path, this._entries.get(path), { before, after })
       let blocks = changeBlocks(before, after, hide)
-      if (hide && hidesMixedWhitespace(before, after, blocks)) blocks = changeBlocks(before, after)
+      if (hide && whitespaceKept(path, before, after, blocks)) blocks = changeBlocks(before, after)
       this._blocks.set(kept, blocks)
       return blocks
     }
@@ -1150,14 +1165,20 @@ export class BundleCompareCode extends LitElement {
     const diffed = ignoreWhitespace => {
       const ask = () => renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, ignoreWhitespace, this._repaint, pretty.hashes,
         !counting && this._renamesAlone, this.scope)
-      const changes = renames && !large ? ask() : null
+      const asked = renames && !large ? ask() : null
+      // The server's blocks are drawn only where they take its old side as it
+      // diffed it to the new side as drawn (blocksHold), as the server held them
+      // itself (rename-diff.ts): else hiding renamed names fails, as for a diff
+      // of other copies, rather than draw a diff that may hide a change.
+      const changes = asked?.status === 'ready' && prefs.ignoreRenames && !(asked.holds ??= blocksHold(asked.before, after, asked.blocks, ignoreWhitespace)) ? UNHELD : asked
       const ready = changes?.status === 'ready'
       const hiding = ready && prefs.ignoreRenames
       const marked = ready && !hiding
-      // Where either side reads names (`f.name`, `f.toString()`), a rename may
+      // Where either side reads names (`f.name`, `f.toString()`), or a name
+      // renamed at a script's top level was taken as its own, a rename may
       // change what the code does, which hiding renamed names could hide: it is
-      // said (`warned`), the renamed lines offered marked.
-      const warned = hiding && changes.reason === null ? changes.reads : []
+      // said (`warned`, caveats), the renamed lines offered marked.
+      const warned = hiding && changes.reason === null ? caveats(changes) : []
       // Hide renamed names is offered where it hides any: lines that differ in
       // renamed names alone, marked otherwise, or, while it is on, names it
       // gave in lines that differ besides; and while it is on, in any file it
@@ -1175,12 +1196,14 @@ export class BundleCompareCode extends LitElement {
     }
     // Whitespace changes are hidden as diff -b hides them, only in a file whose
     // whitespace means nothing, on both sides (whitespaceInsensitive), and not
-    // where that would hide blanks of more than one kind changing
-    // (hidesMixedWhitespace): others are diffed with them shown.
+    // where that would hide blanks of more than one kind changing, or blanks
+    // within a string, a template or a regular expression (whitespaceKept,
+    // why it may not, `mixed` or `literal`): others are diffed with them shown.
     const unlisted = this._unlisted(path, entry, contents)
     let found = diffed(prefs.ignoreWhitespace && !unlisted)
-    const mixed = prefs.ignoreWhitespace && !unlisted && !!found.model && (found.model.mixed ??= hidesMixedWhitespace(found.shown, after, found.model.blocks))
-    if (mixed) found = diffed(false)
+    // Kept on the model as found, `false` for none, so that it is found once.
+    const kept = prefs.ignoreWhitespace && !unlisted && !!found.model ? (found.model.kept ??= whitespaceKept(path, found.shown, after, found.model.blocks) ?? false) || null : null
+    if (kept) found = diffed(false)
     const { key, changes, warned, renamed, hiding, shown, model } = found
     // A source map's listings are drawn only where the diff drawn of them, the
     // old side's lines and the changes it shows, reads back to the new map
@@ -1205,14 +1228,14 @@ export class BundleCompareCode extends LitElement {
     }
     // What hiding them does here: hides one (`hideable`), where the diff shown
     // does or diff -b would while they show (_whitespaceHidden); or would, but
-    // may not as blanks of more than one kind change (`mixed`), said while they
-    // are to be hidden. Where it would hide none, or none it may (a file whose
-    // whitespace may mean something, plain to see), it is not offered.
-    const off = model && !unlisted && !prefs.ignoreWhitespace ? this._whitespaceHidden(`${path}\0${pretty?.status === 'ready'}\0${hiding}`, shown, after) : null
+    // may not as blanks of more than one kind change, or within a literal
+    // (`mixed`, `literal`), said while they are to be hidden. Where it would
+    // hide none, or none it may (a file whose whitespace may mean something,
+    // plain to see), it is not offered.
+    const off = model && !unlisted && !prefs.ignoreWhitespace ? this._whitespaceHidden(`${path}\0${pretty?.status === 'ready'}\0${hiding}`, shown, after, path) : null
     const whitespace = model === null || unlisted ? null
-      : mixed ? 'mixed'
-      : prefs.ignoreWhitespace ? (hidesAnyWhitespace(model, shown, after) ? 'hideable' : null)
-      : off.hides && !off.mixed ? 'hideable' : null
+      : kept ?? (prefs.ignoreWhitespace ? (hidesAnyWhitespace(model, shown, after) ? 'hideable' : null)
+        : off.hides && !off.mixed && !off.literal ? 'hideable' : null)
     // A hit sought here waits while its diff isn't drawn yet: its printed
     // copies still coming, or its renamed names, to be hidden, coming or
     // failed to hide, until they are shown (see _scrollSought); marked, they
@@ -1231,10 +1254,10 @@ export class BundleCompareCode extends LitElement {
 
   // What diff -b would hide between the texts a file shows (whitespaceHidden),
   // `key` naming them, kept as their models are: with the texts, and found
-  // again for others (_model).
-  _whitespaceHidden(key, before, after) {
+  // again for others (_model); `path`, how the file's literals read.
+  _whitespaceHidden(key, before, after, path = '') {
     let kept = this._spaced.get(key)
-    if (!(kept?.before === before && kept.after === after)) kept = { before, after, hidden: whitespaceHidden(before, after) }
+    if (!(kept?.before === before && kept.after === after)) kept = { before, after, hidden: whitespaceHidden(before, after, path) }
     this._spaced.delete(key)
     this._spaced.set(key, kept)
     if (this._spaced.size > this._modelCap) this._spaced.delete(this._spaced.keys().next().value)
@@ -1313,12 +1336,18 @@ export class BundleCompareCode extends LitElement {
     // Its bytes the same (bundle-compare-diff.js): no diff to compute, however large.
     if (textual && modified === false) return html`<div class="bundle-compare-code-message"><p>${same}</p></div>`
     if (!textual) {
+      // A JavaScript or TypeScript file read from its bytes that are no text (an npm version's, a
+      // directory's: not UTF-8, or holding a NUL) is code all the same, which node runs decoded as UTF-8:
+      // told as that, never as a binary file, though no text diff of it is shown (risk's `binary-code`).
+      const code = [before, after].some(side => side?.format === 'digest') && npmCodePath(path)
+      const what = code ? "Code that isn't text" : 'Binary file'
       if (kind === 'changed' && modified === false) {
-        return html`<div class="bundle-compare-code-message">Binary file, its bytes the same · ${size(bundleFileByteLength(after))}. ${recorded}</div>`
+        return html`<div class="bundle-compare-code-message">${what}, its bytes the same · ${size(bundleFileByteLength(after))}. ${recorded}</div>`
       }
       const bytes = kind === 'added' ? size(bundleFileByteLength(after)) : kind === 'removed' ? size(bundleFileByteLength(before))
         : `${size(bundleFileByteLength(before))} → ${size(bundleFileByteLength(after))}`
-      return html`<div class="bundle-compare-code-message">Binary file ${kind} · ${bytes}. A text diff is not available.${recorded ? ` ${recorded}` : ''}</div>`
+      const why = code ? ' It is not UTF-8, or holds a NUL, so it is shown as no text, yet node runs it all the same, decoded as UTF-8.' : ''
+      return html`<div class="bundle-compare-code-message">${what} ${kind} · ${bytes}. A text diff is not available.${why}${recorded ? ` ${recorded}` : ''}</div>`
     }
     if (large) {
       return html`<div class="bundle-compare-code-message">
@@ -1351,7 +1380,7 @@ export class BundleCompareCode extends LitElement {
     const told = reformatted ? 'No actual code changes in this file.' : hidden.length > 0 ? `Only ${hidden.join(' and ')} changed in this file.` : null
     return html`<div class="bundle-compare-code-message">
       <p>${told ? `${told}${recorded ? ` ${recorded}` : ''}` : same}</p>
-      ${warned.length > 0 ? html`<p>${readsSaid(warned)}</p>` : nothing}
+      ${warned.map(said => html`<p>${said}</p>`)}
       ${reformatted ? html`<button type="button" class="bundle-compare-code-action" @click=${() => { state.bundleSourcePretty = false; this.requestUpdate() }}>Show as published</button>` : nothing}
       ${typesFolded ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setTypes(false)}>Show type-only changes</button>` : nothing}
       ${spaced ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setWhitespace(false)}>Show whitespace changes</button>` : nothing}
@@ -1783,7 +1812,7 @@ export class BundleCompareCode extends LitElement {
     const digits = String(Math.max(lines.a, lines.b, 1)).length
     return html`${prefs.ignoreRenames && changes?.reason ? html`<p class="bundle-compare-code-note">Renamed names are shown: ${RENAME_REASONS[changes.reason] ?? changes.reason}.</p>` : nothing}
       ${WHITESPACE_KEPT[whitespace] ? html`<p class="bundle-compare-code-note">${WHITESPACE_KEPT[whitespace]}</p>` : nothing}
-      ${warned.length > 0 ? html`<p class="bundle-compare-code-note">${readsSaid(warned)} <button type="button" @click=${() => this._setRenames(false)}>Show them marked</button></p>` : nothing}
+      ${warned.length > 0 ? html`<p class="bundle-compare-code-note">${warned.join(' ')} <button type="button" @click=${() => this._setRenames(false)}>Show them marked</button></p>` : nothing}
       <div class=${classMap({ 'bundle-compare-diff-table': true, split, unified: !split })} data-path=${path}
         style=${styleMap({ '--diff-num-width': `${digits + 1}ch` })} role="table" aria-label="Diff">
         ${split ? html`<div class="diff-row diff-split-head" role="row">
@@ -1805,11 +1834,12 @@ export class BundleCompareCode extends LitElement {
     return `${row.kind}${row.a ?? ''}:${row.b ?? ''}`
   }
 
-  // Words marked in a removed line and the added line it pairs with.
+  // Words marked in a removed line and the added line it pairs with, or
+  // what differs between two past a word view's reach (changedRanges).
   _words(model, a, b) {
     if (a == null || b == null) return null
     const key = `${a}:${b}`
-    if (!model.words.has(key)) model.words.set(key, wordRanges(model.a[a], model.b[b]))
+    if (!model.words.has(key)) model.words.set(key, changedRanges(model.a[a], model.b[b]))
     return model.words.get(key)
   }
 

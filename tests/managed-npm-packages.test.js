@@ -119,7 +119,6 @@ test('tarballs unpack to package paths, as extraction leaves them', () => {
     { name: 'package/short-utf8', data: 'utf8' },
     { name: '././@LongLink', type: 'L', data: 'package/from-gnu.js\0' },
     { name: 'package/trunc', data: 'gnu' },
-    { name: 'top.js', data: 'not extracted' },
     { name: 'other-root/index.js', data: 'replaced' },
     { name: 'other-root/bin.dat', data: Buffer.from([0, 1, 2]) },
   ]))
@@ -139,6 +138,17 @@ test('tarballs unpack to package paths, as extraction leaves them', () => {
     [[{ name: 'package/link', type: '2', linkname: '../../outside' }], 'a symlink climbing out'],
     [[{ name: 'package/link', type: '2', linkname: '/etc/passwd' }], 'an absolute symlink'],
   ]) assert.throws(() => readNpmTar(tar(entries)), refused, why)
+  // What installers lay out apart is refused, not read as one of them does: npm extracts no file at the
+  // top nor a hard link; pnpm installs a file at the top at the package's top, over the one the package
+  // directory has there where it comes after it, and pnpm 10 and 11 write a hard link as an empty file.
+  const unlike = (err) => err instanceof NpmPackageError && err.status === 422 && err.message === 'tarball-installs-differ'
+  for (const [entries, why] of [
+    [[{ name: 'package/index.js', data: 'module.exports = 1\n' }, { name: 'index.js', data: "module.exports = 'other'\n" }], 'a file at the top, after the one it replaces under pnpm'],
+    [[{ name: 'top.js', data: 'at the top' }, { name: 'package/index.js', data: '' }], 'a file at the top alone'],
+    [[{ name: 'package/real.js', data: 'real' }, { name: 'package/index.js', type: '1', linkname: 'package/real.js' }], 'a hard link'],
+  ]) assert.throws(() => readNpmTar(tar(entries)), unlike, why)
+  assert.deepEqual(readNpmTar(tar([{ name: 'package/', type: '5' }, { name: 'link', type: '2', linkname: 'package/index.js' }, { name: 'package/index.js', data: '' }]))
+    .map(file => file.path), ['index.js'], 'a directory or a symlink at the top skipped, as every installer skips it')
   assert.throws(() => readNpmTar(tar([{ name: 'package/a', data: Buffer.alloc(MAX_NPM_PACKAGE_BYTES + 1) }])), /package-too-large/u)
   // Directories count as entries, though none is a file: given up on at the one past the bound.
   const dirs = Array.from({ length: MAX_NPM_TAR_ENTRIES + 1 }, (_, i) => ({ name: `package/d${i}/`, type: '5' }))

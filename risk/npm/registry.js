@@ -260,8 +260,10 @@ export async function npmVersionFiles(name, version, { manifest, published, dist
   const tarball = read ? await read(name, version, { signal }) : await untilAborted(getTarball(name, version, dist, cache === undefined ? {} : { cache }), signal).catch(error => {
     throw signal?.aborted ? error : new NpmRiskError('upstream-unavailable', `npm's tarball of ${what} couldn't be had: ${error.message}`)
   })
+  // A tarball installers lay out apart (tarball.js npmTarFiles) is told so, not as one that couldn't be read.
   try { return { npm: { name, version, manifest, published }, ...await npmTarballVersion(tarball) } } catch (error) {
-    throw new NpmRiskError(error.message === 'package-too-large' ? 'package-too-large' : 'upstream-invalid', `npm's tarball of ${what}: ${error.message}`)
+    const code = error.message === 'package-too-large' || error.message === 'tarball-installs-differ' ? error.message : 'upstream-invalid'
+    throw new NpmRiskError(code, `npm's tarball of ${what}: ${error.message}`)
   }
 }
 

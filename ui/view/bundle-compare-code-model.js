@@ -8,8 +8,9 @@
 //
 // Lines are numbered the way the diff numbers them: from zero, a final
 // newline ending the last line rather than starting an empty one.
-import { hidesMixedWhitespace, pairLines } from '@preventive/compare/view.js'
+import { hidesMixedWhitespace, pairLines, wordRanges } from '@preventive/compare/view.js'
 import { blocksHold, changeBlocks, textLines } from '../../common/line-diff.js'
+import { JS_STRING_OR_COMMENT } from '../../risk/files/script.js'
 
 export { textLines }
 
@@ -150,12 +151,75 @@ export function fileLineCounts(before, after) {
 // given, pair as unchanged lines that differ (blocksHold).
 export const hidesWhitespace = (before, after, blocks = changeBlocks(before, after, true)) => !blocksHold(before, after, blocks)
 
-// What diff -b would hide between two texts: whether it hides a change at all
-// (`hides`), and whether one it hides mixes kinds of blank (`mixed`), as spaces
-// turned to a tab, which no view hides (hidesMixedWhitespace).
-export function whitespaceHidden(before, after) {
+// A stylesheet's strings, as risk reads them (risk/files/script.js): it has no
+// `//` comments, so `url(https://…)` is code.
+const CSS_STRING = /("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|\/\*[\s\S]*?\*\//gu
+const STYLESHEET = /\.(?:css|scss|less)$/iu
+
+// A text's literals, line by line: the parts of its strings, templates and
+// regular expressions on each line (a template's whole line where one runs on
+// past it), NUL apart, as risk sets them apart from code (JS_STRING_OR_COMMENT,
+// in one linear pass), a stylesheet's strings by its own reading, a file that
+// is neither read as JavaScript is, whose quotes it reads alike. `path` names
+// which it is.
+function literalLines(path, text) {
+  const pattern = STYLESHEET.test(path) ? CSS_STRING : JS_STRING_OR_COMMENT
+  const starts = [0]
+  for (let at = text.indexOf('\n'); at !== -1; at = text.indexOf('\n', at + 1)) starts.push(at + 1)
+  const pieces = starts.map(() => [])
+  let line = 0
+  for (const match of text.matchAll(pattern)) {
+    if (match[1] === undefined) continue
+    const from = match.index + match[0].indexOf(match[1]), to = from + match[1].length
+    while (line + 1 < starts.length && starts[line + 1] <= from) line++
+    for (let at = line; at < starts.length && starts[at] < to; at++) {
+      const end = at + 1 < starts.length ? starts[at + 1] - 1 : text.length
+      pieces[at].push(text.slice(Math.max(from, starts[at]), Math.min(to, end)))
+    }
+  }
+  return pieces.map(list => list.join('\0'))
+}
+
+// Whether diff -b, as `blocks` were found with it, hides blanks changing
+// within a literal, whose value they are part of: a line it keeps as
+// unchanged though it differs, and its strings, templates or regular
+// expressions with it (`"a b"` and `"a  b"`, `/a b/` and `/a  b/`, a
+// template's line indented anew), as a file whose whitespace means nothing
+// but in its strings (whitespaceInsensitive) has them. `path` says how its
+// literals are read (literalLines); each text is read only once a line it
+// keeps differs.
+export function hidesLiteralWhitespace(path, before, after, blocks) {
+  const a = textLines(before), b = textLines(after)
+  let ai = 0, bi = 0, news = null, olds = null
+  for (let run = 0; run <= blocks.length; run++) {
+    const end = run < blocks.length ? blocks[run].a0 : a.length
+    for (; ai < end; ai++, bi++) {
+      if (a[ai] === b[bi]) continue
+      olds ??= literalLines(path, before)
+      news ??= literalLines(path, after)
+      if (olds[ai] !== news[bi]) return true
+    }
+    if (run < blocks.length) ({ a1: ai, b1: bi } = blocks[run])
+  }
+  return false
+}
+
+// Why diff -b, as `blocks` were found with it, may not hide what it would
+// between two texts, of a file at `path`, or null where it may: blanks of more
+// than one kind changing (`mixed`, hidesMixedWhitespace, which also takes
+// blocks that are none for it), else blanks within a literal (`literal`,
+// hidesLiteralWhitespace). A view shows whitespace changes then.
+export const whitespaceKept = (path, before, after, blocks) => (hidesMixedWhitespace(before, after, blocks) ? 'mixed'
+  : hidesLiteralWhitespace(path, before, after, blocks) ? 'literal' : null)
+
+// What diff -b would hide between two texts, of a file at `path`: whether it
+// hides a change at all (`hides`), and whether one it hides mixes kinds of
+// blank (`mixed`), as spaces turned to a tab, or lies within a literal
+// (`literal`), neither of which a view hides (whitespaceKept).
+export function whitespaceHidden(before, after, path = '') {
   const blocks = changeBlocks(before, after, true)
-  return { hides: hidesWhitespace(before, after, blocks), mixed: hidesMixedWhitespace(before, after, blocks) }
+  const mixed = hidesMixedWhitespace(before, after, blocks)
+  return { hides: hidesWhitespace(before, after, blocks), mixed, literal: !mixed && hidesLiteralWhitespace(path, before, after, blocks) }
 }
 
 // Files whose whitespace means nothing but in their strings, the only ones in
@@ -235,14 +299,48 @@ function alignBlock(model, block) {
   return alignLines(model.a, model.b, block)
 }
 
+// How long a line may be for a word view to read it (@preventive/compare's
+// words.js), past which it has none, nor does pairLines pair it: a minified
+// line, which a change to one token leaves changed whole.
+const WORD_REACH = 2000
+const pastWords = (x, y) => x.length > WORD_REACH || y.length > WORD_REACH
+
+// What differs between two lines past a word view's reach (pastWords), as
+// ranges a view marks, `{ a, b }`, `[from, to)` each: what lies between all
+// they share at their start and at their end, one range on each side that
+// holds any, so that a change to one token of a minified line is found where
+// it is, whatever else of the line is the same. Linear in the lines, its
+// ends never splitting a pair of surrogates.
+export function affixRanges(x, y) {
+  const shorter = Math.min(x.length, y.length)
+  let head = 0, tail = 0
+  while (head < shorter && x[head] === y[head]) head++
+  if (head > 0 && /[\uDC00-\uDFFF]/u.test(x[head] ?? y[head] ?? '')) head--
+  while (tail < shorter - head && x[x.length - 1 - tail] === y[y.length - 1 - tail]) tail++
+  if (tail > 0 && /[\uDC00-\uDFFF]/u.test(x[x.length - tail])) tail--
+  const range = line => (head < line.length - tail ? [[head, line.length - tail]] : [])
+  return { a: range(x), b: range(y) }
+}
+
+// The ranges a view marks of a removed line and the added line it pairs
+// with: their changed words (wordRanges), else, where either is past a word
+// view's reach, what differs between them (affixRanges); null for none.
+export const changedRanges = (x, y) => wordRanges(x, y) ?? (pastWords(x, y) ? affixRanges(x, y) : null)
+
 // The same, of a block between two texts' lines `a` and `b`, as a split diff
-// draws its rows (and Compare's code search lists their hits).
+// draws its rows (and Compare's code search lists their hits). Two lines
+// sharing a row that pairLines leaves apart, where either is past a word
+// view's reach, are paired as one line edited (changedRanges marks them),
+// as none of their words can pair them, a minified line's.
 export function alignLines(a, b, block) {
   const pairs = pairLines(a.slice(block.a0, block.a1), b.slice(block.b0, block.b1)).map(([i, j]) => [block.a0 + i, block.b0 + j])
   const rows = []
   let i = block.a0, j = block.b0
   for (const [pa, pb] of [...pairs, [block.a1, block.b1]]) {
-    while (i < pa || j < pb) rows.push([i < pa ? i++ : null, j < pb ? j++ : null, false])
+    while (i < pa || j < pb) {
+      const left = i < pa ? i++ : null, right = j < pb ? j++ : null
+      rows.push([left, right, left !== null && right !== null && pastWords(a[left], b[right])])
+    }
     if (pa < block.a1) {
       rows.push([pa, pb, true])
       i = pa + 1

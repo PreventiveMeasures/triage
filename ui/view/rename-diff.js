@@ -45,12 +45,13 @@ export const renameDiffable = (base, other) => !!(base?.managedId && other?.mana
 const retryable = status => !(status >= 400 && status < 500 && status !== 429)
 
 // Comparisons by both sides' integrity: `diffs` by both files' paths, each
-// `{ status: 'loading' }`, `{ status: 'ready', before, reason, reads, copies,
-// settings }` (the old side as diffed, why its names are its own where they
-// could not be given safely, the properties through which either side reads
-// names, the hashes of the copies it was worked out from, and with whitespace
+// `{ status: 'loading' }`, `{ status: 'ready', before, reason, reads, assumed,
+// copies, settings }` (the old side as diffed, why its names are its own where
+// they could not be given safely, the properties through which either side
+// reads names, what a script's top-level name renamed was taken as its own
+// for, the hashes of the copies it was worked out from, and with whitespace
 // changes shown and hidden, `{ status: 'ready', before, blocks, marks,
-// reason, reads }` as a view reads it: the change blocks, and the blocks of
+// reason, reads, assumed }` as a view reads it: the change blocks, and the blocks of
 // the diff of the files as they are that differ in renamed names alone), or
 // `{ status: 'error', message, retry }`, `retry` where asking again may
 // succeed, then `until` when; `tries` the failures before, for how long
@@ -62,13 +63,14 @@ const comparisons = new Map()
 // An answer as the server shapes it, as a diff kept: null for one shaped
 // otherwise, or naming other files than `hash` and `otherHash`.
 function readAnswer(answer, hash, otherHash) {
-  const { before, reason, reads, prettyHash, otherPrettyHash, ignoringWhitespace } = answer ?? {}
+  const { before, reason, reads, assumed, prettyHash, otherPrettyHash, ignoringWhitespace } = answer ?? {}
   const sets = [answer, ignoringWhitespace].map(set => (Array.isArray(set?.blocks) && Array.isArray(set.marks) ? { blocks: set.blocks, marks: set.marks } : null))
+  const strings = list => Array.isArray(list) && list.every(item => typeof item === 'string')
   if (!(answer?.hash === hash && answer.otherHash === otherHash && typeof before === 'string' && (reason == null || typeof reason === 'string')
-    && Array.isArray(reads) && reads.every(read => typeof read === 'string') && sets.every(Boolean)
+    && strings(reads) && strings(assumed) && sets.every(Boolean)
     && typeof prettyHash === 'string' && typeof otherPrettyHash === 'string')) return null
-  const settings = sets.map(set => ({ status: 'ready', before, ...set, reason: reason ?? null, reads }))
-  return { status: 'ready', before, reason: reason ?? null, reads, copies: [prettyHash, otherPrettyHash], settings }
+  const settings = sets.map(set => ({ status: 'ready', before, ...set, reason: reason ?? null, reads, assumed }))
+  return { status: 'ready', before, reason: reason ?? null, reads, assumed, copies: [prettyHash, otherPrettyHash], settings }
 }
 
 const fileHash = (details, path, text) => details.fileHashes?.get(path) ?? computeFileHash(text)

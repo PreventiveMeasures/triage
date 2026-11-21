@@ -46,8 +46,10 @@ interface RepositoryCodeInput { repoId: number; repo: string; commit: string; pa
 
 // A package's refusals, as a directory's: past the bounds, or an archive
 // @preventive/archive refuses, as it does one holding a symlink that climbs
-// past the repository's root, or an absolute one.
-const DIRECTORY_ERRORS: Record<string, [number, string]> = { 'package-too-large': [413, 'directory-too-large'], 'bad-tarball': [422, 'directory-unreadable'] }
+// past the repository's root, or an absolute one, or one readNpmTar does, a
+// file at its top or a hard link, which GitHub's archive of a tree holds none of.
+const DIRECTORY_ERRORS: Record<string, [number, string]> = { 'package-too-large': [413, 'directory-too-large'], 'bad-tarball': [422, 'directory-unreadable'],
+  'tarball-installs-differ': [422, 'directory-unreadable'] }
 const directoryError = (err: unknown) => {
   const as = err instanceof NpmPackageError ? DIRECTORY_ERRORS[err.message] : undefined
   return as ? new NpmPackageError(...as) : err
