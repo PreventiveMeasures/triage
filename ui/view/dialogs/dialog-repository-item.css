@@ -167,7 +167,6 @@ span.repo-item-row:hover { background: none; }
 .repo-item-tag {
   flex: none; padding: 0 .4rem; border: 1px solid var(--border); border-radius: 999px;
   color: var(--muted); font-size: .72rem; line-height: 1.5;
-  &.is-new { border-color: currentcolor; color: var(--medium); }
 }
 .repo-item-description {
   padding-top: .75rem; border-top: 1px solid var(--border);

@@ -15,7 +15,7 @@ The lockfiles read are `package-lock.json` and `npm-shrinkwrap.json` with `lockf
 Bun's lockfiles (`bun.lock`, `bun.lockb`) are recognized but not read, and their directory says so.
 Lockfiles under `node_modules` or in test fixtures are ignored, as no install uses them.
 
-An open pull request's tile ([code-viewer.md](./code-viewer.md)) names its added versions, and the popup of any pull request lists them by directory under **New dependency versions**, marking new packages, the versions an update replaced, sources other than npm's registry, versions only devDependencies need, and [patched](#patched-versions) ones.
+An open pull request's tile ([code-viewer.md](./code-viewer.md)) names its added versions, and the popup of any pull request lists them by directory under **New dependency versions**, marking the versions an update replaced, sources other than npm's registry, versions only devDependencies need, and [patched](#patched-versions) ones.
 Each npm version opens in the npm viewer, an update compared with the highest version it replaced.
 Where the host [names bases](#base), a version is reviewed against the one it names instead.
 

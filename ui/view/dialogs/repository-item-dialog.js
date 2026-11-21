@@ -216,23 +216,16 @@ class RepositoryItemDialog extends AppDialog {
       ${cut ? html`<p class="repo-item-quiet">It changes more files, or lockfiles in more directories, than are read; those past them aren’t told.</p>` : nothing}`
   }
 
-  // A review's terms: the reviews each version needs, by as many reviewers,
-  // or the server's reviewed dependencies passing it, where they are
-  // registered, else the commit at whose lockfiles' versions none is needed,
-  // where it is set; where those couldn't be read, or some of the
-  // lockfiles there (`baselineUnread`, the first few named), or the
-  // reviewed dependencies answer, that the versions they would pass want
-  // reviews. By how many reviewers its comments review its versions, which
-  // count while it is open, or that they couldn't be read; where reviews
-  // count by its comments alone (`byComments`), told so in place of that. The lockfiles it
-  // holds to, where not every one.
-  renderReviewTerms({ required, since, reviewedDependencies, unasked, baselineError, baselineUnread = [], commentReviews, commentsFailed, byComments, lockfiles }) {
+  // What leaves a review's versions wanting reviews: the baseline commit's,
+  // which need none, where they couldn't be read, or some of its lockfiles
+  // (`baselineUnread`, the first few named); and those the server's
+  // reviewed dependencies didn't answer for. By how many reviewers its
+  // comments review its versions, which count while it is open, where
+  // reviews count otherwise too (`byComments` not), or that they couldn't
+  // be read. The lockfiles it holds to, where not every one.
+  renderReviewTerms({ unasked, baselineError, baselineUnread = [], commentReviews, commentsFailed, byComments, lockfiles }) {
     const named = baselineUnread.slice(0, 5)
-    return html`<p class="repo-item-quiet">Each version needs ${plural(required, byComments ? 'accepting review' : 'full, accepting review')}${byComments
-      ? ' in its comments' : ''} by as many reviewers${reviewedDependencies
-      ? ', or the server’s reviewed dependencies to pass it' : since
-      ? html`; those the repository’s lockfiles locked at <code>${since.slice(0, 7)}</code> need none` : nothing}.</p>
-      ${baselineError ? html`<p class="repo-item-quiet" role="alert">The versions its lockfiles locked at that commit couldn’t be read (${baselineError}), so every version wants its reviews.</p>` : nothing}
+    return html`${baselineError ? html`<p class="repo-item-quiet" role="alert">The versions its lockfiles locked at that commit couldn’t be read (${baselineError}), so every version wants its reviews.</p>` : nothing}
       ${named.length > 0 ? html`<p class="repo-item-quiet" role="alert">At that commit, ${named.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}${baselineUnread.length > named.length
         ? ` and ${(baselineUnread.length - named.length).toLocaleString('en-US')} more` : ''} couldn’t be read, so the versions ${baselineUnread.length === 1 ? 'it' : 'they'} locked want reviews.</p>` : nothing}
       ${unasked ? html`<p class="repo-item-quiet" role="alert">The server’s reviewed dependencies didn’t answer for ${plural(unasked, 'version')}, so ${unasked === 1 ? 'it wants' : 'they want'} reviews.</p>` : nothing}
@@ -258,8 +251,7 @@ class RepositoryItemDialog extends AppDialog {
   }
 
   // A package version new to a lockfile: its name and version, and the
-  // versions of it the lockfile locked before, else that its package is new
-  // to it; npm's opening in the app's npm viewer, a new version compared with
+  // versions of it the lockfile locked before, where it tells them; npm's opening in the app's npm viewer, a new version compared with
   // the highest other version it was (none for a version that was installed
   // from elsewhere alone, which a comparison of versions can't show), or,
   // where its review is in effect and the reader reviews, reviewed against
@@ -284,8 +276,7 @@ class RepositoryItemDialog extends AppDialog {
     const href = npm ? reviewed || (before && managedRoutePath({ view: 'npm', packageName: name, packageSpec: version, bundleTab: 'compare', compareSpec: before }))
       || managedRoutePath({ view: 'npm', packageName: name, packageSpec: version }) : null
     const label = html`${PACKAGE_ICON}<span class="repo-item-title">${name}${version ? html`<span class="repo-item-version">@${version}</span>` : nothing}</span>
-      ${other ? nothing : was ? html`<span class="repo-item-was" data-tooltip-truncated data-tooltip=${`Was ${was.join(', ')}`}>from ${was.join(', ')}</span>`
-        : html`<span class="repo-item-tag is-new" data-tooltip="Its lockfiles locked no version of it before">new</span>`}
+      ${!other && was ? html`<span class="repo-item-was" data-tooltip-truncated data-tooltip=${`Was ${was.join(', ')}`}>from ${was.join(', ')}</span>` : nothing}
       ${this.renderReview(pkg, review)}
       ${source === 'registry' && version && (!pkg.patch || patch) && reviewOf(pkg, review) === 'wanted'
         ? html`<npm-delta .name=${name} .version=${version} .base=${base?.version ?? '(empty)'} .baseName=${base?.name ?? name} .patch=${patch}></npm-delta>` : nothing}

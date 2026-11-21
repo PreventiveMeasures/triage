@@ -479,7 +479,7 @@ function deps(pull) {
   const count = value => value.toLocaleString('en-US'), reached = pull.toReview - pull.untold - alone
   const said = `${count(reached)} by Stasis, ${count(alone)} only lockfile${pull.untold > 0 ? `, ${count(pull.untold)} more not listed` : ''}`
   return html`<span class="team-deps-count">${count(pull.toReview)} ${pull.toReview === 1 ? 'dep' : 'deps'}${alone > 0
-    ? html` <span data-tooltip=${said}>(${count(reached)}${pull.untold > 0 ? '+' : ''} ${STASIS_MARK})</span>`
+    ? html`<span class="team-deps-reach" data-tooltip=${said}>(${count(reached)}${pull.untold > 0 ? '+' : ''} ${STASIS_MARK})</span>`
     : nothing}</span>`
 }
 
@@ -501,7 +501,7 @@ function stasisProgress(answers) {
     }
   }
   const done = [...builds.values()].filter(Boolean).length, total = builds.size
-  const said = `Stasis is working out what their stasis.config.json entries reach: ${done.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} builds made. Those waiting are asked again as it makes them.`
+  const said = `Stasis is working out what their stasis.config.json entries reach: ${done.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} builds made.`
   return html`<p class="team-deps-quiet team-deps-building" role="status" data-tooltip=${said}><img class="team-deps-stasis" src="./stasis.svg" alt="Stasis">
     <span class="team-deps-progress" role="progressbar" aria-label="Stasis builds made" aria-valuemin="0" aria-valuemax=${total} aria-valuenow=${done}><span
       style=${styleMap({ width: `${total ? done / total * 100 : 0}%` })}></span></span>

@@ -2035,6 +2035,9 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 }
 /* Stasis's mark, after how many of a card's versions it reaches. */
 .team-deps-stasis { width: .75rem; height: .75rem; vertical-align: -.125rem; }
+/* How many Stasis reaches, a space after the count: a margin, as the build's
+   template minifier drops a space at a template's edge beside a tag. */
+.team-deps-reach { margin-left: .3em; }
 /* How far Stasis is with the builds the tab waits for: its mark, a bar and
    how many of them it has made. */
 .team-deps-building {

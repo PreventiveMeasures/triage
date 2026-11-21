@@ -542,7 +542,7 @@ test('a pull request awaiting a build of Stasis\'s is asked again alone, its rep
   const waiting = { paths: ['stasis.config.json'], builds: [{ commit: 'a'.repeat(40), built: true }, { commit: 'b'.repeat(40), built: false }], error: 'stasis-pending' }
   const none = { ...terms, toReview: 0, unreviewed: 0, unsupported: 0 }
   // How far Stasis is told: its mark, a bar, and how many builds of how many are made.
-  const progress = (done, total) => new RegExp(String.raw`<p class="team-deps-quiet team-deps-building" role="status" data-tooltip=Stasis is working out what their stasis\.config\.json entries reach: ${done} of ${total} builds made\. Those waiting are asked again as it makes them\.><img class="team-deps-stasis" src="\./stasis\.svg" alt="Stasis">\s*` +
+  const progress = (done, total) => new RegExp(String.raw`<p class="team-deps-quiet team-deps-building" role="status" data-tooltip=Stasis is working out what their stasis\.config\.json entries reach: ${done} of ${total} builds made\.><img class="team-deps-stasis" src="\./stasis\.svg" alt="Stasis">\s*` +
     String.raw`<span class="team-deps-progress" role="progressbar" aria-label="Stasis builds made" aria-valuemin="0" aria-valuemax=${total} aria-valuenow=${done}>[^]*?<span class="team-deps-progress-n">${done}/${total}</span></p>`, 'u')
   TEAM.push(21, 22)
   branches[21] = { cut: false, review: none, lockfiles: [dir()] }
@@ -860,12 +860,12 @@ test('a card\'s count of versions to review tells how many Stasis reaches where 
     const text = await read(shown([repo(18, 'org/s')]))
     const head = number => cardsOf(text).find(one => nameOf(one) === `s#${number}`).split('</a>')[0]
     const mark = String.raw`<img class="team-deps-stasis" src="\./stasis\.svg" alt="by Stasis">`
-    assert.match(head(3), new RegExp(String.raw`<span class="team-deps-count">3 deps <span data-tooltip=2 by Stasis, 1 only lockfile>\(2 ${mark}\)</span></span>`, 'u'))
-    assert.match(head(1), new RegExp(String.raw`<span class="team-deps-count">1 dep <span data-tooltip=0 by Stasis, 1 only lockfile>\(0 ${mark}\)</span></span>`, 'u'),
+    assert.match(head(3), new RegExp(String.raw`<span class="team-deps-count">3 deps<span class="team-deps-reach" data-tooltip=2 by Stasis, 1 only lockfile>\(2 ${mark}\)</span></span>`, 'u'))
+    assert.match(head(1), new RegExp(String.raw`<span class="team-deps-count">1 dep<span class="team-deps-reach" data-tooltip=0 by Stasis, 1 only lockfile>\(0 ${mark}\)</span></span>`, 'u'),
       'one its lockfile alone asks for told so')
     assert.doesNotMatch(head(2), /team-deps-count/u, 'one Stasis reaches not')
     assert.match(head(4), /<span class="team-deps-count">2 deps<\/span>/u, 'nor any Stasis reaches all of')
-    assert.match(head(5), new RegExp(String.raw`<span class="team-deps-count">5 deps <span data-tooltip=1 by Stasis, 1 only lockfile, 3 more not listed>\(1\+ ${mark}\)</span></span>`, 'u'),
+    assert.match(head(5), new RegExp(String.raw`<span class="team-deps-count">5 deps<span class="team-deps-reach" data-tooltip=1 by Stasis, 1 only lockfile, 3 more not listed>\(1\+ ${mark}\)</span></span>`, 'u'),
       'of those listed alone, at least as many where some aren\'t')
   } finally {
     Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest' })
