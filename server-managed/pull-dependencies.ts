@@ -57,7 +57,7 @@ const READ_PARALLEL = 4
 // told or read by others is told or read again, as those read before pnpm's
 // patches' files were, and those told before their lockfiles' directories,
 // or read with the files of patches pnpm 9 names by an md5.
-export const PULL_DEPENDENCIES_READ = 5
+export const PULL_DEPENDENCIES_READ = 6
 
 type Format = 'npm' | 'pnpm' | 'yarn' | 'bun'
 

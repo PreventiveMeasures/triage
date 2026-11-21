@@ -51,6 +51,7 @@ A file of the project's own is not reviewed.
 Neither is a package installed from a directory (a `file:` dependency, which pnpm and yarn copy into `node_modules`): it is the repository's own code, wherever the directory is, not any registry's package of its name.
 Stasis tags one `npm:directory` (an ecosystem's `:directory`), naming the directory it was copied from and no integrity, as no archive was installed; triage reviews none, asks the [host](#host-reviewed-dependencies) of none, and audits none for advisories.
 A record so tagged with an integrity, or naming no directory, fails its [Stasis build](#stasis-entries) and its [bundle's review](#a-bundles-dependencies), and its bundle's advisories list it as not audited.
+A Stasis from before that tag records one as npm's, with no integrity, by the version its `package.json` names, which pnpm's lockfile doesn't: it is held to the lockfile that installs it, a pnpm or Yarn 1 one locking a package of its name from a directory (none locking that version) installing it from there, so it needs no review either.
 
 ## Patched versions
 
