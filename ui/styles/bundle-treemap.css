@@ -28,55 +28,47 @@
 /* Breadcrumbs (`_renderCrumbs`): the home crumb looks like the old title,
    focused segments in mono. The whole trail is chrome: the separators and
    the current span have suffixes theme.css's chrome list doesn't know. */
-.bundle-treemap-crumbs {
-  display: flex;
-  align-items: baseline;
-  gap: .3rem;
-  min-width: 0;
-  overflow: hidden;
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-}
-/* Home + ancestors clip from their trailing edge before the pinned current
-   crumb gives up space: a deep drill-in elides the middle. */
+.bundle-treemap-crumbs,
 .bundle-treemap-crumbs-lead {
   display: flex;
   align-items: baseline;
   gap: .3rem;
   min-width: 0;
   overflow: hidden;
-  flex: 0 1 auto;
 }
-.bundle-treemap-crumb-home {
-  flex-shrink: 0;
+.bundle-treemap-crumbs {
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* Home + ancestors clip from their trailing edge before the pinned current
+   crumb gives up space: a deep drill-in elides the middle. */
+.bundle-treemap-crumbs-lead { flex: 0 1 auto; }
+.bundle-treemap-crumb-home,
+.bundle-treemap-crumb,
+.bundle-treemap-crumb-current {
   margin: 0;
   padding: 0;
   border: 0;
   background: none;
   appearance: none;
-  -webkit-appearance: none;
+  white-space: nowrap;
+}
+.bundle-treemap-crumb-home {
+  flex-shrink: 0;
   text-transform: uppercase;
   letter-spacing: .05em;
   font-size: .7rem;
   font-weight: 600;
   color: var(--muted);
-  white-space: nowrap;
 }
 .bundle-treemap-crumb-home:not(.at-root):hover { color: var(--text); }
 .bundle-treemap-crumb,
 .bundle-treemap-crumb-current {
   min-width: 0;
   max-width: 22ch;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  appearance: none;
-  -webkit-appearance: none;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .68rem;
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }

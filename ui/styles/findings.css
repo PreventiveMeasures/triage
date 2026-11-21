@@ -232,22 +232,27 @@
   }
 }
 
-/* Fullscreen toggle (state.kanbanExpandedColumn, events.js), styled as the
-   card's `.kanban-action`. */
-.kanban-column-header .kanban-expand {
-  flex-shrink: 0;
+/* The board's icon chips: a column's fullscreen toggle
+   (state.kanbanExpandedColumn, events.js) and a card's shortcut. */
+.kanban-column-header .kanban-expand,
+.kanban-card .kanban-action {
   display: inline-flex;
   align-items: center; justify-content: center;
   padding: 0;
-  border: 0; border-radius: var(--ui-radius, 3px);
+  border: 0;
   background: none;
   line-height: 0;
   color: var(--muted);
   cursor: default;
 
   &:hover { color: var(--accent); }
-  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   & svg { width: 12px; height: 12px; }
+}
+.kanban-column-header .kanban-expand {
+  flex-shrink: 0;
+  border-radius: var(--ui-radius, 3px);
+
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 }
 
 /* Header label in its bucket's color, as `.triage-state-btn.active`. */
@@ -355,21 +360,7 @@
 /* Fix-link / comment shortcut: an <a> (opens the PR or issue), a
    .mark-fix / .mark-comment button (events.js), or an inert note for a
    free-form fix the reader can't edit; all the same icon chip. */
-.kanban-card .kanban-action {
-  margin-top: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  background: none;
-  line-height: 0;
-  color: var(--muted);
-  cursor: default;
-
-  &:hover { color: var(--accent); }
-  & svg { width: 12px; height: 12px; }
-}
+.kanban-card .kanban-action { margin-top: auto; }
 .kanban-card .kanban-fix-link { align-self: flex-end; }
 /* Display-only flag under the badge (toggled in the detail popover),
    slightly larger than the 11px glyph. */
@@ -740,13 +731,16 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   & .focus-nav { flex: none; }
 }
 
-.kanban-detail-side-body {
+.kanban-detail-side-body,
+.focus-sidebar-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 0;
   display: flex; flex-direction: column;
+}
+.kanban-detail-side-body {
   /* The rail restores the reader's position itself as cards are measured
      (kanban-rail.js); scroll anchoring would move it again. */
   overflow-anchor: none;
@@ -1096,15 +1090,6 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   background: var(--surface); backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   overflow: hidden;
-}
-
-.focus-sidebar-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 0;
-  display: flex; flex-direction: column;
 }
 
 /* Narrow viewports: the queue stacks under the main pane, height-capped. */

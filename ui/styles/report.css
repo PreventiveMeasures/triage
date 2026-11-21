@@ -673,14 +673,16 @@
   display: flex; gap: .15rem;
   margin-left: auto;
 }
-.bundle-code-rail-action {
+.bundle-code-rail-action,
+.bundle-code-close {
   display: grid; place-items: center;
   width: 1.35rem; height: 1.35rem;
   border: 0; border-radius: var(--ui-radius, 4px);
   background: transparent;
   color: var(--muted);
 }
-.bundle-code-rail-action:hover:not(:disabled) { color: var(--text); background: var(--surface-active); }
+.bundle-code-rail-action:hover:not(:disabled),
+.bundle-code-close:hover { color: var(--text); background: var(--surface-active); }
 .bundle-code-rail-action:disabled { opacity: .35; }
 .bundle-code-rail-action[aria-pressed=true] { color: var(--accent); }
 .bundle-code-rail-action:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -764,18 +766,18 @@ bundle-code-search {
   /* The custom clear button replaces the native ✕. */
   &::-webkit-search-cancel-button { display: none; }
 }
-.bundle-code-search-clear {
+.bundle-code-search-clear,
+.bundle-search-clear {
   flex-shrink: 0;
-  width: 1rem; height: 1rem;
   display: grid; place-items: center;
-  padding: 0;
-  background: transparent;
-  border: 0; border-radius: var(--ui-radius, 2px);
-  color: var(--muted);
-  font: inherit; font-size: .9rem; line-height: 1;
-  margin-right: .15rem;
+  padding: 0; margin-right: .15rem;
+  background: transparent; color: var(--muted);
+  border: 0;
+  font: inherit; line-height: 1;
+
+  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .08); }
 }
-.bundle-code-search-clear:hover { color: var(--text); background: rgb(from var(--text) r g b / .08); }
+.bundle-code-search-clear { width: 1rem; height: 1rem; border-radius: var(--ui-radius, 2px); font-size: .9rem; }
 
 /* In an inner span so `role="tablist"` doesn't wrap the lens and input. */
 .bundle-code-search-modes {
@@ -1239,16 +1241,7 @@ button.bundle-code-importers-item:hover { background: var(--surface); }
   box-shadow: var(--shadow-glass);
   overflow: hidden;
 }
-.bundle-code-close {
-  flex-shrink: 0;
-  display: grid; place-items: center;
-  width: 1.35rem; height: 1.35rem;
-  border: 0; border-radius: var(--ui-radius, 4px);
-  background: transparent;
-  color: var(--muted);
-  font-size: 1rem; line-height: 1;
-}
-.bundle-code-close:hover { color: var(--text); background: var(--surface-active); }
+.bundle-code-close { flex-shrink: 0; font-size: 1rem; line-height: 1; }
 .bundle-code-placeholder,
 .bundle-code-empty {
   flex: 1;
@@ -1308,17 +1301,7 @@ bundle-search {
   &::placeholder { color: var(--muted); }
   &::-webkit-search-cancel-button { display: none; }
 }
-.bundle-search-clear {
-  flex-shrink: 0;
-  width: 1.15rem; height: 1.15rem;
-  display: grid; place-items: center;
-  padding: 0; margin-right: .15rem;
-  background: transparent; color: var(--muted);
-  border: 0; border-radius: var(--ui-radius, 3px);
-  font: inherit; font-size: 1rem; line-height: 1;
-
-  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .08); }
-}
+.bundle-search-clear { width: 1.15rem; height: 1.15rem; border-radius: var(--ui-radius, 3px); font-size: 1rem; }
 .bundle-search-mods {
   flex-shrink: 0;
   display: inline-flex; align-items: center;
@@ -2089,27 +2072,29 @@ npm-delta { display: inline-block; flex: none; min-width: 1px; min-height: 1em; 
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
 
+  /* The Files and Reports columns' rows: whole-row buttons, a hover tint, no
+     borders. */
+  & :is(.bundles-sources-list .bundles-source-row, .bundles-reports-list .bundles-report-chip) {
+    display: flex; align-items: center;
+    width: 100%;
+    /* Half of the column body's inset (`.bundles-overview-col-body`). */
+    padding: 0 .175rem;
+    background: transparent;
+    border: 0; border-radius: var(--ui-radius, 3px);
+    color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .72rem;
+    line-height: 1.4;
+    text-align: left;
+
+    &:hover { background: var(--surface); }
+  }
   /* Sources (.map sourcesContent): path left, size right. */
   & .bundles-sources-list {
     list-style: none; margin: 0; padding: 0;
 
-    /* Whole-row button opening the source viewer: hover tint, no borders. */
-    & .bundles-source-row {
-      display: flex; align-items: center; gap: .5rem;
-      width: 100%;
-      /* Half of the column body's inset (`.bundles-overview-col-body`). */
-      padding: 0 .175rem;
-      background: transparent;
-      border: 0; border-radius: var(--ui-radius, 3px);
-      color: var(--text);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: .72rem;
-      line-height: 1.4;
-      text-align: left;
-    }
-    & .bundles-source-row:hover {
-      background: var(--surface);
-    }
+    /* Whole-row button opening the source viewer. */
+    & .bundles-source-row { gap: .5rem; }
     /* A resource row (image, font) opens nothing, so it takes no
        hover tint to say it would. */
     & .bundles-source-row.is-resource:hover {
@@ -2130,22 +2115,7 @@ npm-delta { display: inline-block; flex: none; min-width: 1px; min-height: 1em; 
     list-style: none; margin: 0; padding: 0;
 
     & li { padding: 0; }
-    & .bundles-report-chip {
-      display: flex; align-items: center; gap: .4rem;
-      width: 100%;
-      padding: 0 .175rem; height: auto;
-      border: 0; border-radius: var(--ui-radius, 3px);
-      background: transparent;
-      color: var(--text);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: .72rem;
-      line-height: 1.4;
-      max-width: none;
-      text-align: left;
-    }
-    & .bundles-report-chip:hover {
-      background: var(--surface);
-    }
+    & .bundles-report-chip { gap: .4rem; height: auto; max-width: none; }
     & .bundles-report-chip .report-chip-label {
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       min-width: 0; flex: 1;
@@ -2815,19 +2785,22 @@ body.report-fullscreen {
     gap: .2rem;
     justify-content: flex-end;
   }
-  /* Expand chevron for multi-version packages (state.expandedPackages). */
-  & .packages-row-expand {
+  /* The row's pill buttons: the expand chevron for multi-version packages
+     (state.expandedPackages) and [Issues →]. */
+  & :is(.packages-row-expand, .packages-row-issues) {
     flex-shrink: 0;
     margin-left: .25rem;
-    padding: .15rem .5rem .15rem .4rem;
-    display: inline-flex; align-items: center; gap: .3rem;
     background: transparent;
     border: 1px solid var(--border); border-radius: var(--ui-radius, 999px);
     color: var(--muted);
     font: inherit; font-size: .72rem; font-weight: 500;
     white-space: nowrap;
-    cursor: default;
     &:hover { border-color: var(--accent); color: var(--accent); }
+  }
+  & .packages-row-expand {
+    padding: .15rem .5rem .15rem .4rem;
+    display: inline-flex; align-items: center; gap: .3rem;
+    cursor: default;
     & .packages-row-expand-chevron {
       display: inline-block;
       width: .35rem; height: .35rem;
@@ -2846,20 +2819,9 @@ body.report-fullscreen {
     background: rgb(from var(--text) r g b / .015);
     & .packages-name { font-weight: 500; }
   }
-  /* Row-level [Issues →]. events.js checks
-     `[data-{package,repository}-row-issues]` before the row's `data-select-*`,
-     so it opens Issues without selecting the row. */
-  & .packages-row-issues {
-    flex-shrink: 0;
-    margin-left: .25rem;
-    padding: .15rem .55rem;
-    background: transparent;
-    border: 1px solid var(--border); border-radius: var(--ui-radius, 999px);
-    color: var(--muted);
-    font: inherit; font-size: .72rem; font-weight: 500;
-    white-space: nowrap;
-    &:hover { border-color: var(--accent); color: var(--accent); }
-  }
+  /* events.js checks `[data-{package,repository}-row-issues]` before the
+     row's `data-select-*`, so [Issues →] opens Issues without selecting. */
+  & .packages-row-issues { padding: .15rem .55rem; }
 }
 /* Off-screen rows skip layout and paint, as findings do (finding-table.css):
    a library lists thousands. Not in print. */
