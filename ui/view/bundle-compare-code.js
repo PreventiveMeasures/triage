@@ -1403,9 +1403,7 @@ export class BundleCompareCode extends LitElement {
     return html`<section class="bundle-compare-code-deps" aria-label="Dependency changes">
       <h4>Dependencies <span>${counts.join(' · ')}</span>${[...flagged].map(([label, flags]) => html`<span class="bundle-compare-code-deps-flagged">${flags.length} ${label}</span>`)}</h4>
       <ul>${chips.map(([kind, row]) => {
-        const range = kind === 'changed'
-          ? html`<span class="bundle-compare-code-dep-range">${row.from} → <b>${row.to}</b></span>`
-          : html`<span class="bundle-compare-code-dep-range">${row.range}</span>`
+        const range = html`<span class="bundle-compare-code-dep-range">${kind === 'changed' ? html`${row.from} → <b>${row.to}</b>` : row.range}</span>`
         const content = html`<span class="bundle-compare-code-dep-name">${row.name}</span>${row.kind ? html`<span class="npm-dependency-kind">${row.kind}</span>` : nothing}${range}${this.dependencyTags?.(row, kind) ?? nothing}`
         const label = `${kinds[kind][1]}: ${row.name}`
         return html`<li>${open && row.opens
@@ -1567,7 +1565,7 @@ export class BundleCompareCode extends LitElement {
           <span class="diff-half">Before<strong data-tooltip-truncated data-tooltip=${this.baseName}>${this.baseName}</strong></span>
           <span class="diff-half">After<strong data-tooltip-truncated data-tooltip=${this.otherName}>${this.otherName}</strong></span>
         </div>` : nothing}
-        ${repeat(shown, row => this._rowKey(row), row => split ? this._splitRow(row, lit) : this._unifiedRow(row, lit))}
+        ${repeat(shown, row => this._rowKey(row), row => this._row(row, lit, split))}
       </div>
       ${this._moreRows(key, limit, shown.length, rows.length, 'rows')}`
   }
@@ -1634,19 +1632,31 @@ export class BundleCompareCode extends LitElement {
     </div>`
   }
 
-  _unifiedRow(row, lit) {
+  // A diff row, its two sides apart where `split`.
+  _row(row, lit, split) {
     const { model } = lit
     if (row.kind === 'fold') return this._fold(row, lit)
     if (row.kind === 'types') return this._types(row)
     if (row.kind === 'ctx') {
-      return html`<div class="diff-row ctx" role="row"><span class="diff-num">${lineNumber(model, 'a', row.a)}</span>${this._cell(lit, 'b', row.b, ' ', null)}</div>`
+      return split ? html`<div class="diff-row ctx" role="row">
+        <span class="diff-half">${this._cell(lit, 'a', row.a, ' ', null)}</span>
+        <span class="diff-half">${this._cell(lit, 'b', row.b, ' ', null)}</span>
+      </div>` : html`<div class="diff-row ctx" role="row"><span class="diff-num">${lineNumber(model, 'a', row.a)}</span>${this._cell(lit, 'b', row.b, ' ', null)}</div>`
     }
-    const del = row.kind === 'del', [side, line] = del ? ['a', row.a] : ['b', row.b], number = lineNumber(model, side, line)
-    const words = del ? this._words(model, row.a, row.pair)?.a : this._words(model, row.pair, row.b)?.b
     const renamed = model.marked?.has(row.change)
+    let cells
+    if (split) {
+      const words = row.paired ? this._words(model, row.left, row.right) : null
+      cells = html`<span class=${classMap({ 'diff-half': true, del: row.left !== null, blank: row.left === null })}>${this._cell(lit, 'a', row.left, '−', words?.a)}</span>
+      <span class=${classMap({ 'diff-half': true, add: row.right !== null, blank: row.right === null })}>${this._cell(lit, 'b', row.right, '+', words?.b)}</span>`
+    } else {
+      const del = row.kind === 'del', [side, line] = del ? ['a', row.a] : ['b', row.b], number = lineNumber(model, side, line)
+      const words = del ? this._words(model, row.a, row.pair)?.a : this._words(model, row.pair, row.b)?.b
+      cells = html`<span class="diff-num">${del ? number : nothing}</span><span class="diff-num">${del ? nothing : number}</span><span class="diff-sign">${del ? '−' : '+'}</span>${this._codeCell(lit, side, line, words)}`
+    }
     return html`<div class=${`diff-row ${row.kind}${renamed ? ' renamed' : ''}`} role="row"
       data-tooltip=${renamed ? 'Renamed names alone' : nothing}>
-      <span class="diff-num">${del ? number : nothing}</span><span class="diff-num">${del ? nothing : number}</span><span class="diff-sign">${del ? '−' : '+'}</span>${this._codeCell(lit, side, line, words)}
+      ${cells}
     </div>`
   }
 
@@ -1661,25 +1671,6 @@ export class BundleCompareCode extends LitElement {
       drawn.set(line, code = { markup, ranges, noEol, drawn: this._code(text, markup, ranges, !noEol) })
     }
     return html`<span class=${classMap({ 'diff-code': true, 'diff-long': text.length > LONG_LINE })}>${code.drawn}${noEol ? html`<span class="diff-no-eol" data-tooltip="No newline at end of file" aria-label="No newline at end of file">⊘</span>` : nothing}</span>`
-  }
-
-  _splitRow(row, lit) {
-    const { model } = lit
-    if (row.kind === 'fold') return this._fold(row, lit)
-    if (row.kind === 'types') return this._types(row)
-    if (row.kind === 'ctx') {
-      return html`<div class="diff-row ctx" role="row">
-        <span class="diff-half">${this._cell(lit, 'a', row.a, ' ', null)}</span>
-        <span class="diff-half">${this._cell(lit, 'b', row.b, ' ', null)}</span>
-      </div>`
-    }
-    const words = row.paired ? this._words(model, row.left, row.right) : null
-    const renamed = model.marked?.has(row.change)
-    return html`<div class=${`diff-row change${renamed ? ' renamed' : ''}`} role="row"
-      data-tooltip=${renamed ? 'Renamed names alone' : nothing}>
-      <span class=${classMap({ 'diff-half': true, del: row.left !== null, blank: row.left === null })}>${this._cell(lit, 'a', row.left, '−', words?.a)}</span>
-      <span class=${classMap({ 'diff-half': true, add: row.right !== null, blank: row.right === null })}>${this._cell(lit, 'b', row.right, '+', words?.b)}</span>
-    </div>`
   }
 }
 

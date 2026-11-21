@@ -66,6 +66,15 @@ const LANES = ['removed', 'added', 'changed']
 // event instead (bundle-load.js handOffBundles).
 let _pendingSwap = null
 
+// A move from one version to another, `label` its words for screen readers,
+// the new one tinted by its `direction`, a `glyph` after it where given.
+const versionMove = (label, from, to, direction, glyph = null) => html`<span class="bundle-compare-ver" aria-label=${label}>
+      <span class="bundle-compare-ver-from">${from}</span>
+      <span class="bundle-compare-ver-arrow" aria-hidden="true">→</span>
+      <span class=${`bundle-compare-ver-to ${direction}`}>${to}</span>
+      ${glyph ? html`<span class=${`bundle-compare-ver-dir ${direction}`} aria-hidden="true">${glyph}</span>` : nothing}
+    </span>`
+
 class BundleCompare extends LitElement {
   static properties = {
     details: { attribute: false },
@@ -414,12 +423,7 @@ class BundleCompare extends LitElement {
     if (r.baseVersions.join() === r.otherVersions.join()) return r.baseVersions.length > 0 ? html`<span class="bundle-compare-dep-ver">${before}</span>` : nothing
     const direction = r.direction ?? 'changed'
     const [glyph, word] = direction === 'up' ? ['↑', 'Upgraded'] : direction === 'down' ? ['↓', 'Downgraded'] : ['±', 'Changed']
-    return html`<span class="bundle-compare-ver" aria-label=${`${word}: ${before || 'none'} to ${after || 'none'}`}>
-      <span class="bundle-compare-ver-from">${before || '—'}</span>
-      <span class="bundle-compare-ver-arrow" aria-hidden="true">→</span>
-      <span class=${`bundle-compare-ver-to ${direction}`}>${after || '—'}</span>
-      <span class=${`bundle-compare-ver-dir ${direction}`} aria-hidden="true">${glyph}</span>
-    </span>`
+    return versionMove(`${word}: ${before || 'none'} to ${after || 'none'}`, before || '—', after || '—', direction, glyph)
   }
 
   // A source's dependencies: the range each requires, or for Changed the
@@ -428,11 +432,7 @@ class BundleCompare extends LitElement {
     const rangeChars = kind === 'changed' ? 0 : Math.min(MAX_VERSION_CHARS, Math.max(0, ...rows.map(r => r.range.length)))
     const cells = r => html`<span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=${r.name}>${r.name}</span>
       ${this.source?.dependencyTags?.(r, kind) ?? nothing}${r.kind ? html`<span class="npm-dependency-kind">${r.kind}</span>` : nothing}
-      ${kind === 'changed' ? html`<span class="bundle-compare-ver" aria-label=${`Changed: ${r.from} to ${r.to}`}>
-          <span class="bundle-compare-ver-from">${r.from}</span>
-          <span class="bundle-compare-ver-arrow" aria-hidden="true">→</span>
-          <span class="bundle-compare-ver-to changed">${r.to}</span>
-        </span>`
+      ${kind === 'changed' ? versionMove(`Changed: ${r.from} to ${r.to}`, r.from, r.to, 'changed')
         : html`<span class="bundle-compare-dep-ver" data-tooltip-truncated data-tooltip=${r.range}>${r.range}</span>`}`
     // One the source can open (`openDependency`), it opens.
     const open = this.source?.openDependency
@@ -634,15 +634,11 @@ class BundleCompare extends LitElement {
     const otherName = this._nameFor(this.integrity)
     // Display paths drop the root shared by everything listed; where the
     // bundles' roots differ, the heading reads the move at the root.
-    const allPaths = [
-      ...diff.files.onlyBase.map((r) => r.path),
-      ...diff.files.onlyOther.map((r) => r.path),
-      ...diff.files.changed.flatMap((r) => r.renamedFrom == null ? [r.path] : [r.path, r.renamedFrom]),
-    ]
+    const files = { removed: diff.files.onlyBase, added: diff.files.onlyOther, changed: diff.files.changed }
+    const allPaths = [...files.removed, ...files.added, ...files.changed].flatMap(r => r.renamedFrom == null ? [r.path] : [r.path, r.renamedFrom])
     const root = rootLabel(diff.files.root, stripCommonPathPrefix(allPaths).prefix)
     const { prefix } = root
     const displayOf = p => withoutPrefix(p, prefix)
-    const files = { removed: diff.files.onlyBase, added: diff.files.onlyOther, changed: diff.files.changed }
     const fileCount = files.removed.length + files.added.length + files.changed.length
     const listsFiles = !diff.totals.identical
     // Files line up under Packages (or a source's own dependencies) while
