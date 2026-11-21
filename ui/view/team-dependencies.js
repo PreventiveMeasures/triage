@@ -460,14 +460,16 @@ export function versionRow(pkg, review, { others = [], adders = false, elsewhere
 // How many versions a pull request wants reviewed, as its card's head tells
 // them, where more than one; and, where its package manager alone asks for
 // some (`unreached`, marked `!`), how many of them Stasis reaches, by its
-// mark, its one too.
+// mark, its one too: of those its answer lists, at least as many where it
+// lists only some (`untold`), whose reach it doesn't tell.
 const STASIS_MARK = html`<img class="team-deps-stasis" src="./stasis.svg" alt="by Stasis">`
 function deps(pull) {
   const alone = pull.wanted.filter(pkg => pkg.unreached && reviewOf(pkg, pull.entry.review) === 'wanted').length
   if (pull.toReview < 2 && alone === 0) return nothing
-  const reached = pull.toReview - alone
-  return html`<span class="team-deps-count">${pull.toReview.toLocaleString('en-US')} ${pull.toReview === 1 ? 'dep' : 'deps'}${alone > 0
-    ? html` <span data-tooltip=${`${reached.toLocaleString('en-US')} by Stasis, ${alone.toLocaleString('en-US')} only lockfile`}>(${reached.toLocaleString('en-US')} ${STASIS_MARK})</span>`
+  const count = value => value.toLocaleString('en-US'), reached = pull.toReview - pull.untold - alone
+  const said = `${count(reached)} by Stasis, ${count(alone)} only lockfile${pull.untold > 0 ? `, ${count(pull.untold)} more not listed` : ''}`
+  return html`<span class="team-deps-count">${count(pull.toReview)} ${pull.toReview === 1 ? 'dep' : 'deps'}${alone > 0
+    ? html` <span data-tooltip=${said}>(${count(reached)}${pull.untold > 0 ? '+' : ''} ${STASIS_MARK})</span>`
     : nothing}</span>`
 }
 

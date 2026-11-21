@@ -833,7 +833,7 @@ test('a card\'s own versions shown whole up to fifteen, more folded to ten; thos
 test('a card\'s count of versions to review tells how many Stasis reaches where its lockfile alone asks for some; one version told so only where its lockfile alone asks for it', async () => {
   TEAM.push(18)
   branches[18] = { cut: false, review: { ...terms, unreviewed: 0 }, lockfiles: [dir()] }
-  pulls[18] = { items: [1, 2, 3, 4].map(number => pull(number)), more: false }
+  pulls[18] = { items: [1, 2, 3, 4, 5].map(number => pull(number)), more: false }
   const lone = name => wants(name, { unreached: true })
   Object.assign(dependencies, {
     '18#1': { cut: false, review: terms, lockfiles: [dir({ added: [lone('solo')] })] },
@@ -841,6 +841,8 @@ test('a card\'s count of versions to review tells how many Stasis reaches where 
     // Three, one its lockfile alone asks for; and one of those passed, not counted.
     '18#3': { cut: false, review: terms, lockfiles: [dir({ added: [wants('a'), wants('b'), lone('c'), wants('passed', { unreached: true, reviews: 2 })] })] },
     '18#4': { cut: false, review: terms, lockfiles: [dir({ added: [wants('d'), wants('e')] })] },
+    // Five, two of them listed, one its lockfile alone asks for: the reach of the three past them untold.
+    '18#5': { cut: false, review: { ...terms, toReview: 5 }, lockfiles: [dir({ added: [wants('f'), lone('g')], more: 3 })] },
   })
   Object.assign(state, { managedSession: { id: 'stasis-count', role: 'triage' }, teamDependenciesTab: 'pulls', teamDependenciesSort: 'newest' })
   try {
@@ -852,6 +854,8 @@ test('a card\'s count of versions to review tells how many Stasis reaches where 
       'one its lockfile alone asks for told so')
     assert.doesNotMatch(head(2), /team-deps-count/u, 'one Stasis reaches not')
     assert.match(head(4), /<span class="team-deps-count">2 deps<\/span>/u, 'nor any Stasis reaches all of')
+    assert.match(head(5), new RegExp(String.raw`<span class="team-deps-count">5 deps <span data-tooltip=1 by Stasis, 1 only lockfile, 3 more not listed>\(1\+ ${mark}\)</span></span>`, 'u'),
+      'of those listed alone, at least as many where some aren\'t')
   } finally {
     Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest' })
     routes.length = 0
