@@ -82,6 +82,9 @@ const TELLING = { status: 'loading', until: Number.POSITIVE_INFINITY }
 // (`defaultBranch`), as its team's read tells the dependencies of those
 // alone (http.ts): one whose branch, or the default, isn't told is.
 const ontoDefault = (item, defaultBranch) => !defaultBranch || typeof item.base !== 'string' || item.base === defaultBranch
+// Whether its team's read tells a pull request's dependencies: one into its
+// repository's default branch, not a draft (http.ts).
+const toldOf = (item, defaultBranch) => ontoDefault(item, defaultBranch) && item.draft !== true
 // A pull request's dependencies as its team's read told them, else still to
 // be told; one awaiting a build of Stasis's asked again alone as it grows old.
 function pullEntry(repoId, number) {
@@ -224,7 +227,7 @@ function toldLine(line, entry, hold) {
     const defaultBranch = typeof line.pulls?.defaultBranch === 'string' && line.pulls.defaultBranch ? line.pulls.defaultBranch : null
     const unread = typeof line.pulls?.error === 'string' && line.pulls.error ? { error: line.pulls.error } : {}
     hold(telling({ status: 'ready', branch, pulls: { items, more: line.pulls?.more === true, ...unread, ...defaultBranch ? { defaultBranch } : {} },
-      ...branch.pending ? { pending: true } : {} }, new Set(items.filter(item => readsDependencies(item) && ontoDefault(item, defaultBranch)).map(item => item.number))))
+      ...branch.pending ? { pending: true } : {} }, new Set(items.filter(item => readsDependencies(item) && toldOf(item, defaultBranch)).map(item => item.number))))
   } else if (line.dependencies instanceof Map && entry.telling) {
     seedPullDependencies(line.repoId, line.dependencies, true)
     hold(telling(entry, new Set([...entry.telling].filter(number => !line.dependencies.has(number)))))
@@ -603,13 +606,17 @@ class TeamDependencies extends StateElement {
     const reviewed = reads.filter(({ read }) => read.status === 'ready' && read.branch)
     // Each pull request's as the team's read told it, or as it was while it
     // is read again; those to merge into other branches than their
-    // repository's default (`into`) hidden but where all are asked for, each
-    // then read alone (pullDependencies), as the team's read tells none.
+    // repository's default (`into`) hidden but where all are asked for, and
+    // drafts but where they are, each then read alone (pullDependencies), as
+    // the team's read tells none.
     const every = state.teamDependenciesAllBranches === true
-    const intoOthers = reviewed.reduce((sum, { read }) => sum + read.pulls.items.filter(item => readsDependencies(item) && !ontoDefault(item, read.pulls.defaultBranch)).length, 0)
-    const pulls = reviewed.flatMap(({ repo, read }) => read.pulls.items.filter(readsDependencies).flatMap(item => ontoDefault(item, read.pulls.defaultBranch)
-      ? [{ repo, item, entry: pullEntry(repo.repoId, item.number) }]
-      : every ? [{ repo, item, into: item.base, entry: pullDependencies(repo.repoId, item.number, true, { background: true }) }] : []))
+    const drafts = state.teamDependenciesDrafts === true
+    const listing = reviewed.flatMap(({ repo, read }) => read.pulls.items.filter(readsDependencies).map(item => ({ repo, item, onto: ontoDefault(item, read.pulls.defaultBranch) })))
+    const intoOthers = listing.filter(({ onto }) => !onto).length
+    const draftCount = listing.filter(({ item, onto }) => item.draft === true && (onto || every)).length
+    const pulls = listing.flatMap(({ repo, item, onto }) => (!onto && !every) || (item.draft === true && !drafts) ? []
+      : onto && item.draft !== true ? [{ repo, item, entry: pullEntry(repo.repoId, item.number) }]
+      : [{ repo, item, ...onto ? {} : { into: item.base }, entry: pullDependencies(repo.repoId, item.number, true, { background: true }) }])
     // Each pull request's versions wanting reviews, as many as its answer
     // tells, and how many in all, those past them too (`toReview`), by which
     // it is kept; how many reviews they still want between them (`left`),
@@ -724,9 +731,12 @@ class TeamDependencies extends StateElement {
             <div class="compare-tip-rows">${failures.map(([name, error]) => html`<span>${shorten(name)}</span><span>${error}</span>`)}</div></div>`}>${plural(failed.length,
             'repository or pull request')} couldn’t be read.</p>` : nothing}
         ${tab === 'pulls' && lacking > 0 ? html`<p class="team-deps-quiet team-deps-key">${plural(lacking, 'version')} ${lacking === 1 ? 'lacks' : 'lack'} reviews made elsewhere</p>` : nothing}
-        ${tab === 'pulls' && (intoOthers > 0 || every) ? html`<mode-switch class="team-deps-branches" label="All branches" .checked=${every}
+        ${tab === 'pulls' && (intoOthers > 0 || every || draftCount > 0 || drafts) ? html`<span class="team-deps-switches">${intoOthers > 0 || every
+          ? html`<mode-switch class="team-deps-branches" label="All branches" .checked=${every}
           data-tooltip=${`${plural(intoOthers, 'pull request')} into ${intoOthers === 1 ? 'a branch' : 'branches'} other than the default`}
-          @click=${() => { state.teamDependenciesAllBranches = !every }}></mode-switch>` : nothing}
+          @click=${() => { state.teamDependenciesAllBranches = !every }}></mode-switch>` : nothing}${draftCount > 0 || drafts
+          ? html`<mode-switch class="team-deps-drafts" label="Drafts" .checked=${drafts} data-tooltip=${plural(draftCount, 'draft pull request')}
+          @click=${() => { state.teamDependenciesDrafts = !drafts }}></mode-switch>` : nothing}</span>` : nothing}
         ${tab === 'pulls' && reviewed.length > 0 && sorted.length > 1 ? html`<span class="bundles-overview-sort" role="group" aria-label="Pull request order">${Object.entries(SORTS)
           .map(([value, [label]]) => html`<button type="button" aria-pressed=${String(value === sort)} @click=${() => { state.teamDependenciesSort = value }}>${label}</button>`)}</span>`
           : nothing}
@@ -735,7 +745,8 @@ class TeamDependencies extends StateElement {
         ? html`<p class="workspace-content-empty">None of this team’s repositories reviews its dependencies for you.</p>` : nothing}
       ${tab === 'branch' ? nothing : unchecked.map(({ repo, read }) => html`<p class="team-deps-quiet" role="alert">Only ${shorten(repo.name)}’s ${plural(read.pulls.items.length, 'open pull request')}
         updated latest are checked; its others aren’t.</p>`)}
-      ${reviewed.length === 0 ? nothing : tab === 'pulls' ? this.renderPulls(cards, adding, reading || building, unchecked.length + unread.length > 0, naming, !every && intoOthers > 0)
+      ${reviewed.length === 0 ? nothing : tab === 'pulls' ? this.renderPulls(cards, adding, reading || building, unchecked.length + unread.length > 0, naming,
+        { others: !every && intoOthers > 0, drafts: !drafts && draftCount > 0 })
         : tab === 'versions' ? this.renderVersions(adding, reading || building, naming) : branches.map(({ repo, read }) => this.renderBranch(repo, read, naming))}`}
       </div>
     </div>`
@@ -751,9 +762,10 @@ class TeamDependencies extends StateElement {
   // reviews says how many in its head, as none else lists those. One wanting none is not listed, its copy in its
   // popup. Every card a column wide, however many versions it lists; how
   // many it wants reviewed told where more than one, muted.
-  renderPulls(cards, adding, reading, unchecked, { elsewhere, named, among, standing }, othersHidden = false) {
+  renderPulls(cards, adding, reading, unchecked, { elsewhere, named, among, standing }, { others: othersHidden = false, drafts: draftsHidden = false } = {}) {
     if (cards.length === 0) {
-      return reading ? nothing : html`<p class="workspace-content-empty">No open pull request${unchecked ? ' checked' : ''}${othersHidden ? ' into a default branch' : ''} wants its dependencies reviewed.</p>`
+      return reading ? nothing : html`<p class="workspace-content-empty">No open pull request${unchecked ? ' checked' : ''}${othersHidden ? ' into a default branch' : ''} wants its dependencies reviewed.${
+        draftsHidden ? ' Drafts are hidden.' : ''}</p>`
     }
     const row = pull => pkg => {
       const { under, lacks } = standing(pkg, pull)
@@ -768,7 +780,8 @@ class TeamDependencies extends StateElement {
       return html`<li class="team-deps-pull${covered ? ' is-covered' : ''}">
         <div class="team-deps-pull-top">${covered ? html`<button type="button" class="team-deps-fold" aria-expanded=${String(opened)} aria-label=${`${named(pull)}’s versions`}
           @click=${() => this.toggle(`${key}:covered`)}>${CHEVRON}</button>` : nothing}<a class="team-deps-pull-head" href=${href} target="_blank" rel="noopener noreferrer" @click=${event => this.open(event, pull)}>
-          <span class="team-deps-pull-name">${named(pull)}</span>${pull.into ? html`<span class="team-deps-pull-base" data-tooltip=${`Into ${pull.into}`}>→ ${pull.into}</span>` : nothing}<span class="team-deps-pull-title">${pull.item.title || '(no title)'}</span>
+          <span class="team-deps-pull-name">${named(pull)}</span>${pull.into ? html`<span class="team-deps-pull-base" data-tooltip=${`Into ${pull.into}`}>→ ${pull.into}</span>` : nothing}${pull.item.draft === true
+            ? html`<span class="team-deps-pull-draft">Draft</span>` : nothing}<span class="team-deps-pull-title">${pull.item.title || '(no title)'}</span>
           ${covered ? html`${pull.others > 0 ? html`<span class="team-deps-count is-wanted">${pull.others.toLocaleString('en-US')} ${pull.others === 1 ? 'other' : 'others'} unreviewed</span>` : nothing}
             <span class="team-deps-under">${few([...new Set(same.map(pkg => standing(pkg, pull).under))])}</span>`
             : pull.failed ? html`<span class="team-deps-count is-failed">review fails</span>`

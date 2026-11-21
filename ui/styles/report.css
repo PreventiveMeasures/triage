@@ -1974,11 +1974,13 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 
   & > .team-deps-quiet { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   & > .bundles-overview-sort { margin-left: auto; flex: none; box-sizing: border-box; height: 1.3rem; }
-  /* Whether the pull requests into other branches than the default show, at
-     its end, before their order, as tall and as small as its buttons. */
-  & > .team-deps-branches {
-    margin-left: auto; flex: none; --switch-track-width: 20px; --switch-track-height: 11px;
-    &::part(button) { height: 1.3rem; gap: .35rem; padding: 0 .4rem; font-size: .65rem; }
+  /* Whether the pull requests into other branches than the default show,
+     and drafts, at its end, before their order, as tall and as small as its
+     buttons. */
+  & > .team-deps-switches {
+    display: inline-flex; gap: .375rem; margin-left: auto; flex: none;
+    & > mode-switch { --switch-track-width: 20px; --switch-track-height: 11px; }
+    & > mode-switch::part(button) { height: 1.3rem; gap: .35rem; padding: 0 .4rem; font-size: .65rem; }
     & + .bundles-overview-sort { margin-left: 0; }
   }
   /* What the red rows are, in their color. */
@@ -2012,6 +2014,11 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 }
 .team-deps-pull-name { flex: none; color: var(--muted); font-size: .75rem; font-variant-numeric: tabular-nums; }
+/* A draft, as GitHub tells one. */
+.team-deps-pull-draft {
+  flex: none; padding: 0 .35rem; border: 1px solid var(--border); border-radius: 999px;
+  color: var(--muted); font-size: .66rem; line-height: 1.4;
+}
 /* The branch one into another than its repository's default is to merge into. */
 .team-deps-pull-base {
   flex: 0 1 auto; min-width: 2rem; max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
