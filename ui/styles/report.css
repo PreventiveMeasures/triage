@@ -1,13 +1,5 @@
 @import './prose.css';
 
-/* Top-level report container — hidden until a report is loaded
-   (`#report.active`). Spans the full main-content width so the
-   header + tab bar + graph tabs can use as much horizontal
-   room as the viewport offers. Findings content has its own
-   max-width wrapper (.findings-content below) since long
-   description text + code blocks read better at typewriter
-   widths than at 2400px wide. */
-
 /* Scan forms fill the available area and let their content set the page height. */
 #scan-slot {
   display: flex;
@@ -15,8 +7,7 @@
   flex: 1 1 auto;
 }
 
-/* Bound managed pages to the viewport so their collections own scrolling.
-   The entire report/bundle host remains a drag-and-drop upload target. */
+/* Managed pages fill the viewport so their collections own scrolling. */
 .managed-page-slot {
   display: flex;
   flex-direction: column;
@@ -30,40 +21,19 @@
 
 #report {
   --report-padding-block: 1rem;
-  display: none; padding: var(--report-padding-block) 1.5rem; width: 100%; box-sizing: border-box;
+  display: none; padding: var(--report-padding-block) 1.5rem; width: 100%;
 
-  /* Active state runs flex-column so the graph view-mode can hang a
-     `flex: 1` chain off of it (.findings-content.with-graph →
-     .graph2-layout) to fill the viewport's remaining height below
-     the page header. `min-height: 100%` makes #report span its
-     scroll container (#main-content is 100vh-bound by body's flex
-     layout), which the chain then divides between the header and
-     the graph panel. Non-graph views (table / list / grouped /
-     files) are content-sized and behave like block layout under
-     flex-column with default align-stretch. `flex-shrink: 0`
-     prevents the flex algorithm from squishing #report to 100vh
-     when findings overflow — without it, findings are clipped
-     outside the report's painted area and padding-bottom has no
-     effect. */
+  /* Flex column so the graph view's `flex: 1` chain (.findings-content.with-graph
+     → .graph2-layout) fills the height below the header. `flex-shrink: 0` keeps
+     overflowing findings from squishing #report to 100vh (clipping them and
+     losing padding-bottom). */
   &.active {
     display: flex; flex-direction: column; min-height: 100%; flex-shrink: 0;
 
-    /* Inner views that own their own scroll (bundle terminal,
-       code viewer, packages slide, kanban board, bundles/packages
-       list + details panels, findings list) need #report itself
-       to track #main-content's viewport height — otherwise the
-       flex chain that lands at `.output` / `.kanban-board` /
-       `.bundles-list` / `.bundles-details-body` /
-       `#findings-body-slot` (overflow: auto) has no bounded
-       parent, that pane grows to its content size instead of its
-       allotted space, and the wheel scrolls the whole page rather
-       than just the inner pane. Revert to default flex-shrink for
-       those views; unqualified `.findings-content` is safe to join
-       because the findings body slot owns its own overflow (see the
-       `@media not print` block below). `.bundles-view` /
-       `.packages-view` covers both the regular list view and the
-       slide variant (which carries both classes). `.links-view`
-       scrolls its list of links the same way. */
+    /* Views that scroll internally (bundles / packages / links lists, findings
+       body, kanban, terminal, code viewer) need #report to track #main-content's
+       height, or their `overflow: auto` pane grows to its content and the wheel
+       scrolls the page instead. */
     &:has(
       .bundles-view, .packages-view, .links-view,
       .findings-content, team-dependencies, .bundle-code-view.is-single-file
@@ -71,11 +41,7 @@
     &:has(> .managed-page-slot) { flex: 1; min-height: 0; }
   }
 
-  /* Descendant selector, not direct child: the header is Lit-
-     rendered into a `<div id="header-slot">` placeholder so a
-     `& >` path wouldn't match. Still unique — the only
-     `header.page-head` inside #report (the details-panel header
-     uses `.findings-table-details-bar`). */
+  /* Descendant, not child: the header renders into `#header-slot`. */
   & header.page-head {
     display: flex; align-items: flex-start; justify-content: space-between;
     gap: 1rem;
@@ -84,11 +50,8 @@
     padding-right: 56px;
     margin-bottom: 1.125rem;
 
-    /* Page-title fills the header so the sync-status badge nested
-       inside its `h1` (via Lit's `${syncBadgeTemplate()}` in
-       render.js) can right-align via `margin-left: auto`.
-       `min-width: 0` keeps long titles from blowing out the flex
-       container. */
+    /* Fills the header so the sync badge in its h1 can right-align
+       (`margin-left: auto`); `min-width: 0` keeps long titles from overflowing. */
     & .page-title { flex: 1; min-width: 0; }
 
     & .page-title h1 {
@@ -97,18 +60,11 @@
       display: flex; align-items: center; gap: .625rem var(--header-column-gap, .625rem); flex-wrap: wrap;
     }
 
-    /* Pill chip naming the active report file. Pairs the type-
-       specific brand sticker (eye for DeepView, Anthropic logo for
-       Claude Security, OpenAI for Codex Security, Vercel for
-       DeepSec, shield for Piolium — see view/file-display.js's
-       FILE_ICONS) with the filename so the chip reads as "this is a
-       Claude / Codex / DeepSec / Piolium / DeepView report" at a
-       glance. Min-height matches the sibling repo-chip (which is
-       sized by its 18px pencil button + .125rem padding) so all
-       three pills in the title row share the same height. */
+    /* Pill naming the active report file beside its brand sticker. Min-height
+       matches the repo-chip so all title-row pills share one height. */
     & .file-chip, & .files-toggle-btn {
       display: inline-flex; align-items: center; gap: .375rem;
-      min-height: 24px; box-sizing: border-box;
+      min-height: 24px;
       padding: .125rem .5rem;
       background: var(--surface);
       border: var(--header-tag-border, 1px solid var(--border));
@@ -135,11 +91,8 @@
     /* Position the copy feedback over the report button without resizing it. */
     & .file-chip { user-select: none; position: relative; }
     & .file-chip svg { flex-shrink: 0; }
-    /* Click-to-copy the report name (data-copy-report, events.js): on
-       copy, a frosted "Copied" overlay covers the chip for ~1s —
-       absolutely positioned (out of flow + pointer-events: none) so the
-       chip never changes size and the click still lands. The glass blur
-       frosts the report name behind it so it doesn't read through. */
+    /* Click-to-copy (data-copy-report): a frosted "Copied" overlay, out of flow
+       and `pointer-events: none` so the chip never resizes and clicks still land. */
     & .file-chip.copied::after {
       content: 'Copied';
       position: absolute;
@@ -155,9 +108,7 @@
       pointer-events: none;
     }
 
-    /* Meta-row: count + model/effort/exports tags + analyzer cell.
-       Wraps on narrow viewports; separator dots flow with the wrap so
-       broken rows don't trail orphaned bullets. */
+    /* Count + tags + analyzer, wrapping on narrow viewports. */
     & .meta-row {
       color: var(--muted); font-size: .75rem;
       display: flex; gap: .625rem; align-items: center; flex-wrap: wrap;
@@ -180,13 +131,6 @@
       white-space: nowrap;
     }
 
-    /* `<repo-chip>` carries its own shadow-DOM styles for the chip,
-       pencil, and edit-mode input — the component is rendered into
-       the title `h1` via render.js's `repoChipTemplate`. CSS
-       custom properties (`--surface`, `--border`, `--text`, etc.)
-       inherit through the shadow boundary so theme switching works
-       without copying rules here. */
-
     /* The title becomes a navigation button only outside findings. */
     & .workspace-title-link {
       border: 0;
@@ -201,20 +145,12 @@
       &:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
     }
 
-    /* Per-report sync-status badge — rendered inside the title `h1`
-       (flex row alongside file-chip / repo-chip / files-toggle-btn)
-       so it shares their baseline. `margin-left: auto` eats the
-       remaining h1 space, pushing the badge to the header's right
-       edge, inside the window-control clearance. Two `data-status` states:
-         local — hard-drive icon, neutral chrome (not yet in remote
-                 inventory); clickable to open the upload dialog
-         cloud — cloud icon, accent border + text (tag present in
-                 objstore.list())
-       Pill chrome mirrors .files-toggle-btn / .file-chip so all
-       title-row chips share one height + corner shape. */
+    /* Per-report sync badge in the title h1; `margin-left: auto` pushes it to
+       the header's right edge. `data-status`: local (not uploaded; opens the
+       upload dialog), cloud, differ. */
     & .report-sync-badge {
       display: inline-flex; align-items: center; gap: .375rem;
-      min-height: 24px; box-sizing: border-box;
+      min-height: 24px;
       margin-left: auto;
       padding: .125rem .5rem .125rem .4rem;
       background: var(--surface);
@@ -238,9 +174,8 @@
         border-color: var(--warning);
         color: var(--warning);
       }
-      /* Workspace-aggregate variant: two side-by-side chips
-         ("N cloud / M local") with a divider between. Either chip
-         can be clickable (local opens multi-upload). */
+      /* Workspace aggregate: "N cloud / M local" chunks with a divider; either
+         can be clickable. */
       & .sync-badge-chunk {
         display: inline-flex; align-items: center; gap: .25rem;
         background: transparent; border: 0; padding: 0; margin: 0;
@@ -263,11 +198,8 @@
   }
 }
 
-/* Severity status bar — flex-row of segments whose flex-grow is set to
-   each severity's group count (so widths divide proportionally). In the
-   header's meta-row, and in a team's header bar between its title and its
-   tabs: a one-glance shape of how bad the findings are at the same
-   resolution as the toolbar chips below. */
+/* Severity bar: each segment's flex-grow is its severity's count. In the
+   header meta-row and a team's header bar. */
 .status-bar {
   display: inline-flex;
   width: 200px; height: 8px;
@@ -279,13 +211,6 @@
 .status-seg {
   display: block; height: 100%;
   flex-basis: 0;
-  &.sev-critical      { background: var(--critical); }
-  &.sev-high          { background: var(--high); }
-  &.sev-medium        { background: var(--medium); }
-  &.sev-low           { background: var(--low); }
-  &.sev-high_bug      { background: var(--high-bug); }
-  &.sev-bug           { background: var(--bug); }
-  &.sev-informational { background: var(--info); }
 }
 
 /* The uncapped header reserves the actual PWA window-control area,
@@ -298,27 +223,12 @@
   }
 }
 
-/* Findings list (cards / table / grouped rows) — max-width
-   capped so finding descriptions stay readable at long
-   viewport widths. Left-aligned (no auto margin) so the
-   page reads top-down with the chrome above going full-width
-   and the list anchored to the left, leaving the right side
-   empty at wide viewports.
-
-   `.with-details` is added by render.js when the table view's
-   details panel is open: the wrapper grows to fit the 3 fr +
-   2 fr split (1200 list + 800 panel = 2000 max). */
-/* `display: contents` flattens the slot wrapper render() emits so
-   the flex chain from #report reaches .bundles-view directly — same
-   pattern the graph view uses for #findings-graph-slot. Every
-   internally-scrolling page needs it: without the flattening the
-   plain slot div is the flex item, the view inside it is
-   content-sized, and its `flex: 1` list grows past the viewport
-   instead of scrolling. */
-#bundles-slot { display: contents; }
-/* Report triage loading (render.js renderTriageLoading): the status in the
-   middle of the page, a team's header above it where it shows one, the
-   middle all the same. */
+/* `display: contents` flattens slot wrappers so the flex chain from #report
+   reaches the view inside; otherwise its `flex: 1` list grows past the
+   viewport instead of scrolling. */
+#bundles-slot, #packages-slot, #repositories-slot, #links-slot, #dropped-lockfile-slot { display: contents; }
+/* Report triage loading (render.js renderTriageLoading): centered on the
+   page, under a team's header where one shows. */
 #triage-loading-slot {
   flex: 1;
   display: flex; flex-direction: column;
@@ -331,19 +241,10 @@
   color: var(--muted);
   pointer-events: none;
 }
-#packages-slot { display: contents; }
-#repositories-slot { display: contents; }
-#links-slot { display: contents; }
 
-/* Bundle slide — full-width view for Graph / Issues: header bar
-   (back button + bundle name + sub-tab switcher) on top, active
-   sub-tab's content edge-to-edge below. Same flex chain as the
-   regular .bundles-view so the body fills the viewport.
-   Two-class compound for specificity to beat `.bundles-view`'s
-   `max-width: 1200px` — without it the cap leaks back and cramps
-   the graph at 1200px regardless of viewport. The .packages-view
-   variant shares the chrome (package Issues drill-in renders
-   edge-to-edge through the same .bundles-slide-* classes). */
+/* Bundle slide: header bar over the active sub-tab's edge-to-edge content.
+   Two classes to beat `.bundles-view`'s 1200px cap; the packages slide
+   shares the chrome. */
 .bundles-view.bundles-slide-view,
 .packages-view.packages-slide-view {
   max-width: none;
@@ -368,16 +269,13 @@
   flex-shrink: 0;
 }
 
-/* In WCO the OS controls anchor top-right; without this the slide bar
-   runs full width and tucks under them.
-   Shared --wco-right-toolbar var (theme.css) keeps the inset in
-   sync with the seam-cover blob — single source of truth. */
+/* In WCO the OS controls sit top-right; --wco-right-toolbar (theme.css)
+   insets the bar to clear them. */
 /* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
 @media (display-mode: window-controls-overlay) {
   .bundles-slide-bar { margin-right: var(--wco-right-toolbar); }
-  /* As with management navigation, an intrinsic-width flex bar clears the
-     window-control float when it cannot fit beside it. Its controls stay
-     vertically centered in the native titlebar. */
+  /* As in management navigation, an intrinsic-width bar clears the
+     window-control float when it can't fit beside it. */
   .bundles-slide-header {
     display: flow-root;
     flex-shrink: 0;
@@ -404,10 +302,8 @@
   }
   .bundles-slide-header:not(.boxed) .bundles-slide-bar { transform: translateY(1px); }
   .bundles-slide-header:not(.boxed) .bundles-scan-button { margin-right: 10px; }
-  /* Unboxed, the name counts at most 20rem toward the bar's width, so a
-     long name ellipsizes instead of pushing the bar out of the titlebar.
-     The title then grows into the free space up to the full name; only
-     what is left separates it from the tabs. */
+  /* Unboxed, the name counts at most 20rem toward the bar's width so a long
+     one ellipsizes instead of pushing the bar out of the titlebar. */
   .bundles-slide-header:not(.boxed) .bundles-slide-title {
     flex: 1 1 auto;
     width: calc-size(max-content, min(size, 20rem));
@@ -487,11 +383,8 @@
   flex-shrink: 0;
 }
 
-/* A team's header (workspace-content.js teamHeaderTemplate): its title,
-   its findings' severities a little way after it (3rem with the bar's gap),
-   and its tabs at the right, each counting what it opens (toolbar.css
-   .team-slide-tab .n). Where they don't fit side by side, the tabs wrap
-   under them, at the right, as a repository's do. */
+/* A team's header (workspace-content.js teamHeaderTemplate): title, severity
+   bar, then tabs at the right, wrapping under them where they don't fit. */
 .team-slide-name {
   flex: 0 1 auto; min-width: 0;
   margin: 0;
@@ -520,14 +413,9 @@
   overflow: hidden;
 }
 
-/* Shared body placeholder for the non-Overview tabs — shown while
-   the bundle parse is in flight ("Loading bundle…") and when it
-   failed ("Failed to parse: …"). Centered like .bundle-code-empty;
-   scrolls because `details.error` is unbounded (a JSON.parse
-   SyntaxError on a malformed .map can run long). `safe center` so
-   content taller than the body aligns to start instead of
-   overflowing both edges — a plain `center` would clip the top of
-   the message beyond scroll reach. */
+/* Placeholder for the non-Overview tabs while parsing or after a parse error.
+   Scrolls because the error text is unbounded; `safe center` aligns tall
+   content to the start instead of clipping its top. */
 .bundles-slide-placeholder {
   flex: 1;
   display: flex; align-items: safe center; justify-content: center;
@@ -538,12 +426,8 @@
 }
 .bundles-slide-placeholder.is-error { color: var(--critical); }
 
-/* Overview tab — metadata block on top, three independently-
-   scrollable columns (Packages / Files / Reports) below. The body
-   is a non-scrolling flex column; the columns row owns the
-   remaining height and each column's body scrolls internally. Other
-   slide tabs (Graph, Terminal, Issues, Code, Treemap) keep the
-   edge-to-edge body, each owning its own internal layout. */
+/* Overview tab: metadata on top, independently scrolling Packages / Files /
+   Reports columns below. */
 .bundles-slide-body-overview {
   display: flex;
   flex-direction: column;
@@ -560,16 +444,12 @@
   padding: .75rem .75rem 0;
   flex-shrink: 0;
 }
-/* Exports column — a sibling "column" to the metadata blocks in
-   `.bundles-detail-meta-row`, holding the bundle's export actions
-   (Download bundle, with more to follow). A size container so the
-   inner button row can react to the column's own width. */
+/* Exports column beside the meta blocks; a size container so its button row
+   reacts to the column's width. */
 .bundles-overview-exports {
   container-type: inline-size;
 }
-/* GitHub-style language composition bar. It is deliberately label-free:
-   each segment's shared tooltip carries the language, share, and LOC
-   count, while the bar stays compact enough to sit below the export row. */
+/* Label-free language bar; each segment's tooltip has language, share, LOC. */
 .bundles-languages-bar {
   display: flex;
   width: 100%;
@@ -584,11 +464,8 @@
   min-width: 1px;
   height: 100%;
 }
-/* The buttons. They keep their natural width and wrap, so they stack
-   while the column is narrow and flow into a row once it widens.
-   Right-aligned (hugging the column's right edge) while it sits as the
-   rightmost side column; the @container rule below left-aligns them
-   once the column spans its own wider line and reads as a row. */
+/* The buttons keep their width and wrap: stacked and right-aligned while
+   the column is narrow, a left-aligned row once it widens (below). */
 .bundles-overview-exports-row {
   display: flex;
   flex-wrap: wrap;
@@ -596,16 +473,12 @@
   align-items: flex-start;
   gap: .4rem;
 }
-/* Spanned onto its own line → left-aligned row. The grow split on
-   `.bundles-detail-meta-row` keeps the column at its ~160px floor while
-   it shares a line, so it only crosses this width once it's alone. */
+/* The meta-row's grow split keeps this column near 160px while it shares a
+   line, so it only crosses 240px once alone. */
 @container (width >= 240px) {
   .bundles-overview-exports-row { place-content: flex-start; }
 }
-/* Individual export button. Matches the sibling bundle action buttons
-   (.bundles-slide-back / .bundle-code-issue-step): a quiet bordered
-   chip with the standard accent border+text on hover, and the default
-   cursor theme.css gives chrome buttons (no pointer override). */
+/* Export button: a quiet bordered chip, accent on hover. */
 .bundles-download-btn {
   display: inline-flex; align-items: center; gap: .4rem;
   padding: .3rem .6rem;
@@ -619,12 +492,9 @@
   & > svg { display: block; flex-shrink: 0; }
   &:hover { border-color: var(--accent); color: var(--accent); }
 }
-/* SBOM exports as a fused "double button" — the CycloneDX + SPDX
-   segments share a single 1px divider (the `|`) and stay together on
-   one row. The segments drop their inner corner radii; the second
-   overlaps the first's border by 1px so the shared edge reads as one
-   line, and the hovered segment lifts above its neighbour so its
-   accent border wins on both sides of the seam. */
+/* SBOM pair (CycloneDX | SPDX) fused into one button: inner corners square,
+   the second overlapping the first's border by 1px, the hovered one raised
+   so its accent border wins at the seam. */
 .bundles-export-pair {
   display: inline-flex;
 }
@@ -645,9 +515,7 @@
   z-index: 1;
 }
 .bundles-overview-columns {
-  /* Wide layout — flex auto-distributes equal-width columns
-     regardless of count (2 with Reports absent, 3 with Reports
-     present). DOM order is Packages, Files, Reports.  */
+  /* Equal-width columns whatever their count (2 or 3). */
   display: flex;
   gap: .75rem;
   padding: .75rem;
@@ -655,15 +523,8 @@
   min-height: 0;
 }
 
-/* Below 1200px the three-column row gets cramped, so switch to a
-   2-column / 2-row grid with Packages spanning both rows on the
-   left and Reports / Files stacked on the right:
-       packages | reports
-                | files
-   When Reports is absent (2-child case), Files takes both right
-   rows so the right column doesn't leave a blank top half — the
-   `:has(~ .bundles-overview-col)` rule below shrinks Files to row
-   2 only when a Reports sibling exists. */
+/* Below 1200px: a 2×2 grid, Packages spanning both rows on the left,
+   Reports over Files on the right; without Reports, Files takes both rows. */
 @media (width < 1200px) {
   .bundles-overview-columns {
     display: grid;
@@ -673,8 +534,7 @@
   .bundles-overview-col { flex: initial; }
   /* Packages — left column, both rows. */
   .bundles-overview-col:nth-child(1) { grid-column: 1; grid-row: 1 / 3; }
-  /* Files — right column. Defaults to both rows (no Reports
-     case); shrinks to row 2 only when a Reports sibling follows. */
+  /* Files — right column, both rows unless Reports follows. */
   .bundles-overview-col:nth-child(2) { grid-column: 2; grid-row: 1 / 3; }
   .bundles-overview-col:nth-child(2):has(~ .bundles-overview-col) { grid-row: 2; }
   /* Reports — right column, row 1. */
@@ -733,10 +593,8 @@
   flex: 1;
   min-height: 0;
 }
-/* Files / Reports columns use a tighter inset than Packages — the
-   rows themselves carry half of the horizontal padding so the
-   hover-tint background frames the content with the same gap on
-   each side instead of stacking with the column body's inset. */
+/* Files / Reports: the rows carry half the horizontal inset so their hover
+   tint is framed evenly. */
 .bundles-overview-col-body--list { padding: .25rem .175rem; }
 .bundles-overview-col-empty {
   margin: 0;
@@ -755,6 +613,7 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  width: 100%;
 }
 .bundles-slide-body > .bundle-graph-slot > graph-layout {
   flex: 1;
@@ -765,9 +624,7 @@
   margin-bottom: 0;
   background: transparent;
 }
-/* Issues list inside the slide gets the same padded scroll
-   container the regular details body uses, plus inherits the
-   issues styles below. */
+/* The Issues list inside the slide: a padded scroll container. */
 .bundles-slide-body > .bundle-issues {
   padding: .75rem;
   overflow-y: auto;
@@ -776,11 +633,8 @@
   scrollbar-gutter: stable;
 }
 
-/* Code slide — file tree on the left, source viewer on the
-   right (and an optional finding panel inside the right column
-   when a per-line dot is clicked). flex chain so both columns
-   take the slide's full height with their own internal scroll.
-   The rail starts at 320px and can be resized for this page session. */
+/* Code slide: file tree left (320px, resizable), source viewer right, each
+   scrolling on its own. */
 .bundles-slide-body > .bundle-code-view {
   display: flex;
   flex: 1;
@@ -840,18 +694,13 @@
 .bundle-code-rail-body {
   flex: 1; min-height: 0;
   overflow: auto;
-  /* Scrolling the tree past either end must not chain into the
-     surrounding slide / page — same containment the app sidebar's
-     #file-list uses. stable gutter so the tree doesn't reflow when
-     the scrollbar appears. */
+  /* No scroll chaining into the page; stable gutter so the tree doesn't reflow. */
   overscroll-behavior: none;
   scrollbar-gutter: stable;
   -webkit-app-region: no-drag; app-region: no-drag;
   padding: .35rem .25rem .5rem;
 }
-/* A one-pixel divider with a wider grab area over the pane edges:
-   between the file tree and the code, and between the code and the
-   terminal pane under it. */
+/* A 1px divider with a wider grab area: tree | code, and code over terminal. */
 bundle-code-splitter,
 bundle-code-terminal-splitter {
   flex: none;
@@ -880,15 +729,8 @@ bundle-code-terminal-splitter {
 .bundle-code-view.splitting {
   &, & * { cursor: default; user-select: none; }
 }
-/* Search bar — bordered strip: lens icon left, query input
-   flexing to fill, Files / Code / Issues mode toggles pinned right.
-   Mode picks what's filtered; query is shared across modes so the
-   user can pivot against the same string. Mirrors the sidebar's
-   "Search reports" chrome (`<div class="sidebar-search">`) so the
-   two strips read as the same affordance.
-   The `<bundle-code-search>` host IS the flex shell (element
-   selector, not a `.bundle-code-search` wrapper div) so one DOM
-   node carries the layout; input + clear + mode tabs live inside. */
+/* Code rail search: lens, query, and Files / Code / Issues mode toggles
+   sharing one query. The host element is the flex shell. */
 bundle-code-search {
   margin: .35rem .5rem;
   padding: 0 .2rem 0 .45rem;
@@ -897,12 +739,10 @@ bundle-code-search {
   border: 1px solid var(--border); border-radius: var(--ui-radius, 5px);
   transition: background .12s, border-color .12s;
 
-  /* `:has(input:focus)` instead of `:focus-within` — the latter
-     would also fire when tabbing onto a trailing mode button,
-     dragging the accent ring onto the chrome for a button focus
-     that has nothing to do with the input. */
+  /* `:has(input:focus)`, not `:focus-within`: a focused mode button shouldn't
+     ring the field. */
   &:has(input:focus) {
-    border-color: var(--accent, #2563eb);
+    border-color: var(--accent);
     background: rgb(from var(--text) r g b / .06);
   }
 }
@@ -921,8 +761,7 @@ bundle-code-search {
 
   &::placeholder { color: var(--muted); }
   &:focus::placeholder { color: transparent; }
-  /* Hide the native search-clear ✕ — the custom button below
-     gives us a consistent look across browsers. */
+  /* The custom clear button replaces the native ✕. */
   &::-webkit-search-cancel-button { display: none; }
 }
 .bundle-code-search-clear {
@@ -938,18 +777,13 @@ bundle-code-search {
 }
 .bundle-code-search-clear:hover { color: var(--text); background: rgb(from var(--text) r g b / .08); }
 
-/* Mode-toggle icon buttons — Files / Code / Issues, pinned to the
-   search row's right edge in a tablist span. The inner span keeps
-   `role="tablist"` off the outer container, which also holds the
-   lens icon + input (not tabs — would confuse screen readers). */
+/* In an inner span so `role="tablist"` doesn't wrap the lens and input. */
 .bundle-code-search-modes {
   flex-shrink: 0;
   display: inline-flex; align-items: center;
   margin-left: .25rem;
 }
-/* Borderless icon chrome (the search-row border already frames
-   them); only the background tint + color move on hover / active.
-   Same shape + recolor as the sidebar's `.sidebar-view-btn`. */
+/* Borderless icon buttons (the row's border frames them). */
 .bundle-code-search-mode {
   flex-shrink: 0;
   width: 20px; height: 20px;
@@ -965,7 +799,7 @@ bundle-code-search {
 
   &:hover { color: var(--text); background: rgb(from var(--text) r g b / .08); }
   &.active {
-    color: var(--accent, #2563eb);
+    color: var(--accent);
     background: rgb(from var(--text) r g b / .10);
   }
 }
@@ -1021,7 +855,6 @@ bundle-code-search {
   text-align: left;
 }
 .bundle-code-largest-file:hover { background: var(--bg); }
-.bundle-code-largest-file.current { background: color-mix(in oklch, var(--accent, #2563eb) 18%, var(--bg)); }
 .bundle-code-largest-path {
   flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1032,9 +865,6 @@ bundle-code-search {
   color: var(--muted);
   font-size: .68rem;
   font-variant-numeric: tabular-nums;
-}
-.bundle-code-search-file.current .bundle-code-search-file-name {
-  background: color-mix(in oklch, var(--accent, #2563eb) 18%, var(--bg));
 }
 .bundle-code-search-hits {
   list-style: none; margin: 0;
@@ -1073,8 +903,10 @@ bundle-code-search {
   list-style: none; margin: 0; padding: 0;
 }
 .bundle-code-search-issue { padding: 0; }
+.bundle-code-largest-file.current,
+.bundle-code-search-file.current .bundle-code-search-file-name,
 .bundle-code-search-issue.current .bundle-code-search-issue-link {
-  background: color-mix(in oklch, var(--accent, #2563eb) 18%, var(--bg));
+  background: color-mix(in oklch, var(--accent) 18%, var(--bg));
 }
 .bundle-code-search-issue-link {
   display: flex; flex-direction: column;
@@ -1106,13 +938,6 @@ bundle-code-search {
   border-radius: 3px;
   color: #000;
   white-space: nowrap;
-  &.sev-critical      { background: var(--critical); }
-  &.sev-high          { background: var(--high); }
-  &.sev-medium        { background: var(--medium); }
-  &.sev-low           { background: var(--low); color: var(--badge-low-text); }
-  &.sev-high_bug      { background: var(--high-bug); }
-  &.sev-bug           { background: var(--bug); }
-  &.sev-informational { background: var(--info); }
 }
 .bundle-code-search-issue-path {
   flex: 1; min-width: 0;
@@ -1188,14 +1013,14 @@ bundle-code-search {
 .bundle-code-tree-dirname.bundle-code-tree-package-vendored { gap: .4em; }
 .bundle-code-tree-package-name { overflow: hidden; text-overflow: ellipsis; }
 .bundle-code-tree-package-version { flex-shrink: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
-.bundle-code-tree-variant { flex: none; font: .6rem var(--font-ui, system-ui); color: var(--muted); }
+.bundle-code-tree-variant { flex: none; font: .6rem system-ui; color: var(--muted); }
 .bundle-code-tree-file { padding: 0; }
 .bundle-code-tree-dir > details > summary:hover,
 .bundle-code-tree-link:hover { background: var(--surface-active); }
 .bundle-code-tree-dir > details > summary:focus-visible,
 .bundle-code-tree-link:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .bundle-code-tree-link.current {
-  background: color-mix(in oklch, var(--accent, #2563eb) 18%, var(--bg));
+  background: color-mix(in oklch, var(--accent) 18%, var(--bg));
   color: var(--text);
 }
 /* Per-file issue count chip — small severity-tinted pill on the row's right
@@ -1211,32 +1036,35 @@ bundle-code-search {
   text-align: center;
   border-radius: 7px;
   color: #000;
+}
+:is(.status-seg, .bundle-source-dot,
+  .bundle-code-search-issue-sev, .bundle-code-tree-count, .bundle-issue-sev, .bundle-source-panel-sev) {
   &.sev-critical      { background: var(--critical); }
   &.sev-high          { background: var(--high); }
   &.sev-medium        { background: var(--medium); }
-  &.sev-low           { background: var(--low); color: var(--badge-low-text); }
+  &.sev-low           { background: var(--low); }
   &.sev-high_bug      { background: var(--high-bug); }
   &.sev-bug           { background: var(--bug); }
   &.sev-informational { background: var(--info); }
+}
+:is(.bundle-code-search-issue-sev, .bundle-code-tree-count, .bundle-issue-sev, .bundle-source-panel-sev).sev-low {
+  color: var(--badge-low-text);
 }
 body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper)
   :is(.bundle-code-tree-count, .bundle-code-search-issue-sev, .bundle-issue-sev, .bundle-source-panel-sev, .bundle-advisory-severity) {
   &:is(.sev-critical, .sev-high, .sev-high_bug, .sev-bug) { color: #fff; }
 }
 
-/* Right column — header (selected file path) + body (source +
-   optional finding panel). The body reuses the modal's
-   `.bundle-source-code-wrap` + `.bundle-source-panel` so the
-   inspect chrome reads identically to the modal. */
+/* Right column: path bar over the source and optional finding panel (the
+   modal's `.bundle-source-*` chrome). */
 .bundle-code-main {
   flex: 1; min-width: 0;
   display: flex; flex-direction: column;
   min-height: 0;
   container: bundle-code / inline-size;
 }
-/* Main-pane header — path + copy button hug the left, stats and
-   the issue stepper pin right via the spacer. The path shrinks
-   (ellipsis) before anything else gives up space. */
+/* Path and copy left, stats and issue stepper right; the path ellipsizes
+   first. */
 .bundle-code-main-bar {
   display: flex; align-items: center; gap: .5rem;
   padding: .4rem .75rem;
@@ -1347,9 +1175,8 @@ button.bundle-code-importers-item:hover { background: var(--surface); }
 @container bundle-code (max-width: 380px) {
   .bundle-code-main-stats { display: none; }
 }
-/* Issue stepper — severity-tinted count pill (shared
-   .bundle-code-tree-count palette) + quiet ‹ › buttons cycling the
-   side panel through the file's findings in line order. */
+/* Issue stepper: count pill + ‹ › buttons cycling the side panel through the
+   file's findings. */
 .bundle-code-main-issues {
   flex-shrink: 0;
   display: inline-flex; align-items: center; gap: .3rem;
@@ -1364,7 +1191,7 @@ button.bundle-code-importers-item:hover { background: var(--surface); }
   font-size: .85rem; line-height: 1;
   cursor: default;
 }
-.bundle-code-issue-step:hover { border-color: var(--accent, #58a6ff); color: var(--accent, #58a6ff); }
+.bundle-code-issue-step:hover { border-color: var(--accent); color: var(--accent); }
 .bundle-code-main-body {
   flex: 1; min-height: 0;
   display: flex;
@@ -1375,11 +1202,8 @@ button.bundle-code-importers-item:hover { background: var(--surface); }
   overflow: auto;
   -webkit-app-region: no-drag; app-region: no-drag;
 }
-/* Terminal pane — under the code panel, across the right column: a
-   bar naming it, with its close, over the Terminal tab's terminal
-   (render-bundle.js renderBundleCodeTerminal). The code panel above
-   gives up the height, which the handle between them sets (bundle-
-   code-splitter.js), 40% of the column until it does. */
+/* Terminal pane under the code panel; the splitter above it
+   (bundle-code-splitter.js) sets its height, 40% until dragged. */
 .bundle-code-terminal {
   flex: 0 0 var(--bundle-code-terminal-height, 40%);
   min-height: 0;
@@ -1403,10 +1227,8 @@ button.bundle-code-importers-item:hover { background: var(--surface); }
   flex: 1; min-width: 0;
   -webkit-app-region: no-drag; app-region: no-drag;
 }
-/* A dropped lockfile's editor (render-bundle.js renderDroppedLockfile): the
-   Code tab's pane alone, framed as a bundle slide's body is, filling the
-   page; its bar ends in a close. */
-#dropped-lockfile-slot { display: contents; }
+/* A dropped lockfile's editor (renderDroppedLockfile): the Code pane alone,
+   framed as a slide body. */
 .bundle-code-view.is-single-file {
   display: flex;
   flex: 1;
@@ -1436,11 +1258,8 @@ button.bundle-code-importers-item:hover { background: var(--surface); }
   padding: 2rem;
 }
 
-/* Search tab — full-width github-style code search across the whole
-   bundle. A search bar pinned at the top, a scrolling results column
-   below: per-file cards, each holding one or more context snippets.
-   Distinct from the Code tab's compact rail filter — here every hit
-   renders with the lines around it (radius scales with hit count). */
+/* Search tab: code search over the whole bundle — a bar on top, per-file
+   result cards with context snippets below. */
 .bundles-slide-body > .bundle-search-view {
   display: flex; flex-direction: column;
   flex: 1; min-height: 0;
@@ -1454,18 +1273,13 @@ button.bundle-code-importers-item:hover { background: var(--surface); }
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
-/* Below the bar: results column on the left, the clicked result's
-   source docked in a right sidebar. The sidebar only renders once a
-   result is opened, so the results take the full width until then. */
+/* Results left; an opened result's source docks on the right. */
 .bundle-search-main {
   flex: 1; min-height: 0;
   display: flex;
 }
-/* The `<bundle-search>` host IS the flex shell (element selector,
-   mirrors `bundle-code-search`): lens icon, query input, clear, and
-   the `Aa` case + `.*` regex toggles. Grows to fill the header up to
-   a cap so the field doesn't stretch across a wide viewport, while
-   the Context pill keeps its place at the right edge. */
+/* The host is the flex shell, as `bundle-code-search`; capped at 720px so the
+   Context pill keeps its place. */
 bundle-search {
   flex: 0 1 720px; min-width: 0;
   display: flex; align-items: center;
@@ -1510,10 +1324,7 @@ bundle-search {
   display: inline-flex; align-items: center;
   margin-left: .25rem;
 }
-/* `.*` regex modifier — same borderless icon-button chrome as
-   `.bundle-code-search-mode` / `.search-negate-btn`; accent tint when
-   active. Monospace glyph so each reads as its affordance (`Aa`
-   case, `.*` regex). */
+/* Case / regex toggles: borderless icon buttons, accent when active. */
 .bundle-search-mod {
   flex-shrink: 0;
   height: 22px; min-width: 26px;
@@ -1540,10 +1351,7 @@ bundle-search {
   -webkit-app-region: no-drag; app-region: no-drag;
   padding: .6rem .75rem 1.5rem;
 }
-/* Right sidebar — the open result's source, reusing the modal's
-   `.bundle-source-*` chrome inside. Fixed-ish basis so the results
-   keep a stable column; shrinks on narrow viewports but never below
-   a readable width. */
+/* Right sidebar: the open result's source, never narrower than 400px. */
 .bundle-search-side {
   flex: 0 0 clamp(400px, 48%, 820px);
   min-width: 0;
@@ -1597,9 +1405,7 @@ bundle-search {
   text-transform: none; letter-spacing: 0;
 }
 
-/* File card — clickable header (stripped path + match count) over
-   its snippets, framed so results from different files stay
-   visually distinct. */
+/* File card: clickable header (path + match count) over its snippets. */
 .bundle-search-file {
   margin-bottom: .85rem;
   border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
@@ -1637,8 +1443,7 @@ bundle-search {
   font-variant-numeric: tabular-nums;
 }
 .bundle-search-snippets { display: flex; flex-direction: column; }
-/* Each snippet is a button: clicking opens the source viewer at the
-   anchor line. The hover tint signals the whole block is actionable. */
+/* Each snippet is a button opening the source at its anchor line. */
 .bundle-search-snippet {
   display: block; width: 100%;
   padding: .3rem 0;
@@ -1649,8 +1454,7 @@ bundle-search {
   &:hover { background: rgb(from var(--text) r g b / .03); }
   &:hover .bundle-search-lineno { color: var(--text); }
 }
-/* Dashed rule between non-contiguous snippets in the same file —
-   signals omitted lines without spelling out the gap size. */
+/* Dashed rule between non-contiguous snippets. */
 .bundle-search-gap {
   height: 0;
   margin: .1rem .6rem;
@@ -1685,36 +1489,19 @@ bundle-search {
 }
 .bundle-search-line.is-match .bundle-search-code { color: var(--text); }
 .bundle-search-clip { margin-right: .15rem; color: var(--muted); }
-/* Matched substring — yellow highlighter on black text, the
-   documented pairing for `--medium` (theme.css). Also marks the
-   Code rail's search hits. */
+/* Matched substring: black on `--medium`, its documented pairing (theme.css). */
 .bundle-search-mark {
   border-radius: 2px;
   background: var(--medium); color: #000;
 }
 
-/* Bundles view — flat list of OPFS-stored sourcemap / stasis blobs.
-   Caps at 1200px (single column); `.with-details` widens it to fit
-   list + right-side panel side by side (mirrors the findings-table
-   details pattern). Flex column with flex: 1 so it fills the height
-   below the page-head and the inner list / details columns scroll
-   independently instead of pushing #report past 100vh. */
-/* Per-file grouped issue list — shared by the bundle Issues tab
-   and the package Issues slide. Severity badge + file path +
-   description per row, sorted by severity desc. The summary line
-   above the list shows the matched-file count and the shared
-   path prefix when one exists. */
+/* Per-file grouped issue list, shared by the bundle and package Issues tabs. */
 .bundle-issues-summary {
   color: var(--muted);
   font-size: .72rem;
   margin-bottom: .5rem;
 }
-/* Issues empty state — centered in the slide body. The bundle tab
-   renders a headline + explanatory hint (computing / nothing
-   indexed / no hash overlap / all dismissed); the package and
-   repository slides put a plain muted line in the same shell, so
-   the container keeps the muted text defaults. Replaces a bare
-   line that sat flush against the slide body's top-left corner. */
+/* Issues empty state, centered in the slide body. */
 .bundle-issues-empty {
   flex: 1;
   display: flex;
@@ -1740,12 +1527,8 @@ bundle-search {
   line-height: 1.5;
   max-width: 34rem;
 }
-/* Issues list — grouped by file. Each group is a `<li>` with a
-   sticky-feeling header (path + count) followed by the individual
-   findings as nested rows. The header path button opens the
-   source viewer at the file (no specific finding); the finding
-   rows open at a specific line + finding-idx so the viewer's side
-   panel auto-pops on click. */
+/* Grouped by file: a header (path + count) per file, then its findings. The
+   path opens the source at the file; a finding opens it at its line. */
 .bundle-issues-list {
   list-style: none; margin: 0; padding: 0;
   display: flex; flex-direction: column;
@@ -1771,11 +1554,8 @@ bundle-search {
   text-align: left;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.bundle-issues-file-name:hover { color: var(--accent, #60a5fa); }
-/* The repo Issues slide variant — file group header is a link
-   to the file at HEAD on the upstream repo. Reset the default
-   `<a>` underline + color so it reads identically to the bundle
-   button / package static span. */
+.bundle-issues-file-name:hover { color: var(--accent); }
+/* Repo Issues variant: the header links to the file upstream. */
 .bundle-issues-file-name-link {
   text-decoration: none;
   display: block;
@@ -1807,9 +1587,7 @@ bundle-search {
 .bundle-issues-findings .bundle-issues-finding:last-child .bundle-issues-finding-link {
   border-bottom: 0;
 }
-/* Top row of each finding — severity + line + optional triage
-   badge + spacer + reports. Spacer pushes the report chips to
-   the right edge so they line up across rows. */
+/* Severity, line, triage badge, then the report chips pushed right. */
 .bundle-issues-finding-head {
   display: flex; align-items: center; gap: .4rem;
   flex-wrap: wrap;
@@ -1829,8 +1607,8 @@ bundle-search {
   border: 1px solid currentcolor;
   background: transparent;
   white-space: nowrap;
-  &.triage-inprogress { color: var(--warning, #d97706); }
-  &.triage-fixed   { color: var(--green, #4ade80); }
+  &.triage-inprogress { color: var(--warning); }
+  &.triage-fixed   { color: var(--green); }
   &.triage-invalid, &.triage-ignored { color: var(--muted); }
   &.triage-deleted { color: var(--critical); }
 }
@@ -1850,20 +1628,9 @@ bundle-search {
   color: #000;
   white-space: nowrap;
   flex-shrink: 0;
-
-  &.sev-critical      { background: var(--critical); }
-  &.sev-high          { background: var(--high); }
-  &.sev-medium        { background: var(--medium); }
-  &.sev-low           { background: var(--low); color: var(--badge-low-text); }
-  &.sev-high_bug      { background: var(--high-bug); }
-  &.sev-bug           { background: var(--bug); }
-  &.sev-informational { background: var(--info); }
 }
-/* Report chip row under each issue's file name. Mirrors the
-   workspace `.report-chip` (finding-row.css / finding-card.css)
-   so the visual style matches across views. The chips are
-   buttons here so they're keyboard-focusable; events.js's
-   [data-bundle-issue-report] delegate handles the click. */
+/* Report chips under each issue, as the workspace `.report-chip`; buttons so
+   they're focusable ([data-bundle-issue-report] in events.js). */
 .bundle-issue-reports {
   display: flex; align-items: center; flex-wrap: wrap;
   gap: .25rem .35rem;
@@ -1879,7 +1646,7 @@ bundle-search {
   max-width: 12rem;
 }
 .bundle-issue-reports .report-chip:hover {
-  border-color: var(--accent, #2563eb);
+  border-color: var(--accent);
   color: var(--text);
 }
 .bundle-issue-reports .report-chip-label {
@@ -1936,15 +1703,9 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 .workspace-content-arrow { color: var(--muted); }
 .workspace-content-empty { color: var(--muted); padding: 1rem 0; }
 
-/* A team's dependencies to review (team-dependencies.js), a sub-tab each,
-   drawn as a dialog's header tabs are (dialog-tabs.css), each with its
-   count, held under the team's header while the one open scrolls: its pull
-   requests wanting reviews, each a card of the versions it lists, the rest
-   of its lists opened from under them, those adding only versions others
-   list after them, a line each; every version wanting one; its default
-   branches'; and the reviews published to it. Versions fill as many columns
-   as fit, each a row: its name, then the lines it changes, how many
-   reviews it has, and the pull requests adding it besides, at its end. */
+/* A team's dependencies to review (team-dependencies.js): sub-tabs drawn as
+   a dialog's (dialog-tabs.css), the open one scrolling under the team's
+   header; versions in as many columns as fit. */
 #workspace-content-slot:has(team-dependencies), .workspace-content-view:has(> team-dependencies), team-dependencies, .team-deps {
   display: flex; flex-direction: column; flex: 1; min-height: 0;
 }
@@ -1964,19 +1725,14 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   & > h2 { margin: 0 0 .25rem; font-size: .875rem; font-weight: 500; color: var(--text); }
   & > .team-deps-quiet:first-child, & > h2 + .team-deps-quiet { margin: 0 0 .25rem; }
 }
-/* One line above the lists: at its start what is being read and what
-   couldn't be, each on a line of its own cut short, whole in its tooltip; at
-   its end the order the pull requests are in, picked as other orders are
-   (.bundles-overview-sort). Its room is kept whatever it says, so nothing
-   under it moves as it starts or stops saying it. */
+/* Status line over the lists (ellipsized, whole in its tooltip) with the
+   pull requests' order at its end. Its height is kept so nothing moves. */
 .team-deps-bar {
   display: flex; align-items: center; gap: .75rem; flex: none; min-height: 1.375rem; margin-bottom: -.25rem;
 
   & > .team-deps-quiet { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  & > .bundles-overview-sort { margin-left: auto; flex: none; box-sizing: border-box; height: 1.3rem; }
-  /* Whether the pull requests into other branches than the default show,
-     and drafts, at its end, before their order, as tall and as small as its
-     buttons. */
+  & > .bundles-overview-sort { margin-left: auto; flex: none; height: 1.3rem; }
+  /* Base-branch and draft switches, before the order, sized as its buttons. */
   & > .team-deps-switches {
     display: inline-flex; gap: .375rem; margin-left: auto; flex: none;
     & > mode-switch { --switch-track-width: 20px; --switch-track-height: 11px; }
@@ -1986,12 +1742,8 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   /* What the red rows are, in their color. */
   & > .team-deps-key { color: var(--critical); }
 }
-/* The pull requests' cards side by side in their order, each a column at
-   least 26rem wide, however many versions it lists, as many columns as
-   fit; once measured, packed as masonry (team-dependencies.js masonrySpan):
-   rows of 4px, each card spanning as many as it takes with its gap under it,
-   so it sits under the shortest column's last, in the room a taller one
-   beside it leaves. */
+/* Pull request cards in auto-fill columns ≥ 26rem; once measured, packed as
+   masonry (masonrySpan): 4px rows, each card spanning what it needs. */
 .team-deps-pulls {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 26rem), 1fr));
   align-items: start; gap: .5rem .625rem; margin: 0; padding: 0; list-style: none;
@@ -2082,10 +1834,8 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   /* Passed by its pull request's comments alone, not yet taken in by the host. */
   &.is-commented { padding: 0; border: 0; color: var(--green); font-size: .7rem; }
 }
-/* Reviewed in another pull request's comments, which count there alone,
-   blue; the pull request a version is listed under, muted; and the pull
-   requests lacking reviews that count in others, red, as the name of a row
-   lacking them is, its icon as any row's. */
+/* Reviewed elsewhere (blue), the listing pull request (muted), and pull
+   requests lacking reviews (red). */
 .team-deps-elsewhere, .team-deps-under, .team-deps-lacks {
   flex: none; padding: 0 .4rem; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent); font-size: .66rem; line-height: 1.5; white-space: nowrap;
@@ -2121,7 +1871,7 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 /* A patched one's tag, as Review's version selector tags it (searchable-selector.js .detail.is-noted). */
 .team-deps-tip-patched {
   flex: none; padding: 0 .35rem; border-radius: 3px; color: var(--accent); background: rgb(from var(--accent) r g b / .13);
-  font-family: var(--font-ui, system-ui); font-size: .66rem; font-weight: 600;
+  font-family: system-ui; font-size: .66rem; font-weight: 600;
 }
 .team-deps-tip-hash { font-size: .7rem; overflow-wrap: anywhere; }
 .team-deps-tip-here { font-weight: 600; }
@@ -2132,9 +1882,8 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   opacity: .5; transition: opacity .12s;
   &:hover, &:focus-within { opacity: 1; }
 }
-/* The pull requests adding only versions others list, after the rest, under
-   their count, which hides them: each its head alone, a line, muted, naming
-   those listing its versions, till its toggle opens it. */
+/* Pull requests adding only versions others list: collapsed under their
+   count, each a muted one-line head until opened. */
 .team-deps-covered {
   display: flex; flex-direction: column; align-items: flex-start; gap: .375rem;
   & > .team-deps-more { margin-top: 0; }
@@ -2178,12 +1927,10 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   &.is-list[aria-expanded='true'] svg { transform: rotate(-90deg); }
 }
 .team-deps-disclosed { display: flex; flex-direction: column; align-items: flex-start; & > .team-deps-versions { align-self: stretch; } }
-/* The lines a version wanting reviews changes (npm-delta.js), beside its
-   review: added green, removed red, those but for declaration files changed
-   in types alone after them, muted, apart by a space the template's edge
-   can't keep (build-lit-minify.js); kept whole, as the row shortens its name.
-   Its element a box, however narrow, as its viewport's observer sees only
-   one, while it shows nothing till then. */
+/* Lines a version changes (npm-delta.js): added green, removed red, types-only
+   muted; a margin, not a space, as the minifier drops edge spaces
+   (build-lit-minify.js). The element is a box even while empty, since its
+   viewport observer sees nothing of one without. */
 npm-delta { display: inline-block; flex: none; min-width: 1px; min-height: 1em; }
 .npm-delta { flex: none; color: var(--muted); font-size: .7rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .npm-delta-typeless { margin-left: .35em; opacity: .8; }
@@ -2202,45 +1949,15 @@ npm-delta { display: inline-block; flex: none; min-width: 1px; min-height: 1em; 
   flex: 1;
   min-height: 0;
 
-  /* Issue summary above the Overview tab's nested Packages / Files /
-     Reports strip — chips identical to the tree-view Files tab's
-     count chips so a user moving between the two views reads them as
-     the same data. Hidden when no findings have matched yet (hashes
-     still computing, or none of the indexed reports cover this
-     bundle). */
+  /* Issue summary chips above the Overview columns, as in the tree view. */
   & .bundles-issue-summary {
     display: flex;
     flex-wrap: wrap;
     gap: .25rem;
     margin: 0 0 .5rem;
   }
-  /* Issues / report-chip rules for the bundle Issues tab live at
-     top level (below this block) so the package Issues slide,
-     which reuses the same `.bundle-issues-*` class names, picks
-     up the same chrome — those slides aren't nested under
-     `.bundles-view`. */
-  & .bundle-graph-slot,
-  & .bundle-terminal-slot {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-height: 0;
-    width: 100%;
-  }
-  & .bundle-graph-slot > graph-layout {
-    flex: 1;
-    min-height: 0;
-    border: none;
-    border-radius: 0;
-    box-shadow: none;
-    margin-bottom: 0;
-    background: transparent;
-  }
-
-  /* Definition list for the metadata block — labels left, values
-     right, two-column grid so name/integrity/size rows line up.
-     Mono values ride a smaller font so the long integrity hash
-     doesn't dominate the column. */
+  /* Metadata: labels left, values right; mono values smaller so the integrity
+     hash doesn't dominate. */
   & .bundles-detail-meta {
     display: grid;
     grid-template-columns: max-content 1fr;
@@ -2276,36 +1993,23 @@ npm-delta { display: inline-block; flex: none; min-width: 1px; min-height: 1em; 
       color: inherit; font: inherit; text-align: left;
     }
   }
-  /* The overview lays its meta blocks + exports out as columns in a
-     wrapping flex row: name/integrity/size, parse-details, then the
-     exports column, each with its own min width (700 / 500 / 160px)
-     so the narrower columns peel onto their own line before the wide
-     one does. `min(…, 100%)` keeps each floor from overflowing a panel
-     narrower than it; the row gap carries the stacked spacing. */
+  /* Meta blocks and exports as a wrapping row; each column's floor (700 / 500
+     / 160px) makes the narrow ones wrap first, min(…, 100%) keeps floors
+     inside narrow panels. */
   & .bundles-detail-meta-row {
     display: flex;
     flex-wrap: wrap;
     gap: .75rem 2rem;
     margin: 0 0 .75rem;
-    /* Top-align the columns instead of stretching the shorter ones to
-       the tallest's height: a stretched inner grid spreads its auto
-       rows, which drifts the `align-self: center` dt labels off their
-       top-aligned dd values (visible when the columns hold a different
-       number of rows, e.g. 3 vs 4). Natural height keeps each row's
-       label and value on the same line. */
+    /* Top-aligned, not stretched: a stretched grid spreads its rows and drifts
+       the centered dt labels off their dd values. */
     align-items: start;
 
     & .bundles-detail-meta { margin: 0; }
-    /* Per-column min widths before wrapping. The two meta blocks are
-       targeted by position (name/integrity/size first, parse-details
-       second); the exports column by class so it keeps its 160px floor
-       wherever it lands — the parse-details block is absent on the
-       loading / error / un-parsed branches. The meta blocks take a far
-       larger grow so they soak up a shared line's slack and the exports
-       column holds its ~160px floor beside them (staying below the
-       container-query threshold that would left-align its buttons);
-       alone on its own line the exports column still fills (grow > 0)
-       and its buttons flow into a left-aligned row. */
+    /* Meta blocks by position (parse-details is absent while loading or
+       failed), exports by class. The meta blocks' large grow holds exports near
+       its 160px floor, under the container-query threshold, while they share a
+       line. */
     & > .bundles-detail-meta:nth-child(1) { flex: 99 1 700px; min-width: min(700px, 100%); }
     & > .bundles-detail-meta:nth-child(2) { flex: 99 1 500px; min-width: min(500px, 100%); }
     & > .bundles-overview-exports { flex: 1 1 160px; min-width: min(160px, 100%); }
@@ -2314,22 +2018,15 @@ npm-delta { display: inline-block; flex: none; min-width: 1px; min-height: 1em; 
     padding: .75rem;
     color: var(--muted);
     font-size: .78rem;
-    /* `details.error` is unbounded — a verbose `JSON.parse`
-       SyntaxError on a malformed `.map` can easily push past the
-       viewport. The outer `.bundles-slide-body-overview` is
-       `overflow: hidden`, so scroll has to live on the
-       placeholder itself. */
+    /* The overview body is `overflow: hidden` and a JSON.parse error can be
+       long, so the placeholder scrolls itself. */
     overflow-y: auto;
     min-height: 0;
   }
   & .bundles-overview-placeholder.is-error { color: var(--critical); }
 
-  /* Per-package size distribution chart — stacked bar at the top
-     showing each package's share of the total bundle, then a
-     sorted breakdown row per package (color dot + name + per-row
-     bar fill + bytes + percent). Mirrors the graph2 right-panel
-     dist chrome so the colors and shape carry meaning across the
-     two views. */
+  /* Per-package size chart: a stacked bar, then a row per package (dot, name,
+     bar, bytes, percent), as in graph2's panel. */
   & .bundles-dist {
     margin: .5rem 0 .75rem;
   }
@@ -2346,11 +2043,6 @@ npm-delta { display: inline-block; flex: none; min-width: 1px; min-height: 1em; 
     list-style: none; padding: 0;
     margin: .5rem 0 0;
     display: grid;
-    /* Wider package name column + narrower bar than before — the
-       Packages section sits in a third of the Overview surface
-       now, so the name column needs more of the available width
-       (long monospace identifiers like `@aws-sdk/...` overflow
-       very quickly) and the per-row size bar can be thinner. */
     grid-template-columns: max-content minmax(0, 2fr) minmax(0, 1fr) max-content max-content;
     gap: .25rem .5rem;
     align-items: center;
@@ -2368,11 +2060,7 @@ npm-delta { display: inline-block; flex: none; min-width: 1px; min-height: 1em; 
   & .bundles-dist-pkg {
     color: var(--text);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    /* `min-width: 0` lets the grid track's `minmax(0, …)` actually
-       shrink the item — without it the long-package-name intrinsic
-       width wins and the trailing size / percent columns get
-       pushed off the right edge of the narrow Overview Packages
-       column. The ellipsis below was already in place. */
+    /* Lets the `minmax(0, …)` track shrink it so size and percent stay visible. */
     min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
@@ -2401,24 +2089,15 @@ npm-delta { display: inline-block; flex: none; min-width: 1px; min-height: 1em; 
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
 
-  /* Sources list (parsed from .map sourcesContent). Each row is
-     path on the left, byte size on the right; ellipsis-clipped
-     paths so the row doesn't grow horizontally. */
+  /* Sources (.map sourcesContent): path left, size right. */
   & .bundles-sources-list {
     list-style: none; margin: 0; padding: 0;
 
-    /* Whole-row click target — opens the bundle source viewer.
-       No per-row borders + tight vertical padding (matching the
-       Packages dist-list row idiom — 0 vertical, gap handled by
-       line-height); the hover-tint background marks the row as
-       clickable. */
+    /* Whole-row button opening the source viewer: hover tint, no borders. */
     & .bundles-source-row {
       display: flex; align-items: center; gap: .5rem;
       width: 100%;
-      /* Symmetric half of the column body's horizontal inset (see
-         `.bundles-overview-col-body`). The two halves add up to
-         the previous single-layer padding while leaving the hover
-         tint visibly framed against the column border. */
+      /* Half of the column body's inset (`.bundles-overview-col-body`). */
       padding: 0 .175rem;
       background: transparent;
       border: 0; border-radius: var(--ui-radius, 3px);
@@ -2446,18 +2125,11 @@ npm-delta { display: inline-block; flex: none; min-width: 1px; min-height: 1em; 
       flex-shrink: 0;
     }
   }
-  /* Reports tab — flat list of OPFS reports the bundle's matched
-     findings came from. Each row hosts a single brand-sticker chip
-     (same `.report-chip` shell the Issues tab uses on each finding),
-     sized up so it reads as a list affordance rather than a row
-     ornament. The button is full-row width so the click target
-     spans the whole row. */
+  /* Reports tab: a full-width brand-sticker chip per row. */
   & .bundles-reports-list {
     list-style: none; margin: 0; padding: 0;
 
     & li { padding: 0; }
-    /* Match the compact row idiom — 0 vertical padding, hover-tint
-       only, font sized to match Files / Packages. */
     & .bundles-report-chip {
       display: flex; align-items: center; gap: .4rem;
       width: 100%;
@@ -2487,9 +2159,7 @@ npm-delta { display: inline-block; flex: none; min-width: 1px; min-height: 1em; 
     & .bundles-report-chip .file-icon { flex-shrink: 0; }
   }
 
-  /* Empty placeholder rendered when no bundle is selected — the
-     sidebar holds the bundle list, so the main pane just nudges
-     the user there. */
+  /* No bundle selected: the sidebar holds the list. */
   &.bundles-view-empty { justify-content: center; }
   & .bundles-empty-hint {
     color: var(--muted);
@@ -2499,38 +2169,15 @@ npm-delta { display: inline-block; flex: none; min-width: 1px; min-height: 1em; 
   }
 }
 
-/* The readability cap lives on the CONTENT, not on the wrapper, so
-   the toolbar above it can run the full width of the view the way it
-   already does in kanban and focus — a filter strip is chrome, and
-   chrome spans what it controls. The list keeps the cap that makes a
-   finding's prose readable at wide viewports (and the 2000px the
-   table's list + details split needs when a row is open); the empty
-   state keeps it too, being a paragraph of text. */
+/* The readability cap is on the content, not the wrapper, so the toolbar
+   spans the view as in kanban and focus. An open table details split needs
+   2000px. */
 .findings-content > #findings-body-slot,
 .findings-content > #empty-state-slot { max-width: 1200px; }
 .findings-content.with-details > #findings-body-slot { max-width: 2000px; }
-/* Graph view-mode (Findings tab) embeds the same canvas layout as
-   the standalone Graph tab. Drop the readability cap so the
-   1fr stage + 300px sidebar grid can use the full viewport,
-   matching how the Graph tab renders. */
-/* Findings-tab graph plumbing. These are the ancestor / host-
-   targeting rules; selectors can't cross into the `<graph-layout>`
-   shadow DOM, so they live here in the light-DOM cascade while the
-   shadow-internal rules (chrome, grid template) stay in
-   `graph/graph2.css`.
-
-   `.findings-content.with-graph`: flex column so its `graph-layout`
-   child can flex-grow into the remaining height below the header.
-
-   `#findings-graph-slot`: `display: contents` drops the slot's own
-   box so `<graph-layout>` becomes a direct flex child and picks up
-   `flex: 1` without an intervening box breaking the chain.
-
-   `graph-layout` (host): `flex: 1; min-height: 0` absorbs the
-   remaining height; `border-radius: 6px` + `box-shadow` +
-   transparent bg override the host defaults (8px, no shadow, opaque
-   canvas) so it reads as a glass-panel slot matching the toolbar
-   rather than the standalone graph's heavier card. */
+/* Findings-tab graph: host and ancestor rules (graph2.css has the shadow
+   ones). The slot is `display: contents` so graph-layout is a direct flex
+   child; the host takes the toolbar's glass look, not the standalone card. */
 .findings-content.with-graph > #findings-body-slot { max-width: none; }
 .findings-content.with-graph {
   max-width: none;
@@ -2550,46 +2197,26 @@ npm-delta { display: inline-block; flex: none; min-width: 1px; min-height: 1em; 
   background: transparent;
   margin-bottom: 0;
 }
-/* Kanban view-mode lays five status columns side-by-side; drop
-   the readability cap so they have horizontal room on wide screens.
-   The flex chain (#report → .findings-content.with-kanban →
-   .kanban-board) lets the board fill the remaining viewport height
-   under the toolbar so only the column bodies scroll. (The body
-   slot's flex setup is in the next block.) */
+/* Kanban: no readability cap; the flex chain fills the height under the
+   toolbar so only the column bodies scroll. */
 .findings-content.with-kanban {
   display: flex; flex-direction: column;
   flex: 1; min-height: 0;
 }
-/* Body slot is its own flex container the kanban board fills.
-   Explicit flex, NOT the graph view's `display: contents` trick:
-   this slot is a Lit `litRender` target, and under `display:
-   contents` Lit's comment-marker nodes become visible flex-children
-   of `.findings-content`, shifting flex distribution enough in some
-   browsers that the board's `flex: 1` loses its height bound. */
+/* Explicit flex, not `display: contents`: this slot is a Lit render target
+   whose comment markers would become flex children and, in some browsers,
+   lose the board's height bound. */
 .findings-content.with-kanban #findings-body-slot {
-  /* The board is not prose: it drops the list's readability cap and
-     takes the width the columns need. */
   max-width: none;
   flex: 1; min-height: 0;
   display: flex; flex-direction: column;
 }
-/* Trim the toolbar's default `margin-bottom: 1rem`, which pushes
-   the kanban-board exactly 1rem past the viewport. (Graph view
-   doesn't render the toolbar, so it never hits this.) The toolbar's
-   own border + glass shadow already separates it from the board, so
-   the smaller margin costs nothing visually. */
+/* The toolbar's 1rem margin pushed the board past the viewport. */
 .findings-content.with-kanban .toolbar { margin-bottom: .5rem; }
 
-/* Table / list / grouped view-modes: scroll the finding list
-   inside its own container so the page header + toolbar stay
-   pinned while the user pages through findings. Kanban and graph
-   have their own internal-scroll setup (.findings-content.with-
-   kanban / .with-graph above + graph2.css) and skip via :not().
-   List / grouped scroll #findings-body-slot directly; table view
-   scrolls .findings-table-list inside the body slot — see
-   findings.css for the table-side rules. Wrapped in `not print`
-   so paginated output flows naturally without a scroll container
-   clipping content across page breaks. */
+/* Table / list / grouped: the finding list scrolls in its own container so
+   the header and toolbar stay put. Not in print, so pages flow across
+   breaks. */
 @media not print {
   .findings-content:not(.with-graph, .with-kanban) {
     display: flex; flex-direction: column;
@@ -2598,51 +2225,30 @@ npm-delta { display: inline-block; flex: none; min-width: 1px; min-height: 1em; 
   .findings-content:not(.with-graph, .with-kanban) > #findings-body-slot {
     flex: 1; min-height: 0;
   }
-  /* List / grouped — the body slot is the scroller. Table view
-     leaves the body slot at default overflow because the layout
-     inside fills it via `height: 100%` and the list column
-     scrolls internally (findings.css). Focus view also opts out
-     so the body slot stays a flex column for the focus-view's
-     own per-pane scroll setup (card / code / queue each own
-     their own scroll inside .focus-view). */
+  /* List / grouped: the body slot scrolls. Table (its list column scrolls,
+     findings.css) and focus (each pane scrolls) opt out. */
   .findings-content:not(.with-graph, .with-kanban) > #findings-body-slot:not(:has(> .findings-table-layout, > .focus-view)) {
     overflow-y: auto; overscroll-behavior: none;
     -webkit-app-region: no-drag; app-region: no-drag;
     scrollbar-gutter: stable;
   }
-  /* Drop #report's bottom padding for table / list / grouped
-     findings views so the scroll area runs to the bottom edge.
-     The visual bottom gap lives INSIDE the scroll instead — list
-     and grouped pick it up from the last .flat-group / .file-group
-     margin-bottom (findings.css); table gets it from a
-     padding-bottom on .findings-table-list (findings.css). Graph,
-     kanban and focus keep #report's padding-bottom because their
-     panels paint right up to the edge of the scroll area and need
-     the breathing room outside. */
+  /* No bottom padding, so the scroll area reaches the edge; the gap lives
+     inside the scroller (findings.css). Graph, kanban and focus keep it. */
   #report:has(> .findings-content:not(.with-graph, .with-kanban, .with-focus)) {
     padding-bottom: 0;
   }
 }
 
-/* Focus view-mode — the `.findings-content:not(.with-graph,
-   .with-kanban)` block above already supplies the flex chain. Here:
-   override the 1200px cap so the focus layout (card + optional code
-   pane + sidebar) spreads full-viewport; make the body slot a flex
-   column so `.focus-view`'s own `flex: 1` resolves against bounded
-   height; trim the toolbar margin (same reason as kanban). */
+/* Focus: no cap; the body slot is a flex column so `.focus-view`'s `flex: 1`
+   resolves; trimmed toolbar margin as in kanban. */
 .findings-content.with-focus > #findings-body-slot { max-width: none; }
 .findings-content.with-focus #findings-body-slot {
   display: flex; flex-direction: column;
 }
 .findings-content.with-focus .toolbar { margin-bottom: .5rem; }
 
-/* Fullscreen — graph topbar's ⛶ button toggles
-   `body.report-fullscreen`. Hides the chrome and lets the graph2
-   layout grow into the viewport. The layout's height is driven by
-   the flex chain (#main-content → #report → .findings-content.with-
-   graph → .graph2-layout), so once the page-head is hidden the
-   panel naturally takes the full available space minus #report's
-   .5rem padding. */
+/* Fullscreen (`body.report-fullscreen`, the graph's ⛶): chrome hidden; the
+   flex chain grows the panel into the viewport. */
 body.report-fullscreen {
   --graph-fullscreen-inset: max(56px, var(--wco-right-toolbar, 0px));
 
@@ -2651,10 +2257,8 @@ body.report-fullscreen {
   & .bundles-slide-bar { display: none; }
   & #report { max-width: none; padding: .5rem; }
 
-  /* The Code tab's, from the lockfile viewer's button: the file's panel
-     alone, without the file tree, the terminal pane (kept running) or the
-     header's back and forward, until fullscreen is left. The file's header,
-     now the top row, keeps clear of the corner's floating controls. */
+  /* The Code tab's, from the lockfile viewer: the file panel alone (the
+     terminal keeps running); its header clears the corner controls. */
   & .bundle-code-view {
     & > .bundle-code-rail,
     & > bundle-code-splitter,
@@ -2665,22 +2269,15 @@ body.report-fullscreen {
   }
 }
 
-/* Bundle source viewer — modal overlay shown on top of the
-   bundles view (regular or slide). The backdrop captures clicks
-   that fall outside the modal box (closes via the events.js
-   delegate); the modal itself stops propagation in its template
-   so clicks inside the body don't trigger close. Sized to most of
-   the viewport with internal scroll; the body uses ui-monospace
-   so the source matches the file-row chrome elsewhere. */
+/* Bundle source viewer modal. Backdrop clicks close it (events.js); the
+   modal stops propagation. */
 .bundle-source-overlay {
   position: fixed; inset: 0;
   /* Above the finding popup (findings.css `.kanban-detail-backdrop`,
      1100), whose Code button opens it. */
   z-index: 1200;
-  /* Theme-aware dim — matches `meta[name="theme-color"]` (the
-     same variable the kanban modal's dim uses) so light mode
-     dims to off-white and dark mode dims to the near-black
-     instead of an always-dark scrim. */
+  /* Dims with --theme-bar, as the kanban modal does, so light themes dim to
+     off-white. */
   background: rgb(from var(--theme-bar) r g b / .75);
   display: flex; align-items: stretch; justify-content: center;
   padding: 2.5rem 1.5rem;
@@ -2717,7 +2314,7 @@ body.report-fullscreen {
   color: var(--muted);
 }
 .bundle-source-close:hover {
-  border-color: var(--accent, #2563eb);
+  border-color: var(--accent);
   color: var(--text);
 }
 .bundle-source-body {
@@ -2725,18 +2322,13 @@ body.report-fullscreen {
   display: flex;
   background: var(--bg);
 }
-/* Code wrapper handles the actual scroll (its own overflow:auto),
-   so the side panel can sit next to it without sharing the scroll
-   container. */
+/* Scrolls on its own so the side panel doesn't share its scroll. */
 .bundle-source-code-wrap {
   flex: 1; min-width: 0;
   overflow: auto;
   -webkit-app-region: no-drag; app-region: no-drag;
 }
-/* Side panel — appears on the right when a finding is selected.
-   Width is fixed so the code area reflows predictably; vertical
-   scroll handled internally so long descriptions don't push the
-   close button offscreen. */
+/* Finding panel: fixed width so the code reflows predictably. */
 .bundle-source-panel {
   flex-shrink: 0;
   width: 320px;
@@ -2759,18 +2351,8 @@ body.report-fullscreen {
   color: #000;
   flex: 1;
   white-space: nowrap;
-  &.sev-critical      { background: var(--critical); }
-  &.sev-high          { background: var(--high); }
-  &.sev-medium        { background: var(--medium); }
-  &.sev-low           { background: var(--low); color: var(--badge-low-text); }
-  &.sev-high_bug      { background: var(--high-bug); }
-  &.sev-bug           { background: var(--bug); }
-  &.sev-informational { background: var(--info); }
 }
-/* Line + run meta share the row above the description: `Line N`
-   on the left, `analyzer · model · …` filling the remaining
-   space on the right. Both are read-only context; muted to keep
-   the description below as the primary content. */
+/* `Line N` left, the run meta (analyzer · model · …) filling the right. */
 .bundle-source-panel-line-row {
   display: flex; align-items: baseline; gap: .5rem;
   margin-bottom: .35rem;
@@ -2782,11 +2364,8 @@ body.report-fullscreen {
   text-align: right;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* Display-only triage badge alongside the severity. Outline
-   chip style — visually distinct from the severity pill so the
-   user reads it as a status marker rather than a tier. Bucket
-   color matches the toolbar selector / row dropdown so the
-   visual link across views is clear. */
+/* Triage badge as an outline chip, a status rather than a tier; colors match
+   the toolbar's selector. */
 .bundle-source-panel-triage {
   text-transform: uppercase;
   font-size: .6rem;
@@ -2798,8 +2377,8 @@ body.report-fullscreen {
   background: transparent;
   white-space: nowrap;
   flex-shrink: 0;
-  &.triage-inprogress { color: var(--warning, #d97706); }
-  &.triage-fixed   { color: var(--green, #4ade80); }
+  &.triage-inprogress { color: var(--warning); }
+  &.triage-fixed   { color: var(--green); }
   &.triage-invalid { color: var(--muted); }
   &.triage-deleted { color: var(--critical); }
 }
@@ -2813,7 +2392,7 @@ body.report-fullscreen {
   color: var(--muted);
 }
 .bundle-source-panel-close:hover {
-  border-color: var(--accent, #2563eb);
+  border-color: var(--accent);
   color: var(--text);
 }
 .bundle-source-panel-body {
@@ -2863,17 +2442,13 @@ body.report-fullscreen {
     padding: .25rem .4rem;
   }
 }
-.bundle-source-panel-report:hover { border-color: var(--accent, #2563eb); }
+.bundle-source-panel-report:hover { border-color: var(--accent); }
 .bundle-source-empty {
   padding: 1rem; color: var(--muted);
   font-size: .82rem;
 }
-/* Line-numbered source viewer. Two-column layout: a sticky-left
-   gutter `<pre>` holding line numbers separated by newlines, and a
-   `<pre>` for the source code (plain or Prism-highlighted). The
-   shared font + line-height keep both columns vertically aligned;
-   the gutter's sticky-left position keeps the numbers visible
-   while horizontally scrolling wide code. */
+/* Line-numbered viewer: a sticky gutter <pre> beside the code <pre>, sharing
+   font and line height so their rows align. */
 .bundle-source-lines {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .78rem;
@@ -2896,14 +2471,9 @@ body.report-fullscreen {
   font: inherit;
   display: flex; flex-direction: column;
 }
-/* Per-line gutter row — height comes from the natural text-flow
-   line-box (`.bundle-source-lineno-num` span inherits
-   `line-height: 1.45`), the same path the source `<pre>` uses, so
-   both columns share identical line-box arithmetic. Do NOT set an
-   explicit `height: 1.45em`: explicit-height vs natural-text-flow
-   layout round subpixels differently and the gutter drifts ~1%
-   against the code column over hundreds of lines. Dot + line-number
-   sit side by side, both right-aligned to the column edge. */
+/* Rows take their height from natural line boxes, as the code <pre> does.
+   Don't set `height: 1.45em`: explicit heights round subpixels differently
+   and the gutter drifts ~1% over hundreds of lines. */
 .bundle-source-lineno-row {
   display: flex; align-items: center; justify-content: flex-end;
   gap: .35rem;
@@ -2917,11 +2487,8 @@ body.report-fullscreen {
      line box for each further row the line takes in the code. */
   &::after { content: var(--wrap-breaks, none); white-space: pre; }
 }
-/* Wrapped lines. Rows stay one line box apart where a line takes one
-   row, so the dot keeps to the first row of a taller one: centred on it
-   by its line height, as `align-items: center` centres it on one. The
-   Node.js docs link, which takes no width, would push past the right
-   edge; clip it there instead of scrolling for it. */
+/* Wrapped lines: the dot stays on a taller row's first line. The Node.js
+   docs link, which takes no width, would push past the edge: clip it. */
 .bundle-source-lines.is-wrapped {
   min-width: 0;
   & .bundle-source-code { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: clip; }
@@ -2937,9 +2504,7 @@ body.report-fullscreen {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-/* Search-matched line — tint the gutter row + accent the number so
-   hits stand out while scrolling the full file in the Search
-   sidebar, the way finding lines carry a gutter dot. */
+/* Search-matched line: tinted row, accented number. */
 .bundle-source-lineno-row.is-match {
   background: color-mix(in oklch, var(--accent) 16%, transparent);
 }
@@ -2949,13 +2514,10 @@ body.report-fullscreen {
 }
 /* Managed Code's line numbers mark lines for a link to them. */
 .bundle-source-lineno-num[data-bundle-source-line]:hover { color: var(--text); }
-/* Line a clicked search result opened, or managed Code's line link
-   marks (each line of a range) — a band across gutter and code. The code is one <pre> with no per-line boxes, so the band is
-   the gutter row's own border-image pushed right by its outset: it
-   follows the row's line box (rows align with code lines, see
-   above), and outset is ink overflow, so it neither shifts layout nor
-   widens the scroll area. The sticky gutter paints above the code,
-   so the band is a translucent tint over the line's text. */
+/* Target line(s): a band across gutter and code. The code is one <pre>, so
+   the band is the gutter row's border-image outset rightward — ink overflow,
+   no layout shift or scroll growth. Translucent: the sticky gutter paints
+   over the code. */
 .bundle-source-lineno-row.is-target {
   border-image: linear-gradient(color-mix(in oklch, var(--accent) 18%, transparent) 0 0) fill 0 / 0 / 0 100vw 0 0;
 }
@@ -2963,10 +2525,8 @@ body.report-fullscreen {
   color: var(--accent);
   font-weight: 600;
 }
-/* Issue dot — colored by severity tier. Button so it's
-   keyboard-focusable and click-handled by events.js. The
-   placeholder span on dot-less rows reserves the same width so
-   numbered lines align with dotted lines. */
+/* Issue dot by severity, a button (events.js); the placeholder keeps
+   dot-less rows aligned. */
 .bundle-source-dot {
   flex-shrink: 0;
   width: .65rem; height: .65rem;
@@ -2975,14 +2535,7 @@ body.report-fullscreen {
   padding: 0;
 }
 .bundle-source-dot:hover { transform: scale(1.15); }
-.bundle-source-dot.active { box-shadow: 0 0 0 2px var(--accent, #2563eb); }
-.bundle-source-dot.sev-critical      { background: var(--critical); }
-.bundle-source-dot.sev-high          { background: var(--high); }
-.bundle-source-dot.sev-medium        { background: var(--medium); }
-.bundle-source-dot.sev-low           { background: var(--low); }
-.bundle-source-dot.sev-high_bug      { background: var(--high-bug); }
-.bundle-source-dot.sev-bug           { background: var(--bug); }
-.bundle-source-dot.sev-informational { background: var(--info); }
+.bundle-source-dot.active { box-shadow: 0 0 0 2px var(--accent); }
 .bundle-source-dot-placeholder {
   flex-shrink: 0;
   width: .65rem; height: .65rem;
@@ -2997,10 +2550,9 @@ body.report-fullscreen {
   background: transparent;
   & code { font: inherit; background: transparent; padding: 0; }
 }
-/* The underline paints in the button's own colour, so that is the code's
-   text colour wherever the button sits: a C `#include` string is nested in
-   the macro's token, whose red it would otherwise inherit. The linked text
-   keeps its token colour. */
+/* The underline paints in the button's color, so that is the code's text
+   color: a C `#include` string nests in the macro's token and would inherit
+   its red. The linked text keeps its token color. */
 .bundle-source-link {
   display: inline;
   padding: 0; border: 0; border-radius: var(--ui-radius, 2px);
@@ -3017,12 +2569,10 @@ body.report-fullscreen {
 }
 .bundle-source-link:hover { background: var(--surface-active); text-decoration-style: solid; }
 .bundle-source-link:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
-/* Node.js docs link at the end of a line that imports one built-in module.
-   Sized under the line height, so the row keeps the gutter's rhythm. The
-   label is generated content, so it stays out of the source text. The link
-   takes no width and its contents overflow it: the line still ends at the
-   code, where a selection paints the newline. Not positioned, so the sticky
-   gutter keeps painting over it. */
+/* Node.js docs link after a line importing a built-in module. Zero width,
+   its contents overflowing, so the line still ends at the code (where a
+   selection paints the newline); generated label, out of the source text;
+   not positioned, so the sticky gutter paints over it. */
 .source-node-doc {
   display: inline-block;
   width: 0;
@@ -3040,18 +2590,8 @@ body.report-fullscreen {
 .source-node-doc:focus-visible { outline: none; }
 .source-node-doc:focus-visible::after { text-decoration: underline; text-underline-offset: 3px; }
 
-/* Packages view — cross-report aggregation by package. Page-level
-   list of rows; each row is a header (dot + name + count summary)
-   plus a severity-chip strip and a nested file list. Styled like
-   the bundle Issues slide so the visual rhythm carries across
-   aggregate views. */
-/* Tab strip in details panels — bundles details (Packages / Files
-   / Reports / Graph → / Issues → / Code →) and packages details
-   (Overview / Issues) both render this. Kept out of the
-   `.bundles-view` scope so any details panel dropping in a
-   `.bundles-tabs` strip picks up the same chrome. The spacer pushes
-   the actions to the right edge: data tabs left, drill-in actions
-   right. */
+/* Details-panel tab strip (bundles, packages), unscoped so any details panel
+   can use it. The spacer pushes drill-in actions right. */
 .bundles-tabs {
   display: flex; gap: .25rem;
   padding: 0 .25rem;
@@ -3079,10 +2619,7 @@ body.report-fullscreen {
   }
 }
 
-/* Packages view — list of compact package rows on the left, details
-   panel on the right. Mirrors the bundles-view chrome (.bundles-
-   layout / .bundles-list / .bundles-details) so the two cross-
-   report pages read as the same shape. */
+/* Packages view: list left, details right, as the bundles view. */
 .packages-view {
   max-width: 1200px;
   display: flex; flex-direction: column;
@@ -3093,9 +2630,7 @@ body.report-fullscreen {
   & .packages-layout {
     display: grid;
     grid-template-columns: 1fr;
-    /* See `.bundles-layout` — `minmax(0, 1fr)` bounds the row to
-       the grid container so a long list scrolls internally rather
-       than pushing the page. */
+    /* `minmax(0, 1fr)` bounds the row so a long list scrolls inside. */
     grid-template-rows: minmax(0, 1fr);
     gap: 1rem;
     flex: 1;
@@ -3159,31 +2694,19 @@ body.report-fullscreen {
     font-size: .78rem;
   }
 }
-/* Triage selector pinned to the top-right of the page header.
-   `.page-head` is `align-items: flex-start; justify-content:
-   space-between` (see #report rule above), which already pushes
-   the selector to the right edge — this rule mostly tightens
-   the chip row so it doesn't visually compete with the title. */
 .packages-view .packages-triage-selector {
   flex-shrink: 0;
   align-self: flex-start;
 }
 
-/* `[Invalid | Deleted]` tabs in the package Issues slide header
-   — pinned to the right edge of `.bundles-slide-bar` (the title
-   block uses `flex: 1` and pushes us out). Inherits the chip
-   chrome from `.triage-state-btn` (toolbar.css), so per-state
-   active colors match the toolbar's selector. */
+/* [Invalid | Deleted] tabs at the right of the package Issues slide bar;
+   chip chrome from `.triage-state-btn` (toolbar.css). */
 .packages-slide-view slide-triage-tabs {
   display: flex; gap: .25rem;
   flex-shrink: 0;
   align-self: center;
 }
-/* Page-header toolbar — search input + sort dropdown + the
-   triage selector, all on one horizontal row pinned to the
-   right of the page title. The wrapping flex row collapses
-   onto multiple lines on narrow viewports without overlapping
-   the title. */
+/* Page-header toolbar: search, sort and triage selector on one wrapping row. */
 .packages-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -3193,7 +2716,7 @@ body.report-fullscreen {
 }
 .packages-toolbar .packages-search,
 .packages-toolbar .packages-sort {
-  height: 30px; box-sizing: border-box;
+  height: 30px;
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
@@ -3203,14 +2726,10 @@ body.report-fullscreen {
   &:focus { outline: none; border-color: var(--accent); }
 }
 .packages-toolbar .packages-search { padding: 0 .55rem; min-width: 12rem; }
-/* Sort dropdown — strip the native chevron (Chrome/Safari draw wildly
-   different glyphs) and paint our own via the entity-sort host's
-   `::after`, same two-rotated-borders pattern as the findings
-   `repo-filter` / `findings-sort` rule in toolbar.css.
-   `appearance: none` is paired with the WebKit prefix for Safari
-   < 15. */
+/* Native select chevrons differ wildly; draw one on the entity-sort host's
+   ::after, as toolbar.css does. */
 .packages-toolbar .packages-sort {
-  appearance: none; -webkit-appearance: none;
+  appearance: none;
   padding: 0 1.5rem 0 .55rem;
 }
 .packages-toolbar entity-sort {
@@ -3228,9 +2747,7 @@ body.report-fullscreen {
     pointer-events: none;
   }
 }
-/* List of packages — same row chrome as `.bundles-list` so the two
-   cross-report views share their interaction model (hover bg,
-   selected outline). One row per package, inline metadata. */
+/* Same row chrome as `.bundles-list`. */
 .packages-view .packages-list {
   list-style: none; margin: 0; padding: 0;
   border: 1px solid var(--border);
@@ -3246,12 +2763,8 @@ body.report-fullscreen {
     transition: background .12s;
 
     &:hover { background: rgb(from var(--text) r g b / .04); }
-    /* Inherit the parent's corner radius on edge rows so the
-       selection outline follows the rounded clip — without this,
-       a `.selected` first/last row paints a square outline
-       against the parent's curved corner (the parent's
-       overflow: hidden hides the row's overflowing rectangle but
-       the inset outline stays visible inside the curve). */
+    /* Edge rows take the list's radius so a selected row's inset outline
+       follows the curve. */
     &:first-child { border-top-left-radius: var(--ui-radius, 6px); border-top-right-radius: var(--ui-radius, 6px); }
     &:last-child {
       border-bottom: none;
@@ -3273,12 +2786,7 @@ body.report-fullscreen {
     flex: 1; min-width: 0;
     display: flex; flex-direction: column;
   }
-  /* Wrapper that holds the package name + the expand chevron on
-     one line, so the chevron sits immediately after the name
-     rather than at the right edge of the row alongside [Issues
-     →]. The name still ellipses (`min-width: 0` propagates the
-     row's width budget) and the chevron stays a fixed-size
-     trailing anchor. */
+  /* Name + expand chevron on one line, the chevron right after the name. */
   & .packages-name-line {
     display: flex; align-items: center; gap: .4rem;
     min-width: 0;
@@ -3290,10 +2798,7 @@ body.report-fullscreen {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     min-width: 0;
   }
-  /* Version chip rendered inline after the package name —
-     `@1.2.3` for pnpm-shaped paths, omitted for plain
-     `node_modules/<pkg>/` installs (no version available).
-     Slightly muted so the package name keeps primary weight. */
+  /* `@1.2.3` after the name (pnpm-shaped paths only). */
   & .packages-version {
     color: var(--muted);
     font-weight: 500;
@@ -3310,12 +2815,7 @@ body.report-fullscreen {
     gap: .2rem;
     justify-content: flex-end;
   }
-  /* Expand chevron on a multi-version package's headline row —
-     toggles `state.expandedPackages` membership so the older
-     versions surface as sub-rows underneath. Rotates 180° on
-     expand so the affordance reads as a directional toggle.
-     Sits to the LEFT of the [Issues →] button so both chrome
-     pieces stay clustered at the row's right edge. */
+  /* Expand chevron for multi-version packages (state.expandedPackages). */
   & .packages-row-expand {
     flex-shrink: 0;
     margin-left: .25rem;
@@ -3340,23 +2840,15 @@ body.report-fullscreen {
       transform: translateY(2px) rotate(-135deg);
     }
   }
-  /* Older-version sub-row revealed by the headline's chevron.
-     Indent + de-emphasise so the parent / child relationship
-     reads visually; the row remains fully selectable, with its
-     own [Issues →] shortcut scoped to that version's findings. */
+  /* Older-version sub-row: indented and de-emphasized, still selectable. */
   & .packages-row-other {
     padding-left: 1.75rem;
     background: rgb(from var(--text) r g b / .015);
     & .packages-name { font-weight: 500; }
   }
-  /* Row-level [Issues →] shortcut, far right. Same visual
-     weight as the bundle-row [Code →] button — pill chrome that
-     reads as a secondary action against the row's primary
-     "click to select" affordance. Its container sits inside
-     the row's click target; the events.js delegate checks
-     `[data-{package,repository}-row-issues]` BEFORE the row
-     `data-select-*`, so a click here goes straight to the
-     Issues slide without selecting the row first. */
+  /* Row-level [Issues →]. events.js checks
+     `[data-{package,repository}-row-issues]` before the row's `data-select-*`,
+     so it opens Issues without selecting the row. */
   & .packages-row-issues {
     flex-shrink: 0;
     margin-left: .25rem;
@@ -3369,12 +2861,8 @@ body.report-fullscreen {
     &:hover { border-color: var(--accent); color: var(--accent); }
   }
 }
-/* A package's or repository's row skips its layout and paint while
-   off screen, as a finding's does (finding-table.css): a library lists
-   thousands, each drawn on every render. The browser remembers a row's
-   height once drawn; till then it takes a name and a meta line's.
-   Its tooltips live on the body, outside the row's paint containment.
-   Gated off print, as there. */
+/* Off-screen rows skip layout and paint, as findings do (finding-table.css):
+   a library lists thousands. Not in print. */
 @media not print {
   .packages-view .packages-list > li {
     content-visibility: auto;
@@ -3433,9 +2921,7 @@ body.report-fullscreen {
   border-bottom: 1px solid var(--border);
   &:last-child { border-bottom: none; }
 }
-/* Report row — full-width button so the whole strip is the click
-   target. Icon + label inline; hover recolors the label to accent
-   to read as a navigation affordance. */
+/* Report row: a full-width button. */
 .packages-detail-report {
   display: flex; align-items: center; gap: .4rem;
   width: 100%;
@@ -3459,13 +2945,8 @@ body.report-fullscreen {
    browser's default root snapshot would crossfade the entire page. */
 :root { view-transition-name: none; }
 
-/* Advisories tab body — bundle slide. Stasis bundles carry per-
-   module name+version, so the tab fans out a bulk lookup against
-   the npm registry's advisory endpoint (relayed through
-   /api/npm-advisories) and renders one section per affected
-   package. Severity chips reuse the same palette as the rest of
-   the report so a "critical" advisory reads the same red as a
-   critical finding. */
+/* Advisories tab: a bulk npm advisory lookup (via /api/npm-advisories), a
+   section per affected package, chips in the report's severity palette. */
 .bundle-advisories-panel {
   display: flex;
   flex-direction: column;
@@ -3512,9 +2993,7 @@ body.report-fullscreen {
   -webkit-app-region: no-drag; app-region: no-drag;
   scrollbar-gutter: stable;
 }
-/* First-visit consent prompt — centred card with explanation,
-   primary Confirm button, and a trailing "preference is saved"
-   note. Replaces the data body until the user opts in. */
+/* First-visit consent card, in place of the body until the user opts in. */
 .bundle-advisories-panel > .bundle-advisories-consent {
   flex: 1;
   display: flex;
@@ -3534,12 +3013,8 @@ body.report-fullscreen {
   border-radius: var(--ui-radius, 6px);
   background: var(--surface);
   text-align: center;
-  /* Chrome UI, not user-authored content — disable selection on
-     the explanatory copy so a double-click / drag-select doesn't
-     blue-bar the surrounding text. The mono spans (the proxy host
-     + the registry host) stay selectable below — those are real
-     facts a privacy-conscious user may want to copy to verify the
-     destination. */
+  /* Chrome copy isn't selectable; the mono host names are, so a user can
+     verify where requests go. */
   user-select: none;
 }
 .bundle-advisories-consent-card .mono {
@@ -3552,14 +3027,14 @@ body.report-fullscreen {
   line-height: 1.5;
 }
 .bundle-advisories-consent-text .mono {
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: ui-monospace, monospace;
   font-size: .78rem;
 }
 .bundle-advisories-consent-btn {
   padding: .4rem 1.25rem;
   border: 0;
   border-radius: var(--ui-radius, 4px);
-  background: var(--accent, #58a6ff);
+  background: var(--accent);
   color: #fff;
   font-size: .85rem;
   font-weight: 600;
@@ -3573,10 +3048,7 @@ body.report-fullscreen {
 .bundle-advisories-summary {
   color: var(--muted);
   font-size: .72rem;
-  /* Chrome line ("N advisories across M of K packages") — derived
-     counts, not user-authored content. user-select: none keeps a
-     drag-select on the row list from picking the summary line up
-     into the clipboard. */
+  /* Derived chrome: kept out of drag-selections of the list. */
   user-select: none;
 }
 .bundle-advisories-empty {
@@ -3611,7 +3083,7 @@ body.report-fullscreen {
   white-space: nowrap;
   cursor: default;
 }
-.bundle-advisories-retry:hover { border-color: var(--accent, #58a6ff); color: var(--accent, #58a6ff); }
+.bundle-advisories-retry:hover { border-color: var(--accent); color: var(--accent); }
 .bundle-advisories-list {
   list-style: none; margin: 0; padding: 0;
 }
@@ -3643,7 +3115,7 @@ body.report-fullscreen {
 }
 .bundle-advisories-section-versions {
   display: flex; flex-wrap: wrap; gap: .15rem .4rem;
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: ui-monospace, monospace;
   font-size: .68rem;
   color: var(--muted);
 }
@@ -3668,11 +3140,9 @@ body.report-fullscreen {
   .bundle-advisory-cvss-vector { text-align: left; }
 }
 
-/* npm package Overview (view/npm-package.js). Its Dependencies column lists
-   rows as Files does, each opening in the viewer at its latest version. Its
-   rows share their columns, the name with its flags, its kind and its
-   range, so kinds and ranges line up down the list, a range cut short past
-   a width, and first, before a name is. */
+/* npm package Overview (view/npm-package.js): the Dependencies rows share
+   columns (name with flags, kind, range) so kinds and ranges line up; a long
+   range is cut short before a name is. */
 .bundles-sources-list.npm-dependency-list {
   display: grid; grid-template-columns: minmax(min(11rem, 100%), 1fr) auto minmax(0, max-content); column-gap: .5rem;
 
@@ -3822,16 +3292,18 @@ repository-code-source {
    beside the graph its lanes draw, each lane in its color, in order, as the
    data-viz reference palette steps them for a dark surface, and, below, for
    a light one. A commit's own line names it, so no lane needs its color to. */
-repository-history {
+repository-history, repository-replay {
   --lane-0: #3987e5; --lane-1: #d95926; --lane-2: #199e70; --lane-3: #c98500;
   --lane-4: #d55181; --lane-5: #008300; --lane-6: #9085e9; --lane-7: #e66767;
+}
+body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) :is(repository-history, repository-replay) {
+  --lane-0: #2a78d6; --lane-1: #eb6834; --lane-2: #1baf7a; --lane-3: #eda100;
+  --lane-4: #e87ba4; --lane-5: #008300; --lane-6: #6250d6; --lane-7: #e34948;
+}
+repository-history {
   container: history / inline-size;
   display: flex; flex-direction: column; flex: 1; min-height: 0;
   background: var(--bg); border-radius: inherit; font-size: .8rem;
-}
-body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-history {
-  --lane-0: #2a78d6; --lane-1: #eb6834; --lane-2: #1baf7a; --lane-3: #eda100;
-  --lane-4: #e87ba4; --lane-5: #008300; --lane-6: #6250d6; --lane-7: #e34948;
 }
 .history-bar {
   display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .75rem; padding: .45rem .75rem;
@@ -3876,10 +3348,8 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-history 
 @media (prefers-reduced-motion: reduce) {
   .read-gauge .read-gauge-arc, .read-gauge.is-reading .read-gauge-arc { transition: none; animation: none; }
 }
-/* Activity's views (repository-activity.js), first in each view's bar, an
-   icon each, picked as the graph's layouts are. As tall as the buttons and
-   filter beside them, a line of their text with their padding and border,
-   alone on a line of the bar too. */
+/* Activity's view picker, first in each view's bar, as tall as the buttons
+   beside it. */
 .activity-views {
   display: inline-flex; flex-shrink: 0; align-self: stretch; min-height: calc(1lh + .4rem + 2px); gap: 2px; padding: 2px;
   border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
@@ -3913,11 +3383,8 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-history 
   & .lane-7 { color: var(--lane-7); }
 }
 .history-list { margin: 0; padding: 0; list-style: none; }
-/* A line: its commit's short id, its chips and its subject, a pull
-   request's chip and those its subject names opening them on GitHub as the
-   id does the commit; then its author and time, the button opening its code,
-   as wide as the line, the graph's part, the id's, the chips' and the
-   subject's too (its ::before), the links over it. */
+/* A commit's line: id, ref chips, subject, author, time. Its button's
+   ::before covers the whole line; the links sit above it. */
 .history-row {
   position: relative; display: flex; align-items: center; height: 24px; padding-left: calc(var(--history-graph) + .35rem);
   &:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
@@ -4000,7 +3467,6 @@ repository-issues, repository-agents, repository-pulse {
 body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) :is(repository-issues, repository-agents, repository-pulse) {
   --issue-merged: #8250df; --claude: #c15f3c;
 }
-.issues-count { margin-left: .2rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .issues-filter {
   flex: 0 1 14rem; min-width: 7rem; padding: .2rem .5rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   background: var(--surface); color: var(--text); font: inherit;
@@ -4020,14 +3486,10 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) :is(repository-issu
   &.is-closed { --state: var(--issue-closed); }
   &.is-draft, &.is-not-planned { --state: var(--issue-quiet); }
 }
-/* A tile's rail: its state's icon, and under it a pull request's review and
-   checks, then how many comments, the icon over the count, as wide as a
-   compact count is ("999", "1.2K"), each of the three set a little apart. Beside it, a line each: the title, of
-   two at most, its number, author and age, its labels, and a pull request's
-   branches and size, none wrapping to another, so that a tile is as tall as
-   its title makes it and a row of them as tall as its tallest title. Where a
-   row is taller than a tile's own lines, the room is under its title, its
-   other lines level with its neighbors'. */
+/* A tile: a rail (state icon, a pull request's review and checks, comments)
+   beside one-line rows (a title of up to two lines, meta, labels, branches).
+   Spare row height goes under the title, so the other lines align with the
+   neighbors'. */
 .issue-body {
   display: flex; gap: .3rem; flex: 1; min-width: 0; padding: .3rem .5rem .2rem .3rem;
   color: var(--text); text-decoration: none; border-radius: inherit;
@@ -4063,11 +3525,9 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) :is(repository-issu
 .issue-meta time { flex: none; font-variant-numeric: tabular-nums; }
 .issue-number { flex: none; font-variant-numeric: tabular-nums; }
 .issue-author { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-/* Labels in one line, whole while they fit, then shortened, the last first,
-   to its dot alone in its border, then the one before it. Each after the
-   first is in a run of those after it, which gives way a million times as
-   readily as the label before it, so that the label shrinks by less than a
-   pixel can show, and no further than to the run's dots. */
+/* Labels on one line, whole while they fit, then shrinking last-first to
+   their dots: each later label sits in a run that gives way a million times
+   more readily, so they shrink one at a time, never past the run's dots. */
 .issue-labels {
   --label-dot: calc(1.05rem + 2px); --label-gap: .25rem;
   gap: var(--label-gap); overflow: hidden;
@@ -4085,11 +3545,9 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) :is(repository-issu
   & code:last-of-type { flex: none; max-width: 40%; }
 }
 .issue-diff { margin-left: auto; flex: none; font-variant-numeric: tabular-nums; }
-/* An open pull request's reviews (pull-reviews.js), a line: each reviewer's
-   mark and name, an agent's by its mark alone, dimmed where their review was
-   on an earlier commit than the latest, names shortened before the marks;
-   its open threads and the gravest one's badge; and, where no review is on
-   the latest commit, that it isn't. Its icons drawn as the rail's are. */
+/* An open pull request's reviews (pull-reviews.js): each reviewer's mark and
+   name (an agent's mark alone), dimmed when on an older commit; open threads;
+   and "Unreviewed" where no review is on the latest commit. */
 .issue-reviews {
   display: flex; align-items: center; gap: .4rem; min-width: 0; overflow: hidden; white-space: nowrap;
   color: var(--muted); font-size: .72rem;
@@ -4162,17 +3620,13 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) :is(repository-issu
 }
 .is-added { color: var(--green); }
 .is-deleted { color: var(--critical); }
-/* A label's dot in its padding, its name clipped to its content, so that the
-   label shortened to its dot, as narrow as its padding and border, shows the
-   dot alone, centered, and none of its name. Between the dot and the name, an
-   inline box, the first on the line, so that it is the box rather than the
-   name's first letter that the shortening must keep: the name shortens to
-   its ellipsis alone, never to a letter of it. Where the ellipsis has room
-   only by the gap the box keeps, the box gives of it, down to .1rem; where
-   it has none even so, the box takes every room left, and the name and its
-   ellipsis show none of them rather than a sliver. (An ellipsis is taken as
-   1em wide, more than any font's is. Each term of the margin is naught where
-   the label is measured for its own width, its percentages then naught.) */
+/* The dot is in the padding and the name clipped to the content box, so a
+   label shrunk to its dot shows only the dot. The ::before inline box comes
+   first so the ellipsis must keep it rather than the name's first letter:
+   the name shrinks to its ellipsis, never a sliver. Its margin gives back
+   the gap when the ellipsis needs it (down to .1rem) and takes all room when
+   even that won't do. (An ellipsis counts as 1em; each term is 0 when the
+   label is sized to its content.) */
 .issue-label {
   flex: 0 1 auto; min-width: var(--label-dot); max-width: 9rem; padding: 0 .3rem 0 .75rem;
   border: 1px solid var(--border); border-radius: 999px; overflow: clip; overflow-clip-margin: content-box;
@@ -4208,12 +3662,8 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) :is(repository-issu
   & svg { stroke-width: 1.4; }
 }
 
-/* A repository's agents (repository-agents.js): a session a tile, as an
-   issue is, its agents' marks a rail beside its lines, Claude's in its
-   orange, Codex's OpenAI's, an app agent's its GitHub App's avatar: its
-   title, opening where it ran, then a line each, none wrapping, its author,
-   age, tasks and size, its tasks and issues as chips in their states'
-   colors, and its branch. */
+/* A repository's agents (repository-agents.js): a tile per session, as for
+   issues, its agents' marks in the rail. */
 repository-agents { --claude: #d97757; }
 .agent-pick {
   display: inline-flex; align-items: center; gap: .3rem;
@@ -4231,10 +3681,8 @@ repository-agents { --claude: #d97757; }
    too, as the other agents' marks are. */
 .agent-pick:is(.is-codex, .is-copilot) svg { color: var(--text); }
 .agent-mark:is(.is-codex, .is-copilot) { color: var(--text); }
-/* What each agent did among the sessions read, at the bar's end: its mark,
-   then its pull requests, branches and commits to the default branch
-   without one, each its icon and count, the two agents and how many were
-   read set well apart, each to be told from the next. */
+/* Per-agent totals at the bar's end: mark, then pull requests, branches and
+   direct commits, each icon + count. */
 .agent-totals {
   display: inline-flex; flex-wrap: wrap; gap: .3rem 1.75rem; margin-left: auto;
   & + .history-summary { margin-left: 1rem; }
@@ -4260,12 +3708,9 @@ repository-agents { --claude: #d97757; }
   & .agent-chips { flex: 1; min-width: 0; }
   & .issue-meta { flex: none; line-height: 1; }
 }
-/* The chips in one line, those that fit whole, the rest wrapped out of
-   sight, and room kept at its end for how many are not seen: each chip's
-   count of those after it sits past its end, where the next chip, drawn
-   over it, hides it wherever that one fits beside it, so that only the
-   count past the last chip seen shows. While one has the keyboard's focus,
-   all are seen, none clipped, and only the last's count. */
+/* Chips on one line, the rest wrapped out of sight. Each chip's `+N`
+   (::after) sits past its end, covered by the next chip where that fits, so
+   only the last visible chip's count shows. Focused, all show. */
 .agent-chips {
   display: flex; flex-wrap: wrap; gap: .25rem; height: calc(.68rem * 1.35 + 2px); padding-right: 2.5rem; overflow: hidden;
   &:focus-within {
@@ -4293,22 +3738,11 @@ repository-agents { --claude: #d97757; }
   &.is-issue { border-style: dashed; }
 }
 
-/* A repository's pulse (repository-pulse.js): its figures in a row of tiles,
-   then its panels: the period's activity, two columns of three wide beside
-   its contributors, its pull requests, issues and when commits are made
-   under them; two a row where narrower, one where narrower still. The
-   activity is the period alone, a column each: commits with agents in
-   blue atop, those without in amber under them, releases in magenta at the
-   foot, flush, no gap between; under them lines added above a baseline and
-   removed below it, green and red as every diff's are (--green,
-   --critical), which way from the line telling them
-   apart where their hues don't; a month's weekends lightly shaded, a week's
-   figures written on its bars. The column pointed at washed across both,
-   its figures in a card beside it, the one picked in the accent. The punch
-   card one blue, a step lighter for more in the dark, darker in the light,
-   an hour of none the gridlines' gray. Blue, amber and a release's magenta,
-   and each step of the punch card's, are told apart by every kind of color
-   vision. */
+/* A repository's pulse (repository-pulse.js): figure tiles, then panels in
+   1–3 columns by width. Activity bars stack commits with agents (blue) over
+   those without (amber) over releases (magenta), flush; lines added above a
+   baseline, removed below. These hues and the punch card's blue steps stay
+   distinct under every kind of color vision. */
 repository-pulse {
   --pulse-accent: #3987e5; --pulse-without: #c98500; --pulse-release: #c552d4;
   --pulse-added: var(--green); --pulse-removed: var(--critical);
@@ -4365,10 +3799,7 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-pulse {
   .pulse-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .pulse-activity, .pulse-wide { grid-column: span 2; }
 }
-/* Three lists, the commits pushed directly and the issues both shown, and
-   room for them a row with when commits are made: the plots twice the
-   contributors, as before; each list a third of the plots, when commits
-   are made as wide as the contributors, under them. Nine columns. */
+/* From 86rem, nine columns: plots span 6, the others 3, each list 2. */
 @container pulse (width >= 86rem) {
   .pulse-grid.is-lists { grid-template-columns: repeat(9, minmax(0, 1fr)); }
   .pulse-grid.is-lists > * { grid-column: span 3; }
@@ -4394,13 +3825,10 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-pulse {
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 }
 .pulse-plots { position: relative; }
-/* A plot: its scale's hairlines across it, naught's the firmer baseline,
-   their labels in the gutter left of it, its columns over them, each as
-   tall as the plot, which its hover and its click take, its bar from the
-   baseline, or for lines from either side of the middle, up for added, down
-   for removed: two thirds of its column wide, no wider than 40px, a week's
-   56px. A week's figures are written past each bar's end, in the room its
-   plots keep above and below. */
+/* A plot: scale hairlines (zero firmer) labelled in the left gutter, then
+   full-height columns that take hover and click. Bars rise from the
+   baseline (lines: up added, down removed), 66% of a column, ≤ 40px (a
+   week's 56px); a week's figures sit past the bar ends. */
 .pulse-plot {
   position: relative; height: 8.5rem; margin-left: var(--gutter);
   &.is-diverging { height: 6.5rem; }
@@ -4495,10 +3923,8 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-pulse {
 }
 .pulse-tip-note { font-size: .68rem; }
 .pulse-people { display: flex; flex-direction: column; }
-/* The column the contributors are of, a chip in the accent that, clicked,
-   leaves it for the whole period; the contributor the plots are of alike.
-   Its margins drawn in, the head no taller with it than without, nothing
-   under it moved. */
+/* The picked column or contributor, an accent chip that clears the pick;
+   negative margins keep the head's height. */
 .pulse-picked {
   display: inline-flex; align-items: center; gap: .1rem; margin-block: -.125rem; margin-left: auto; padding: 0 .1rem 0 .5rem;
   border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 999px;
@@ -4514,11 +3940,9 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-pulse {
 /* What a list is narrowed to, beside its title, cut short before it would
    wrap the head and shift the list. */
 .pulse-narrowed { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The contributors, a row each in the columns all rows share: who, their
-   commits' bar and their lines. A row clicked anywhere picks its contributor,
-   its name's button stretched over it, their profile's link over that, shown
-   as the row is pointed at; the row picked tinted in the accent, the rest
-   faded. */
+/* Contributors in shared columns (who, commits bar, lines). The name's
+   button stretches over the row, the profile link above it shows on hover;
+   the picked row is tinted, the rest faded. */
 .pulse-ranks {
   display: grid; grid-template-columns: minmax(4rem, max-content) minmax(0, 1fr) max-content; align-items: center; gap: .45rem .6rem;
   margin: 0; padding: 0; list-style: none;
@@ -4606,11 +4030,8 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-pulse {
   &.is-merged, &.is-completed { --state: var(--issue-merged); }
   &.is-closed { --state: var(--issue-closed); }
   &.is-draft, &.is-not-planned { --state: var(--issue-quiet); }
-  /* A commit pushed directly gray, its mark tinged with its kind's hue as
-     the plots color it: with agents, without, a release. Mixed in Oklab,
-     the hue the kind's whatever the gray's faint blue, a little of its
-     chroma; the amber's a share more, the gray's blue taking some of it.
-     Its row a little shorter than a pull request's or an issue's. */
+  /* A directly pushed commit: gray, tinged (in Oklab) with its kind's hue as
+     the plots color it; a slightly shorter row. */
   &.is-commit { --state: var(--muted); padding-block: .125rem; }
   &.is-commit.is-agent { --state: color-mix(in oklab, var(--muted), var(--pulse-accent) 30%); }
   &.is-commit.is-without { --state: color-mix(in oklab, var(--muted), var(--pulse-without) 40%); }
@@ -4628,25 +4049,15 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-pulse {
   &:hover { text-decoration: underline; }
 }
 
-/* A repository's commits replayed (repository-replay.js), as Gource plays
-   them: a canvas filling the tab, the day and commit played over it, the
-   kinds of files by their colors at its corner, and under it the player:
-   play, the commits to seek through (those read behind the played), and
-   how fast. Files are colored as Commits' lanes are, in their order, the
-   data-viz reference palette's steps for each surface; the beams green
-   where a file is added, amber modified, red removed. The canvas reads its
-   colors off the swatches. */
+/* Commits replayed Gource-style (repository-replay.js): a canvas with the day
+   and commit over it, a key in the corner, and a player below. Files colored
+   as Commits' lanes; beams green added, amber modified, red removed. The
+   canvas reads its colors off the swatches. */
 repository-replay {
-  --lane-0: #3987e5; --lane-1: #d95926; --lane-2: #199e70; --lane-3: #c98500;
-  --lane-4: #d55181; --lane-5: #008300; --lane-6: #9085e9; --lane-7: #e66767;
   --replay-added: var(--green); --replay-modified: var(--warning); --replay-removed: var(--critical);
   container: replay / inline-size;
   display: flex; flex-direction: column; flex: 1; min-height: 0;
   background: var(--bg); border-radius: inherit; color: var(--text); font-size: .8rem;
-}
-body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-replay {
-  --lane-0: #2a78d6; --lane-1: #eb6834; --lane-2: #1baf7a; --lane-3: #eda100;
-  --lane-4: #e87ba4; --lane-5: #008300; --lane-6: #6250d6; --lane-7: #e34948;
 }
 .replay-stage { position: relative; flex: 1; min-height: 12rem; overflow: hidden; }
 .replay-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
@@ -4778,11 +4189,9 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-replay {
   }
 }
 
-/* The npm Overview's summary (view/render-bundle.js renderNpmPackageOverview),
-   laid out by the Overview's own width: the package's facts, its build's
-   beside them with the download under those, its figures in a card on the
-   right, and what its files hold under the facts. Every label takes one
-   width, so values line up down the facts and the contents alike. */
+/* npm Overview summary (renderNpmPackageOverview), laid out by its own width:
+   facts, build and download, a figures card at the right, contents under the
+   facts. One label width so values line up. */
 .npm-overview {
   --npm-label: 6.75rem;
   container: npm-overview / inline-size;
@@ -4851,8 +4260,6 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-replay {
   &:hover { color: var(--text); }
 }
 .bundles-detail-meta :is(.npm-commit-missing, .npm-publisher) { color: var(--muted); }
-/* Its provenance: what built it from where, then how, smaller, each part
-   apart from the next by a dot. */
 /* What built it and from where, then how, beside it where that fits whole,
    else on the next line. */
 .npm-provenance { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem 1.4rem; min-width: 0; }
@@ -4881,11 +4288,9 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-replay {
 }
 .bundles-detail-meta .npm-trusted-publisher { color: var(--muted); }
 .bundles-detail-meta .npm-publisher { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .7rem; }
-/* A managed bundle's dependency review, a line of its Overview's facts
-   (bundle-dependency-review.js): its state, red where it fails, amber where
-   versions want reviews, green where they pass, what it tells beside it, and
-   under it, opened, its terms and its versions as a team's Dependencies tab
-   lists them (.team-deps-row), in a scroll of their own. */
+/* A managed bundle's dependency review (bundle-dependency-review.js): its
+   state (red fails, amber wanted, green passes) and, opened, its versions as
+   team-deps rows in their own scroll. */
 /* Its label on its line's baseline, whether its details are open or not, so
    opening them moves it not. */
 .bundles-detail-meta :is(dt:has(+ dd.bundle-review), dd.bundle-review) { align-self: baseline; }
@@ -4906,10 +4311,8 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-replay {
   & svg { width: 12px; height: 12px; fill: none; stroke: currentcolor; stroke-width: 1.75; }
 }
 .bundle-review-error { color: var(--muted); }
-/* A bundle's validation (bundle-validation.js): its button as small as the
-   line it sits in, the warning that its own code wasn't checked, and in its
-   details the files failing or unverified and the packages told, each a row
-   of its chip, its path or name, and what it is of. */
+/* A bundle's validation (bundle-validation.js): a small button, the warning
+   that its own code wasn't checked, and the failing / unverified files. */
 .bundles-detail-meta dd.bundle-validation {
   & .bundle-validate-btn { padding: .1rem .55rem; font-size: .72rem; }
   & .bundle-validation-warning { margin: .25rem 0 0; color: var(--medium); font-size: .75rem; }
@@ -5022,10 +4425,8 @@ npm-downloads-chart {
   & > * { grid-area: 1 / 1; }
   & > .is-held { visibility: hidden; }
 }
-/* Its tier among npm's packages by downloads, beside its figures: solid
-   green to the top 200, then tinted green, yellow, orange, and red for the
-   unpopular, blended with the text's colors as a hint; among a version's
-   chips too (npm-overview.js tierTag), shaped as they are, its tint this. */
+/* Download tier: solid green to the top 200, then tinted green, yellow,
+   orange, red; also on a version's chips (npm-overview.js tierTag). */
 :is(.npm-stat dd, .bundle-compare-row span, .bundle-compare-code-dep span, .npm-extension).npm-downloads-tier {
   color: color-mix(in srgb, var(--tier) 55%, var(--text));
   background: color-mix(in srgb, var(--tier) 10%, var(--bg));
@@ -5146,11 +4547,9 @@ npm-downloads-chart {
   font-size: .7rem; line-height: 1.45;
 }
 .npm-extension-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-/* Files that can be hard to review by reading them, marked in their tags and
-   chips: `warn` for what to look into (binary, control characters,
-   unexpected long lines, an obfuscator's fingerprint), `notice` for minified
-   code, source maps and large code files. What calls for a look at a
-   dependency (view/npm-dependency-checks.js) is a warning's too. */
+/* Hard-to-review files: `warn` (binary, control characters, unexpected long
+   lines, obfuscator fingerprints), `notice` (minified, source maps, large
+   code). Dependency checks (npm-dependency-checks.js) warn too. */
 :is(.npm-extension, .npm-encoding-tag, .npm-flag-tag).is-warn, .npm-dependency-flag {
   color: var(--text);
   background: color-mix(in srgb, var(--high) 22%, var(--bg));
@@ -5183,9 +4582,6 @@ button.npm-category {
     border-left-color: var(--high);
   }
 }
-/* Socket's scores, each a chip as wide as its text, linking to its report;
-   and over the summary, the alerts it raises on the version, as on malware,
-   each with its note. */
 /* A file Socket raises an alert on, named in its severity's color beside the
    file wherever it is listed (the Files list, Compare's heads and tree). */
 .npm-socket-file-alert {
@@ -5215,11 +4611,8 @@ a.npm-socket-score {
   &.is-max .npm-extension-count { color: color-mix(in srgb, var(--green) 80%, var(--text)); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
-/* The version's risk score (npm-overview.js scoreBadge), first among its
-   chips: its ring in its level's color, its chip red or orange as the
-   findings it sums are (`is-critical`, `is-warn`), yellow as a fair Socket
-   score is where moderate, and plain where low; the default cursor over it,
-   as over a label, not text's. */
+/* The risk score (scoreBadge), first among the chips: its ring in its
+   level's color; the chip red / orange as its findings, yellow when moderate. */
 .npm-risk-score {
   align-items: center; gap: .25rem;
   padding: .05rem .35rem .05rem .25rem;
@@ -5243,10 +4636,8 @@ a.npm-socket-score {
   &.sev-high { color: color-mix(in srgb, var(--high) 70%, var(--text)); }
   &.sev-moderate { color: color-mix(in srgb, var(--yellow) 70%, var(--text)); }
 }
-/* A score shown only under its bar, as Compare's and the Overview's badges
-   show them (npm-overview.js socketBadges): fair tinted too, in yellow as
-   poor is in red, since being there flags it. The row of all five keeps fair
-   to its ring, where widely used packages' quality and maintenance often are. */
+/* A score shown only under its bar (socketBadges): fair tinted yellow too.
+   The row of all five keeps fair to its ring. */
 :is(.npm-compare-badges, .npm-overview-badges) a.npm-socket-score.is-fair {
   background: color-mix(in srgb, var(--yellow) 14%, var(--bg)); border-color: color-mix(in srgb, var(--yellow) 70%, var(--border));
 
@@ -5278,16 +4669,10 @@ a.npm-compare-publisher {
   &:hover { border-color: var(--tint); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
-/* A chip's text in its warning's color, one color to a warning: its value,
-   and the whole of a chip that names its issue (the open version's age, its
-   provenance lost, its deprecation, what it does to its files, a count and
-   all, its dependencies from elsewhere than the registry or unused, the
-   hosts it names anew). Only a
-   chip's type, the same whatever
-   its tint (Socket's scores', the publisher's, the advisories', the install
-   scripts'), reads in the text's own color. Each npm account a publisher's
-   chip names, there and in its tooltip, green where it is known to publish,
-   yellow where it is one of the package's maintainers, else orange. */
+/* Warning-colored text, one color per warning: a chip's value, or all of a
+   chip that names its issue (age, lost provenance, deprecation, file changes,
+   non-registry or unused deps, new hosts). Only a chip's type keeps the
+   text color. Accounts: green known, yellow a maintainer, else orange. */
 :is(.npm-compare-account.is-unknown,
   .npm-extension:is(.npm-compare-published, .npm-compare-registry, .npm-compare-unimported, .npm-compare-hosts),
   :is(.npm-compare-install, .npm-dependency-check, .npm-compare-hosts, .npm-held-file) .npm-extension-count) {
@@ -5299,12 +4684,8 @@ a.npm-compare-publisher {
   .npm-extension.npm-compare-file, .npm-compare-file .npm-extension-count) {
   color: color-mix(in srgb, var(--critical) 55%, var(--text));
 }
-/* Provenance the open version lost, its deprecation, and files it adds or
-   changes that call for a look (npm-overview.js fileBadges): a large code
-   file added, a file become unreadable, one with an obfuscator's
-   fingerprint, red as provenance lost is, though their tags on the files
-   say little of one alone; and whatever else is critical, as Socket's poor
-   scores are. */
+/* Lost provenance, deprecation, and files that call for a look (fileBadges):
+   red, as Socket's poor scores, as is anything else critical. */
 .npm-extension:is(.npm-compare-provenance, .npm-compare-deprecated, .npm-compare-file, .is-critical) {
   background: color-mix(in srgb, var(--critical) 14%, var(--bg)); border-color: color-mix(in srgb, var(--critical) 70%, var(--border));
 }
@@ -5362,10 +4743,8 @@ a.npm-compare-publisher {
 .compare-tip-said { display: flex; align-items: center; gap: .45rem; }
 .compare-tip-count { min-width: 1.4em; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
 .compare-tip-none { color: var(--muted); }
-/* A file chip's rows, each file's path, wrapping where it must, then what is
-   said of it, whole. */
-/* A file's said wraps where the two are wider than the tooltip, rather than
-   squeezing its path to a letter a line. */
+/* A file chip's rows: path, then what's said of it, which wraps rather than
+   squeezing the path to a letter a line. */
 .compare-tip-rows.is-files { grid-template-columns: minmax(0, max-content) minmax(0, max-content); }
 .compare-tip-path { overflow-wrap: anywhere; }
 /* One said in several lines (a new host's every file) reads from the top. */
