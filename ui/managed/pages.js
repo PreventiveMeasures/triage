@@ -230,10 +230,9 @@ class ManagedAdminHistory extends ManagedPage {
     </div>`
   }
 
-  // A select whose options show the kinds' chips, as the rows do (a
-  // customizable select; a browser without one reads their names). Each
-  // option is its own template, as an older parser would drop a chip's
-  // element, and with it its binding, from a select's.
+  // A customizable select showing the rows' chips (others read the names).
+  // Each option is its own template: an older parser drops an element, and
+  // its binding, from a select's.
   _kindFilter() {
     const kinds = HISTORY_KINDS.filter(kind => kind !== 'access' || this._role === 'admin')
     return html`<select class="kind-filter" aria-label="Filter history by type" .value=${this._filter}
@@ -686,11 +685,9 @@ class ManagedAdminRepos extends ManagedPage {
     </div>`
   }
 
-  // Its dependency review: on or off at once, by its header's switch; the
-  // reviews each version needs, the commit whose lockfiles' versions need
-  // none and the lockfiles it holds to, saved together (_reviewSetting). On,
-  // where no team that reviews dependencies has it, which its pull requests
-  // then show no review for, it says so.
+  // Switched on or off at once; its required reviews, commit and lockfiles
+  // saved together (_reviewSetting). On, with no reviewing team having the
+  // repository, it warns that its pull requests show no review.
   _dependencyReviewSection(repo) {
     const registered = this._data?.reviewedDependencies === true
     const saved = repo.dependencyReview ?? { enabled: false, required: 1, since: null }
@@ -722,11 +719,10 @@ class ManagedAdminRepos extends ManagedPage {
     </section>`
   }
 
-  // The lockfiles its review holds to (`draft.scope`): every one, all but
-  // those selected, or those selected alone, of the default branch's, read for
-  // it, those named before though no longer there, and another path, or a
-  // directory ending in /, typed in. Among those selected alone, its
-  // stasis.config.json files too, each holding it to what its entries reach.
+  // `draft.scope`: every lockfile, all but those selected, or those alone,
+  // listing the default branch's, those named before, and any path (or
+  // directory ending in /) typed in; stasis.config.json files too, for those
+  // selected alone.
   _lockfileScope(repo, draft, busy) {
     const { mode, paths } = draft.scope
     const read = mode === 'all' ? { status: 'ready', paths: [], configs: [] } : this._lockfilesFor(repo)
@@ -761,9 +757,7 @@ class ManagedAdminRepos extends ManagedPage {
     </fieldset>`
   }
 
-  // The default branch's lockfiles its review reads, and its
-  // stasis.config.json files, read once as its settings show, the page
-  // updated as they arrive.
+  // Read once per repository as its settings show.
   _lockfilesFor(repo) {
     if (this._lockfileRead?.repoId !== repo.id) {
       const read = { repoId: repo.id, status: 'loading', paths: [], configs: [] }
@@ -775,9 +769,8 @@ class ManagedAdminRepos extends ManagedPage {
     return this._lockfileRead
   }
 
-  // A review's setting as it is saved: without its commit where the server
-  // registers reviewed dependencies, which replace it, the one stored kept;
-  // with the lockfiles it holds to where they are given.
+  // Without a commit where the server registers reviewed dependencies (the
+  // stored one kept); with lockfiles where given.
   _reviewSetting(enabled, required, since, lockfiles) {
     return { ...this._data?.reviewedDependencies === true ? { enabled, required } : { enabled, required, since }, ...lockfiles ? { lockfiles } : {} }
   }
@@ -861,11 +854,10 @@ function locationHint(source, value, field, apply, disabled) {
 const uploadedOn = item => Number.isFinite(item.uploadedAt) ? new Date(item.uploadedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''
 const locationOf = item => item.repoFullName ? `${item.repoFullName}${item.repoDirectory ? `/${item.repoDirectory}` : ''}` : 'No repository assigned'
 
-// Reports' and bundles' pages: files uploaded (by drop, picker or local
-// import), searched and filtered by visibility, each assigned a repository
-// location in an editor that suggests the one the file itself names. A
-// subclass names its `kind` and API; `_suggestion` reads what its origin
-// request answers.
+// Reports' and bundles' pages: files uploaded (drop, picker or local import),
+// searched and filtered by visibility, each located in a repository by an
+// editor suggesting the location the file names. A subclass names its `kind`
+// and API.
 class ManagedUploadsPage extends ManagedPage {
   static properties = {
     localImportSource: { attribute: false }, _query: { state: true }, _visibility: { state: true }, _busy: { state: true },
@@ -1013,10 +1005,8 @@ class ManagedUploadsPage extends ManagedPage {
   }
 }
 
-// Reports are uploaded with their own repository metadata, or assigned to the
-// connected repository their findings name. New reports remain hidden until an
-// admin previews and publishes them; the list never asks the uploader to repeat
-// a repo or directory already present in the report header.
+// Reports carry their repository, or are assigned the connected one their
+// findings name, and stay hidden until published.
 class ManagedAdminReports extends ManagedUploadsPage {
   static kind = 'report'
   static view = 'manage-reports'
@@ -1147,9 +1137,8 @@ const BUNDLE_ICON = html`<svg class="report-icon" viewBox="0 0 16 16" width="16"
   <path d="M8.878.392a1.75 1.75 0 0 0-1.756 0l-5.25 3.045A1.75 1.75 0 0 0 1 4.951v6.098c0 .624.332 1.2.872 1.514l5.25 3.045a1.75 1.75 0 0 0 1.756 0l5.25-3.045c.54-.313.872-.89.872-1.514V4.951c0-.624-.332-1.2-.872-1.514ZM7.875 1.69a.25.25 0 0 1 .25 0l4.63 2.685L8 7.133 3.245 4.375Zm-5.125 4.4 4.5 2.61v5.317l-4.375-2.537a.25.25 0 0 1-.125-.216Zm6 7.927V8.7l4.5-2.61v3.96a.25.25 0 0 1-.125.216Z"/>
 </svg>`
 
-// A bundle's delete confirmation, naming the reports that use it (linked to
-// it, or declaring it in their bundleHashes), as many as fit, and counting
-// those the reader can't access. Their link waits for the same bytes again.
+// A bundle's delete confirmation, naming the reports that use it (as many as
+// fit) and counting those the reader can't access.
 const BUNDLE_DELETION_NAMES = 5
 function bundleDeletion(bundle, { reports, otherReports }) {
   const count = reports.length + otherReports
