@@ -1,40 +1,15 @@
-// `<repo-chip>` — the page-header's GitHub repo display, with three
-// visual modes:
+// `<repo-chip>` — the page header's GitHub repo: editable (a pill with the
+// value, or `Set repo` when empty, and a pencil opening an input that Enter
+// / blur commits and Escape rolls back), or read-only (no pencil, for a repo
+// every non-module finding shares). The shown `user/repo` slug is
+// click-to-copy, with a brief "Copied" overlay. The component focuses the
+// input itself: autofocus only fires on the page's first load. `editing`
+// reflects so the host can drive it open; commit / cancel flip it back.
 //
-//   * Editable, collapsed:
-//       [github] user/repo  [pencil]
-//     A pill showing the typed value (or `Set repo` when empty)
-//     plus a pencil button that swaps the chip for an input.
-//
-//   * Editable, expanded:
-//       [input……………………]
-//     Bare focused input. Enter / blur commits, Escape rolls back
-//     to the value the input was opened with.
-//
-//   * Read-only:
-//       [github] user/repo
-//     No pencil. Used when every non-module finding shares the
-//     same `repo.github` and no user input is needed.
-//
-// In the read-only and editable-with-URL modes the `user/repo` slug is
-// click-to-copy: clicking the label writes the slug to the clipboard
-// (brief "Copied" overlay, no pointer cursor — matching the page-head
-// chrome). The pencil still owns edit duty, so copy never fights it.
-//
-// The component owns focus management because `.focus()` after
-// switching to editing mode is unreliable on innerHTML-injected
-// nodes — autofocus only fires on the page's first load.
-//
-// `editing` is reflected to an attribute so the host can drive it
-// open; the component flips it back to `false` on its own commit/cancel.
-//
-// Events (all bubble + composed:true) and what the host should do:
-//   * `repo-edit-start` — pencil clicked. Set `editing=true`.
-//   * `repo-input(detail.url)` — every keystroke; live-persist.
-//   * `repo-commit(detail.url)` — Enter / blur. Set `editing=false`,
-//     persist the value.
-//   * `repo-cancel(detail.url)` — Escape. `detail.url` is the
-//     pre-edit value; restore it and set `editing=false`.
+// Events (bubbling, composed) for the host: `repo-edit-start` (pencil:
+// set `editing`), `repo-input(detail.url)` (each keystroke: persist),
+// `repo-commit(detail.url)` (Enter / blur: persist, clear `editing`),
+// `repo-cancel(detail.url)` (Escape: restore the pre-edit `detail.url`).
 import { LitElement, html, nothing, unsafeCSS } from 'lit'
 import { live } from 'lit/directives/live.js'
 import chipCSS from './repo-chip.css'
@@ -49,7 +24,6 @@ class RepoChip extends LitElement {
     url:      { type: String },
     editable: { type: Boolean, reflect: true },
     editing:  { type: Boolean, reflect: true },
-    // Internal: drives the brief "Copied" overlay on the chip.
     _copied:  { state: true },
   }
 
@@ -61,22 +35,17 @@ class RepoChip extends LitElement {
     this.editable = false
     this.editing = false
     this._copied = false
-    // URL snapshot at the moment the input opened — Escape rolls back
-    // to this. Captured by `_onFocus` so a programmatic re-open after
-    // a previous commit starts from the most recently-saved value.
+    // The value the input opened with (`_onFocus`), which Escape restores.
     this._opener = ''
   }
 
   render() {
+    const hasUrl = !!this.url
+    const label = hasUrl ? prettyRepoLabel(this.url) : 'Set repo'
     if (this.editable && this.editing) {
-      const hasUrl = !!this.url
-      const label = hasUrl ? prettyRepoLabel(this.url) : 'Set repo'
-      const cls = hasUrl ? 'chip' : 'chip empty'
-      // Ghost chip holds the host's layout dimensions (width + height)
-      // so the h1 flex row doesn't reflow when the input opens. The
-      // input absolute-positions on top — no flow participation, no
-      // wrapping. `inert` prevents any interaction with the ghost.
-      return html`<span class=${cls} aria-hidden="true" inert>
+      // An inert ghost chip holds the host's size, so the h1 row doesn't
+      // reflow as the input opens absolutely positioned over it.
+      return html`<span class=${hasUrl ? 'chip' : 'chip empty'} aria-hidden="true" inert>
         ${GITHUB_ICON}
         <span class="label">${label}</span>
         <button type="button" class="edit-btn">${PENCIL_ICON}</button>
@@ -91,17 +60,9 @@ class RepoChip extends LitElement {
         @blur=${this._onBlur}>`
     }
     if (this.editable) {
-      const hasUrl = !!this.url
-      const label = hasUrl ? prettyRepoLabel(this.url) : 'Set repo'
-      const cls = hasUrl
-        ? (this._copied ? 'chip copied' : 'chip')
-        : 'chip empty'
-      // Empty chip: the whole pill is the click target — the `Set
-      // repo` label IS the affordance, so requiring a tiny-pencil aim
-      // would be needless precision. Once a URL is set, the pencil
-      // reclaims sole edit duty so clicking the slug doesn't
-      // surprise-open the input. `_onEdit` stops the bubble so the
-      // pencil click doesn't also fire the chip-level handler.
+      // Empty, the whole pill opens the input (`Set repo` IS the
+      // affordance); with a URL only the pencil does, the slug copying.
+      const cls = hasUrl ? (this._copied ? 'chip copied' : 'chip') : 'chip empty'
       return html`<span class=${cls} @click=${hasUrl ? null : this._onEdit}>
         ${GITHUB_ICON}
         ${hasUrl ? this._slugLabel(label) : html`<span class="label">${label}</span>`}
@@ -113,19 +74,14 @@ class RepoChip extends LitElement {
         >${PENCIL_ICON}</button>
       </span>`
     }
-    if (this.url) {
-      const cls = this._copied ? 'chip readonly copied' : 'chip readonly'
-      return html`<span class=${cls}>
+    if (!hasUrl) return nothing
+    return html`<span class=${this._copied ? 'chip readonly copied' : 'chip readonly'}>
         ${GITHUB_ICON}
-        ${this._slugLabel(prettyRepoLabel(this.url))}
+        ${this._slugLabel(label)}
       </span>`
-    }
-    return nothing
   }
 
-  // Click-to-copy slug label, shared by the read-only and
-  // editable-with-URL modes. The post-copy "Copied" overlay rides on
-  // the parent `.chip.copied`.
+  // The click-to-copy slug; the "Copied" overlay rides on `.chip.copied`.
   _slugLabel(text) {
     return html`<span
       class="label"
@@ -133,9 +89,7 @@ class RepoChip extends LitElement {
     >${text}</span>`
   }
 
-  // Drive focus imperatively when editing flips on (see header:
-  // autofocus is unreliable on innerHTML-injected nodes). `select()`
-  // primes "type to replace" with the cursor at the end.
+  // Focus on opening; `select()` primes "type to replace".
   updated(changed) {
     if (changed.has('editing') && this.editing) {
       const input = this.renderRoot.querySelector('input')
@@ -146,15 +100,13 @@ class RepoChip extends LitElement {
     }
   }
 
+  // Stopping the bubble keeps the pencil's click off the chip's handler.
   _onEdit = (e) => {
     if (e) e.stopPropagation()
     this._emit('repo-edit-start')
   }
 
-  // Copy the displayed `user/repo` slug to the clipboard. stopPropagation
-  // so the slug click doesn't bubble to the chip / host; `_copied` drives
-  // a brief "Copied" overlay. Silent no-op without clipboard access
-  // (insecure context) — a convenience, not load-bearing.
+  // A silent no-op without clipboard access (an insecure context).
   _onCopyLabel = (e) => {
     if (e) e.stopPropagation()
     const text = prettyRepoLabel(this.url)
@@ -181,26 +133,18 @@ class RepoChip extends LitElement {
       this._emit('repo-commit', { url: this.url })
     } else if (e.key === 'Escape') {
       e.preventDefault()
-      // Restore the value AND emit cancel — the host updates
-      // state.repoUrl from the cancel detail and re-renders.
       this.url = this._opener
       this._emit('repo-cancel', { url: this._opener })
     }
   }
 
+  // Not after a keydown already committed or cancelled.
   _onBlur = () => {
-    // Only commit when still in editing mode — a blur fired by a
-    // keydown handler that already dispatched commit/cancel would
-    // double up otherwise.
     if (this.editing) this._emit('repo-commit', { url: this.url })
   }
 
   _emit(name, detail) {
-    this.dispatchEvent(new CustomEvent(name, {
-      detail,
-      bubbles: true,
-      composed: true,
-    }))
+    this.dispatchEvent(new CustomEvent(name, { detail, bubbles: true, composed: true }))
   }
 }
 

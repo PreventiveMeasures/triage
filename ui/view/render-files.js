@@ -1,16 +1,12 @@
 import { html, nothing } from 'lit'
 import { bundlesForFileHash, state } from '#client/index.js'
 import { SEVERITIES, formatBytes } from './format.js'
-import { treeAnchor } from './file-counts.js'
+import { totalFindings, treeAnchor } from './file-counts.js'
 
-// Code-button template for a file with a known sha512 — picks the
-// first bundle that carries a file with this hash (the cross-report
-// hash index, populated by ingest + bundle parsing) and emits the
-// same `data-finding-code-*` attributes the finding-card uses, so
-// events.js's existing handler does the rest. Returns `nothing`
-// when no bundle has a matching file yet — the index fills lazily
-// as bundles get parsed, so the button surfaces when there's a
-// real target to open and stays hidden otherwise.
+// A file's Code button: the first bundle holding a file of this hash (the
+// cross-report hash index, filled lazily as bundles parse), through the
+// finding-card's `data-finding-code-*` attributes and events.js handler.
+// None until some bundle has it.
 function fileCodeButton(fileHash) {
   if (!fileHash) return nothing
   const match = bundlesForFileHash(fileHash)[0]
@@ -24,25 +20,11 @@ function fileCodeButton(fileHash) {
   >Code</button>`
 }
 
-// Render the Files tab. Two view modes:
-//
-//   * `table` (default) — one compact row per file with a finding-
-//     count chip block on the right; clicking a row opens a details
-//     panel with imports / imported by / exports / hashes. Mirrors
-//     the findings tab's table-view affordance, with the same
-//     two-column layout (3fr list / 2fr details).
-//
-//   * `list` — every file rendered as a self-contained card with
-//     all the import / export / hash sections inlined. Kept for
-//     users who prefer scrolling through everything in one pass.
-//
-// A toolbar at the top carries the view-mode switcher (`table` /
-// `list` only — `grouped` from the findings tab doesn't apply
-// here), a search input that does a case-insensitive substring
-// match on file paths, and a `N of M` count.
-//
-// Returns a Lit `TemplateResult`; render.js puts a `tree-view-slot`
-// placeholder into #report and `litRender`s the template into it.
+// The Files tab: `table` (default), a compact row per file with its
+// finding-count chips, a click opening a details panel (imports, imported
+// by, exports, hashes) as the findings table does; or `list`, every file
+// a card with those sections inline. The toolbar holds the two modes, a
+// case-insensitive path search and its `N of M`.
 export function renderTreeView(treeData, findingCounts) {
   const { allFiles, lowerFiles, importedBy } = treeIndex(treeData)
 
@@ -51,9 +33,7 @@ export function renderTreeView(treeData, findingCounts) {
     ? allFiles.filter((f, i) => lowerFiles[i].includes(search))
     : allFiles
 
-  // Targets that exist in the tree get a fragment link to their card
-  // (only meaningful in list mode — in table mode the row is the
-  // primary navigation). Out-of-tree refs render as plain `<span>`.
+  // A target in the tree links to its card (list mode's navigation).
   const linkOrText = (target) => treeData[target]
     ? html`<a href=${`#${treeAnchor(target)}`}><span class="name">${target}</span></a>`
     : html`<span class="name">${target}</span>`
@@ -68,12 +48,6 @@ export function renderTreeView(treeData, findingCounts) {
     </span>`
   }
 
-  const totalIssues = (file) => {
-    const counts = findingCounts.get(file)
-    if (!counts) return 0
-    return SEVERITIES.reduce((sum, s) => sum + (counts[s] ?? 0), 0)
-  }
-
   const toolbar = html`<div class="tree-toolbar">
     <view-mode-buttons modes="table,list" kind="files"></view-mode-buttons>
     <div class="search-row">
@@ -83,18 +57,12 @@ export function renderTreeView(treeData, findingCounts) {
   </div>`
 
   if (state.filesViewMode === 'table') {
-    // Re-validate the selection: a search that hides the previously-
-    // selected file should collapse the details panel back, otherwise
-    // the user sees a panel pinned to a row they can't see.
+    // A search hiding the selected file closes its panel. `.with-details`
+    // widens the wrapper for the split, as the findings tab's does.
     const selected = state.filesSelectedFile && Object.hasOwn(treeData, state.filesSelectedFile)
       && (!search || state.filesSelectedFile.toLowerCase().includes(search))
       ? state.filesSelectedFile
       : null
-    // `.with-details` on the outer wrapper mirrors the findings tab's
-    // pattern (see `.findings-content.with-details` in styles/report.css):
-    // the wrapper relaxes its max-width to fit the list + details
-    // split, while the toolbar inside stays capped at the single-
-    // panel width via a separate CSS rule.
     const wrapperClass = selected
       ? 'tree-view tree-view-table with-details'
       : 'tree-view tree-view-table'
@@ -105,7 +73,7 @@ export function renderTreeView(treeData, findingCounts) {
         <div class="tree-table-list">
           ${files.length === 0 ? html`<div class="tree-table-empty">No files match the search.</div>` : nothing}
           ${files.map((file) => {
-            const issues = totalIssues(file)
+            const issues = totalFindings(findingCounts.get(file))
             const isSel = file === selected
             const sizeLabel = formatBytes(treeData[file].size)
             return html`<div
@@ -173,9 +141,8 @@ function treeIndex(treeData) {
   return lastIndex
 }
 
-// Per-file hash / imports / imported-by / exports sections — shared
-// by the list-mode card and the table-mode details panel so the two
-// can't drift.
+// A file's hashes / imports / imported-by / exports, in the list card and
+// the table's details panel alike.
 function fileSections(entry, incoming, linkOrText) {
   return html`${(entry.fileHash || entry.treeHash) ? html`<div class="tree-hashes hashes">
       ${entry.fileHash ? html`<div class="tree-hash">file: ${entry.fileHash}</div>` : nothing}
@@ -195,10 +162,7 @@ function fileSections(entry, incoming, linkOrText) {
     </div>` : nothing}`
 }
 
-// Right-side details panel for the table view's selected file.
-// Mirrors the per-file sections of list mode (hashes, imports,
-// imported by, exports) but without the tree-file wrapper since
-// the panel itself is the wrapper.
+// The table view's details panel for the selected file.
 function renderFileDetails(entry, file, incoming, linkOrText) {
   const sizeLabel = formatBytes(entry.size)
   return html`

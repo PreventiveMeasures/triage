@@ -1,30 +1,20 @@
-// Tree-walking finding counters + anchor IDs for the Files tab and
-// the graph data-prep stage. Kept out of `graph/` (which holds only
-// graph-rendering code) because none of these run in the graph's
-// lazy chain: the count helpers run in the main bundle to assemble
-// the `prep` object `attachGraphLayout` hands to the lazy graph
-// module, and `treeAnchor` is the Files tab's in-page anchor ID
-// generator (render-files.js tree cards + events.js scroll-to-file).
+// Per-file finding counters and anchor IDs for the Files tab and the
+// graph's data prep. Out of `graph/` because none of this runs in the
+// graph's lazy chain: the counts assemble, in the main bundle, the `prep`
+// that `attachGraphLayout` hands the lazy module.
 
 import { SEVERITIES, displayedSeverity } from './format.js'
 
-// File path → in-page anchor id. Replaces every non-word char with
-// an underscore so paths with `/` `.` `@` (node_modules / scoped
-// packages) produce valid id attributes.
+// File path → in-page anchor id, every non-word run an underscore (paths
+// carry `/` `.` `@`). The Files tab's cards and events.js scroll to it.
 export function treeAnchor(file) {
   return 'tree-' + file.replaceAll(/[^\w-]+/gu, '_')
 }
 
-// Empty per-file counts seed used by both computeFindingCountsByFile
-// and computeTransitiveCounts so tier additions only have to land in
-// `SEVERITIES` (format.js).
 const emptyCounts = () => Object.fromEntries(SEVERITIES.map((s) => [s, 0]))
 
-// file → { critical, high, medium, low, … } finding-count map. Used
-// by both the tree cards and the force-directed visualization to
-// surface findings density per file at a glance. Counts INDIVIDUAL
-// findings (not groups) so the numbers match the per-file stats a
-// user would otherwise scan in the findings view.
+// file → { critical, high, … }, counting INDIVIDUAL findings (not groups),
+// as the per-file stats of the findings view would.
 export function computeFindingCountsByFile(allGroups, mode) {
   const counts = new Map()
   for (const g of allGroups) {
@@ -38,22 +28,14 @@ export function computeFindingCountsByFile(allGroups, mode) {
   return counts
 }
 
-// Combine the per-report tree blobs from a workspace into a single
-// unified file → {imports, size, …} map. Each report carries its
-// own analyzer-emitted tree; workspace-level views (graph canvas,
-// Files tab) want the union so every report's files and import
-// edges are represented, not just the first. Files that appear in
-// more than one report merge their imports lists (deduped); the
-// first report wins on other entry fields, with later reports
-// back-filling a missing `size`. Findings already merge across
-// reports via `getMergedGroups()` (group.js — union-finds groups
-// bound by cross-report dedup hints in state.workspaceMerges) —
-// this is the matching merge on the tree side. Returns null when no
-// report carries tree data so callers fall back to a tree-less layout.
+// The loaded reports' trees as one file → { imports, size, … } map, so a
+// workspace's graph and Files tab show every report's files and edges (the
+// tree side of getMergedGroups' merge): imports union, deduped; the first
+// report wins on other fields, later ones back-filling a missing `size`.
+// Null when no report carries a tree.
 //
-// The last merge is kept by the trees it merged: render asks for it on
-// every draw, and a report's tree is never changed once it is ingested,
-// so the same trees merge to the same map. Callers only read it.
+// Kept by the trees it merged: render asks on every draw, and a report's
+// tree never changes once ingested. Callers only read it.
 let lastMerge = { trees: [], merged: null }
 export function mergeReportsTree(reports) {
   const trees = reports.map((r) => r?.tree ?? null)
@@ -122,18 +104,12 @@ export function computeTransitiveCounts(tree, ownCounts) {
   return new Map(files.map((file, i) => [file, sums[i]]))
 }
 
-// Has-issues predicate: own findings OR something in its subtree
-// has findings. Used to filter out clean files when graph2.showAll
-// is off.
+// Own findings, or some in its subtree: what keeps a file on the graph
+// while `graph2.showAll` is off.
 export function fileHasFindings(file, ownCounts, transitiveCounts) {
-  const own = ownCounts.get(file)
-  const tr = transitiveCounts.get(file)
-  return totalFindings(own) > 0 || totalFindings(tr) > 0
+  return totalFindings(ownCounts.get(file)) > 0 || totalFindings(transitiveCounts.get(file)) > 0
 }
 
 export function totalFindings(counts) {
-  if (!counts) return 0
-  let total = 0
-  for (const k of SEVERITIES) total += counts[k] ?? 0
-  return total
+  return counts ? SEVERITIES.reduce((total, k) => total + (counts[k] ?? 0), 0) : 0
 }
