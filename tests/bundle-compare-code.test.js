@@ -463,15 +463,13 @@ test('readable JSON, changed or added, is offered pretty-printed too, as the Cod
   assert.equal(comparisons.length, asked, 'nothing asked of the server')
 })
 
-// A source map of `ts` built into `js` a line for a line, each mapped from its
-// own, and the file it is of, which names it.
+// A source map of `ts` built into `js` a line for a line, each mapped from its own.
 function builtMap(ts, js) {
   const lines = js.split('\n').map((_, i) => [[0, 0, i, 0]])
-  return { 'lib/index.js': `${js}\n//# sourceMappingURL=index.js.map\n`,
-    'lib/index.js.map': JSON.stringify({ version: 3, file: 'index.js', sources: ['../src/index.ts'], sourcesContent: [ts], names: [], mappings: encodeMappings(lines) }) }
+  return { 'lib/index.js.map': JSON.stringify({ version: 3, file: 'index.js', sources: ['../src/index.ts'], sourcesContent: [ts], names: [], mappings: encodeMappings(lines) }) }
 }
 
-test('a source map is offered pretty-printed at once in any comparison, and diffs as its listings, glossed with the file beside it', t => {
+test('a source map is offered pretty-printed at once in any comparison, and diffs as its listings', t => {
   t.after(() => { state.bundleSourcePretty = false })
   const element = view('lib/index.js.map', [builtMap('const a: number = 1\nconst b = 2', 'const a = 1\nconst b = 2'), builtMap('const a: number = 1\nconst b = 3', 'const a = 1\nconst b = 3')])
   const asked = comparisons.length, checked = listingCheck.asked
@@ -480,8 +478,7 @@ test('a source map is offered pretty-printed at once in any comparison, and diff
   const drawn = renderText(element.render())
   assert.match(drawn, /class=bundle-compare-code-toggle\s+aria-pressed=true aria-busy= aria-label="Pretty-print"/u)
   assert.match(drawn, /<span class="diff-sign">−<\/span><span class=diff-code> {2}│ const b = <mark class="diff-word">2<\/mark><\/span>/u, 'its source\'s text, a line to a line')
-  assert.match(drawn, /<span class="diff-sign">\+<\/span><span class=diff-code>@ const b = <mark class="diff-word">3<\/mark><\/span>/u, 'the generated line it maps, glossed')
-  assert.match(drawn, /<span class="diff-sign">\+<\/span><span class=diff-code> {2}← index\.ts \+1 {2}const b = <mark class="diff-word">3<\/mark><\/span>/u, 'the source line it maps from')
+  assert.match(drawn, /class="add">\+1<\/span><span class="del">−1/u, 'its one line changed, its mappings alike')
   assert.ok(listingCheck.asked > checked, 'the diff drawn held to reading back to the new map')
   assert.equal(comparisons.length, asked, 'nothing asked of the server')
 })
@@ -496,7 +493,7 @@ test('a source map whose listings\' diff would not read back to the new map is d
   assert.match(drawn, /class=bundle-compare-code-toggle is-error\s+aria-pressed=true/u)
   assert.match(drawn, /data-tooltip=Couldn't pretty-print: Its listings' diff wouldn't show every change: the changes drawn don't fit the listings drawn\./u)
   assert.match(drawn, /<span class=diff-code>\{"version":3,"file":"index\.js",.*"sourcesContent":\["let v = <mark class="diff-word">2<\/mark>"\]/u, 'the new map drawn as published')
-  assert.doesNotMatch(drawn, /"mappings": decoded/u)
+  assert.doesNotMatch(drawn, /"mappings": \{/u)
   listingCheck.refusal = null
   assert.match(renderText(element.render()), /is-error/u, 'refused for as long as its sides are the same')
 })

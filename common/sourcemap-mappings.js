@@ -103,25 +103,34 @@ function vlq(number) {
   return text
 }
 
-// Lines of segments as decodeMappings reads them, written as the format
-// writes them, each value in the fewest digits: so for mappings as any
-// generator writes them, `encodeMappings(decodeMappings(m, …))` is `m`.
-export function encodeMappings(lines) {
+// Lines of segments as decodeMappings reads them, each value from the one
+// before as the format writes it: a column from the one before on its line,
+// a source, line, column and name from the segment before, whatever its line.
+export function mappingsDeltas(lines) {
   let name = 0, source = 0, sourceColumn = 0, sourceLine = 0
   return lines.map(line => {
     let column = 0
     return line.map(segment => {
-      let text = vlq(segment[0] - column)
+      const values = [segment[0] - column]
       column = segment[0]
       if (segment.length >= 4) {
-        text += vlq(segment[1] - source) + vlq(segment[2] - sourceLine) + vlq(segment[3] - sourceColumn)
+        values.push(segment[1] - source, segment[2] - sourceLine, segment[3] - sourceColumn)
         ;[, source, sourceLine, sourceColumn] = segment
         if (segment.length === 5) {
-          text += vlq(segment[4] - name)
+          values.push(segment[4] - name)
           name = segment[4]
         }
       }
-      return text
-    }).join(',')
-  }).join(';')
+      return values
+    })
+  })
 }
+
+// Lines of segments of values from the one before (mappingsDeltas), written as
+// mappings, each value in the fewest digits.
+export const encodeDeltas = lines => lines.map(line => line.map(values => values.map(vlq).join('')).join(',')).join(';')
+
+// Lines of segments as decodeMappings reads them, written as the format
+// writes them: so for mappings as any generator writes them,
+// `encodeMappings(decodeMappings(m, …))` is `m`.
+export const encodeMappings = lines => encodeDeltas(mappingsDeltas(lines))

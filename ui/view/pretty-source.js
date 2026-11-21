@@ -101,15 +101,14 @@ const versions = new Map()
 const comparisons = new Map()
 
 // The files formatted here, by kind, each by what its path names: JSON, in
-// the toggle's layout (`layouts`), and source maps, listed (pretty-sourcemap.js),
-// glossed with the file beside the map in the same details that names it; and
-// what makes a file of the kind printable, past being no larger than formatted.
+// the toggle's layout (`layouts`), and source maps, listed (pretty-sourcemap.js);
+// and what makes a file of the kind printable, past being no larger than formatted.
 const parses = text => {
   try { JSON.parse(text); return true } catch { return false }
 }
 const VIEWER_KINDS = [
   { printed: jsonPrinted, printable: parses, layouts: true, copy: (_details, _path, content, layout) => prettyJsonText(content, { width: JSON_LAYOUTS[layout].width }) },
-  { printed: sourcemapPrinted, printable: isSourceMap, layouts: false, copy: (details, path, content) => listSourcemap(content, path, bundleFilesAsMap(details)).text },
+  { printed: sourcemapPrinted, printable: isSourceMap, layouts: false, copy: (_details, _path, content) => listSourcemap(content) },
 ]
 const viewerKind = path => VIEWER_KINDS.find(kind => kind.printed(path)) ?? null
 
