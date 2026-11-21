@@ -40,15 +40,6 @@ function treeRead({ repoId, commit, path }) {
 }
 
 class RepositoryTreemap extends Shown {
-  static properties = { repository: { attribute: false } }
-
-  createRenderRoot() { return this }
-
-  constructor() {
-    super()
-    this.repository = null
-  }
-
   render() {
     if (!this.repository?.commit) return nothing
     const entry = treeRead(this.repository)
