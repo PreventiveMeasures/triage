@@ -542,7 +542,7 @@ test('a pull request awaiting a build of Stasis\'s is asked again alone, its rep
   const waiting = { paths: ['stasis.config.json'], builds: [{ commit: 'a'.repeat(40), built: true }, { commit: 'b'.repeat(40), built: false }], error: 'stasis-pending' }
   const none = { ...terms, toReview: 0, unreviewed: 0, unsupported: 0 }
   // How far Stasis is told: its mark, a bar, and how many builds of how many are made.
-  const progress = (done, total) => new RegExp(String.raw`<p class="team-deps-quiet team-deps-building" role="status" data-tooltip=Stasis is working out what their stasis\.config\.json entries reach: ${done} of ${total} builds made\. Those waiting are asked again as it makes them\.><img class="team-deps-stasis" src="\./stasis\.svg" alt="Stasis">\s*` +
+  const progress = (done, total) => new RegExp(String.raw`<p class="team-deps-quiet team-deps-building" role="status" data-tooltip=Stasis is working out what their stasis\.config\.json entries reach: ${done} of ${total} builds made\.><img class="team-deps-stasis" src="\./stasis\.svg" alt="Stasis">\s*` +
     String.raw`<span class="team-deps-progress" role="progressbar" aria-label="Stasis builds made" aria-valuemin="0" aria-valuemax=${total} aria-valuenow=${done}>[^]*?<span class="team-deps-progress-n">${done}/${total}</span></p>`, 'u')
   TEAM.push(21, 22)
   branches[21] = { cut: false, review: none, lockfiles: [dir()] }
