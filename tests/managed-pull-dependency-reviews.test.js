@@ -1373,6 +1373,9 @@ test('a bundle\'s version a lockfile installs from a directory of the project\'s
   assert.deepEqual(lockedVersions(bundled.slice(0, 1), yarn), { locked: [{ name: 'local-dep', version: '1.0.0', source: 'file', lockfile: 'yarn1' }], unlocked: [],
     versions: 1, paths: ['yarn.lock'] }, 'Yarn 1\'s by its version')
   assert.deepEqual(lockedVersions([{ name: 'other', version: '1.0.0' }], read).unlocked, [{ name: 'other', version: '1.0.0' }])
+  const archive = { name: 'local-dep', version: '2.0.0', integrity: sri('local-dep@2.0.0') }
+  assert.deepEqual(lockedVersions([archive], read), { locked: [], unlocked: [{ name: 'local-dep', version: '2.0.0' }], versions: 1,
+    paths: ['web/pnpm-lock.yaml', 'package-lock.json'] }, 'one installed from an archive, told with its integrity, never by its name alone')
 })
 
 // The repository's lockfiles at the commit a bundle in `web` was built from:
