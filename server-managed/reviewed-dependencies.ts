@@ -24,8 +24,9 @@ import { isNpmPackageName } from '../common/managed/npm-packages.js'
 import { type Lru, lru } from './lru.ts'
 
 export type ReviewedLockfile = 'npm' | 'pnpm' | 'yarn1'
-// A dependency as a lockfile locks it: npm's always with its integrity (one
-// with none is never reviewed, nor asked of), its shasum where the lockfile
+// A dependency as a lockfile locks it: npm's with its integrity where it has
+// one (one with none asked of as it is, `lookup` passing it or not, as only
+// the host may), its shasum where the lockfile
 // has one (Yarn 1's, after a tarball's `#`), and the hash of its patch where
 // it is patched (pnpm's).
 export interface ReviewedDependency {
