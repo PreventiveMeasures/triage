@@ -8,7 +8,7 @@ import { mock, test } from 'node:test'
 import { BundleBuildError } from '../server-managed/bundle-build.ts'
 import { bundleDependencies, lockedVersions } from '../server-managed/bundle-dependency-reviews.ts'
 import { reviewedDependencies } from '../server-managed/pull-dependency-reviews.ts'
-import { STASIS_DEPENDENCIES_READ, stasisDependencyReader, stasisDirectory, withReach } from '../server-managed/stasis-dependencies.ts'
+import { STASIS_DEPENDENCIES_READ, stasisDependencyReader, stasisDirectory, wantingBeside, withReach } from '../server-managed/stasis-dependencies.ts'
 import { sri } from './_managed-repository-dependency-reviews.js'
 
 const [head, base] = ['b', 'c'].map(char => char.repeat(40))
@@ -33,43 +33,64 @@ function reader({ store = memory(), stopping = () => false } = {}) {
 }
 const key = (commit, path = config) => `1\0${STASIS_DEPENDENCIES_READ}\0${commit}\0${path}`
 const pending = { status: 'pending' }
+// A build an answer asks for, of `config` at `commit` (StasisWant).
+const want = (commit, more = {}) => ({ repo, token: 'token', commit, config, priority: 0, ...more })
+const commits = one => one.builds.map(({ input }) => input.commit[0])
+// What goes on behind a build asked for, as far as it goes: past its store's read, which comes first.
+const tick = () => new Promise(resolve => { setImmediate(resolve) })
 
-test('what a stasis.config.json reaches at a commit is built behind the answer asking for it, none waited for, and kept by the repository, the commit and its path: the versions alone', async () => {
+test('what a stasis.config.json reaches at a commit is built once asked for, behind the answer, none waited for, and kept by the repository, the commit and its path: the versions alone', async () => {
   const one = reader()
-  assert.deepEqual(await one.read(repo, 'token', head, config, 'release'), pending, 'not kept: built, and told so at once')
+  assert.deepEqual(await one.read(1, head, config), pending, 'not kept: told so at once')
+  assert.equal(one.builds.length, 0, 'built only once asked for')
+  one.build([want(head, { branch: 'release' })])
+  await tick()
   assert.deepEqual(one.builds.map(({ input, github, token }) => [input, github, token]), [[{ repoId: 1, commit: head, config, branch: 'release' }, 'org/repo', 'token']],
     'told the branch its commit is said to be of')
-  // While it is built, neither it nor another is, one at a time: the one asked for last meanwhile follows it at once, the rest when asked for again.
-  for (const commit of [head, '2'.repeat(40), base, head]) assert.deepEqual(await one.read(repo, 'token', commit, config), pending)
-  assert.equal(one.builds.length, 1)
   const dependencies = [dep('ms', '2.1.3'), dep('tool', '1.0.0', { patch: PATCH })]
   one.builds.shift().resolve(dependencies)
-  await new Promise(resolve => { setImmediate(resolve) })
-  assert.deepEqual(one.builds.map(({ input }) => input), [{ repoId: 1, commit: base, config }], 'the one asked for last, not waiting to be asked again; of no branch where none is said')
-  one.builds.shift().resolve([])
   await one.settled()
-  assert.deepEqual(await one.read(repo, 'token', head, config), { status: 'ready', dependencies })
-  assert.deepEqual([...one.store.kept].map(([at, { value }]) => [at, value]), [[key(head), dependencies], [key(base), []]], 'its versions, nothing else of the lockfile built')
-  assert.equal(one.builds.length, 0, 'the other asked for meanwhile, not till it is asked for again')
+  assert.deepEqual(await one.read(1, head, config), { status: 'ready', dependencies })
+  assert.deepEqual([...one.store.kept].map(([at, { value }]) => [at, value]), [[key(head), dependencies]], 'its versions, nothing else of the lockfile built')
   // Another instance, cold: kept beyond the one that built it; what is kept that isn't one, built again.
   const other = reader({ store: one.store })
-  assert.deepEqual(await other.read(repo, 'another', head, config), { status: 'ready', dependencies })
+  assert.deepEqual(await other.read(1, head, config), { status: 'ready', dependencies })
+  other.build([want(head)])
+  await other.settled()
   assert.equal(other.builds.length, 0, 'built by none again')
-  one.store.kept.set(key('1'.repeat(40)), { at: Date.now(), value: [{ name: 'x', version: '1.0.0', patch: 1 }] })
-  assert.deepEqual(await other.read(repo, 'token', '1'.repeat(40), config), pending)
+  one.store.kept.set(key(base), { at: Date.now(), value: [{ name: 'x', version: '1.0.0', patch: 1 }] })
+  assert.deepEqual(await other.read(1, base, config), pending)
 })
 
-test('a failed build is held in this instance, GitHub\'s for less; one whose slot is busy, or that gave it up, or that a long build came before, is built when asked for again; one under way stops with the server', async t => {
+test('those asked for while one is built wait, and follow it at once: the one of highest priority first, then the one asked for last, each with its latest asker\'s token and branch', async () => {
+  const one = reader()
+  one.build([want('1'.repeat(40))])
+  one.build([want('1'.repeat(40)), want('2'.repeat(40), { priority: 1 }), want('3'.repeat(40), { priority: 4 }), want('4'.repeat(40), { priority: 1, branch: 'old' })])
+  one.build([want('2'.repeat(40), { token: 'newer' }), want('4'.repeat(40), { token: 'newer' }), want('3'.repeat(40))])
+  await tick()
+  assert.deepEqual(commits(one), ['1'], 'one at a time; the one being built asked for no more')
+  for (let at = 0; at < 4; at++) {
+    one.builds[at].resolve([])
+    await tick()
+    await tick()
+  }
+  await one.settled()
+  assert.deepEqual(commits(one), ['1', '3', '4', '2'], 'the highest priority asked for first, kept where asked for again at less; of the same, the one asked for last')
+  assert.deepEqual(one.builds.slice(2).map(({ input, token }) => [input.branch, token]), [['old', 'newer'], [undefined, 'newer']], 'its branch kept where none is said again')
+})
+
+test('a failed build is held in this instance, GitHub\'s for less; one whose slot is busy, or that gave it up, or that a long build came before, is built when one is asked for again; one under way stops with the server', async t => {
   t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: 1_000_000 })
   const warn = mock.method(console, 'warn', () => {})
   t.after(() => warn.mock.restore())
   let stopped = false
   const one = reader({ stopping: () => stopped })
   const fails = async (commit, error) => {
-    assert.deepEqual(await one.read(repo, 'token', commit, config), pending)
+    one.build([want(commit)])
+    await tick()
     one.builds.shift().reject(error)
     await one.settled()
-    return one.read(repo, 'token', commit, config)
+    return one.read(1, commit, config)
   }
   assert.deepEqual(await fails('1'.repeat(40), new BundleBuildError(422, 'config-invalid')), { status: 'failed', error: 'config-invalid', transient: false })
   assert.deepEqual(await fails('2'.repeat(40), new BundleBuildError(422, 'github-build-failed')), { status: 'failed', error: 'github-build-failed', transient: true })
@@ -77,32 +98,60 @@ test('a failed build is held in this instance, GitHub\'s for less; one whose slo
   assert.equal(one.store.kept.size, 0, 'none kept beyond the instance')
   // A minute on, GitHub's failure is built again as asked; an hour on, the commit's own.
   t.mock.timers.tick(60_000)
-  assert.deepEqual([(await one.read(repo, 'token', '1'.repeat(40), config)).status, await one.read(repo, 'token', '2'.repeat(40), config)], ['failed', pending])
-  one.builds.shift().resolve([])
-  await one.settled()
+  assert.deepEqual([(await one.read(1, '1'.repeat(40), config)).status, await one.read(1, '2'.repeat(40), config)], ['failed', pending])
   t.mock.timers.tick(60 * 60_000)
-  // One begun a minute ago or longer is followed by none, lest builds on end outlast what they run behind: the next is built when asked for again.
-  assert.deepEqual(await one.read(repo, 'token', '4'.repeat(40), config), pending)
+  assert.deepEqual(await one.read(1, '1'.repeat(40), config), pending)
+
+  // One begun a minute ago or longer is followed by none, lest builds on end outlast what they run behind: the next waits for one to be asked for again.
+  one.build([want('4'.repeat(40))])
+  await tick()
   t.mock.timers.tick(60_000)
-  assert.deepEqual(await one.read(repo, 'token', '5'.repeat(40), config), pending)
+  one.build([want('5'.repeat(40)), want('6'.repeat(40))])
   one.builds.shift().resolve([])
   await one.settled()
   assert.equal(one.builds.length, 0)
+  // Two minutes not asked for again, one waiting is let go.
+  t.mock.timers.tick(2 * 60_000)
+  one.build([want('6'.repeat(40))])
+  await tick()
+  assert.deepEqual(commits(one), ['6'], 'the one asked for again; the other let go')
+  one.builds.shift().resolve([])
+  await one.settled()
   // Busy, or yielding to a build asked for: none tried for ten seconds, then built as asked.
   for (const code of ['build-busy', 'build-yielded']) {
     assert.deepEqual(await fails('1'.repeat(40), new BundleBuildError(429, code)), pending, code)
+    one.build([want('1'.repeat(40))])
+    await tick()
     assert.equal(one.builds.length, 0, 'not tried at once')
     t.mock.timers.tick(10_000)
   }
-  assert.deepEqual(await one.read(repo, 'token', '1'.repeat(40), config), pending)
+  one.build([want('1'.repeat(40))])
+  await tick()
   const [build] = one.builds.splice(0)
   build.signal.addEventListener('abort', () => build.reject(build.signal.reason))
   stopped = true
   t.mock.timers.tick(1000)
   await one.settled()
   assert.equal(build.signal.aborted, true, 'stopped with the server')
-  assert.deepEqual(await one.read(repo, 'token', '1'.repeat(40), config), pending)
+  one.build([want('1'.repeat(40))])
+  await tick()
   assert.equal(one.builds.length, 0, 'none started while it stops')
+})
+
+test('a build\'s priority is how many versions the lockfiles beside its stasis.config.json add that want reviews, as the review counts them, all of them; none where it holds to none there', async () => {
+  // As the review counts them: those wanting reviews, every one, not those it tells alone.
+  const many = Array.from({ length: 250 }, (_, at) => locked(`pkg-${String(at).padStart(3, '0')}`, '1.0.0'))
+  const told = { base, head, cut: false, lockfiles: [{ paths: ['app/pnpm-lock.yaml'], more: 50, moreLocked: 0, added: many, locked: many },
+    { paths: ['pnpm-lock.yaml'], more: 0, moreLocked: 0, added: [locked('root', '1.0.0')], locked: [locked('root', '1.0.0')] }] }
+  const wantedIn = new Map()
+  const answer = await reviewedDependencies(told, { required: 1, since: null, canReview: true, lockfiles: { mode: 'exclude', paths: [] }, reviews: [] }, { wantedIn })
+  assert.equal(answer.lockfiles[0].added.length, 200, 'as many told as MAX_ADDED')
+  assert.deepEqual([...wantedIn].map(([paths, count]) => [paths, count]), [[['app/pnpm-lock.yaml'], 250], [['pnpm-lock.yaml'], 1]])
+  assert.equal(wantingBeside(wantedIn, config), 250, 'the lockfile in its directory, every version of its wanting reviews')
+  assert.equal(wantingBeside(wantedIn, 'stasis.config.json'), 1, 'another\'s directory, its own')
+  assert.equal(wantingBeside(wantedIn, 'web/stasis.config.json'), 0, 'none held to beside it')
+  assert.equal(wantingBeside(new Map([[[config], 3]]), config), 0, 'a stasis.config.json\'s own, no lockfile')
+  assert.equal(wantingBeside(new Map(), config), 0, 'no review told')
 })
 
 // The lockfiles of a commit as read (commit-lockfiles.ts CommitLockfiles).

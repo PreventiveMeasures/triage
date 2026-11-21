@@ -4,10 +4,14 @@
 // (bundle-build-worker.js buildStasisLockfile), kept by the repository, the
 // commit and the file's path, which never change, in this instance and in
 // the database, the versions alone. A build takes minutes, so none is waited
-// for: one not kept is told as pending and built behind the answer, one at a
-// time, the one asked for last meanwhile following a quick one at once; any
-// other is built when asked for again, as its page asks. A failed one is
-// held in this instance, then built again as asked.
+// for: one not kept is told as pending (read), and its answer asks for it
+// once its review is known (build), with a priority: how many versions the
+// lockfiles beside it add that want reviews (wantingBeside). Those asked for
+// wait, and are built behind the answers one at a time, the one of highest
+// priority first, then the one asked for last; one following another at once
+// while the first of them began a minute ago or less, else as one is asked
+// for again, as its page asks. A failed one is held in this instance, then
+// built again as asked.
 import { BundleBuildError, type LockfileInput, type StasisDependency } from './bundle-build.ts'
 import { directoryOf, installsBundle, lockedVersions } from './bundle-dependency-reviews.ts'
 import type { CommitLockfiles } from './commit-lockfiles.ts'
@@ -28,19 +32,29 @@ const TRANSIENT = new Set(['github-rate-limited', 'github-build-failed'])
 // How long no build is tried again once one found its slot busy.
 const BUSY_MS = 10_000
 // How long after the first of them began builds follow one another at once:
-// later, the next is built when asked for again, lest they outlast the
+// later, the next is built when one is asked for again, lest they outlast the
 // invocation they run behind (serverless).
 const FOLLOWED_WITHIN_MS = 60_000
+// How long one waits not asked for again (its page asks every 30 seconds
+// while it shows it), and how many wait at most, the one asked for longest
+// ago let go past them.
+const LAPSED_MS = 2 * 60_000
+const MAX_WAITING = 500
 // How often a build under way looks whether the server is stopping.
 const STOPPING_EVERY_MS = 1000
 
 export type StasisRead = { status: 'ready'; dependencies: StasisDependency[] } | { status: 'pending' } | { status: 'failed'; error: string; transient: boolean }
+// A build an answer asks for: of the stasis.config.json at `config` of
+// `repo` at `commit`, with `token`, its asker's, told the `branch` the commit
+// is of, where its asker knows it, and its priority.
+export interface StasisWant { repo: { repoId: number; fullName: string }; token: string; commit: string; config: string; branch?: string; priority: number }
 
 export interface StasisDependencyReader {
-  // What the stasis.config.json at `config` of `repo` reaches at `commit`, as
-  // known now; where nothing is, a build of it started behind the answer
-  // with `token`, told the `branch` the commit is of, where its asker knows.
-  read(repo: { repoId: number; fullName: string }, token: string, commit: string, config: string, branch?: string): Promise<StasisRead>
+  // What the stasis.config.json at `config` of repository `repoId` reaches at
+  // `commit`, as known now.
+  read(repoId: number, commit: string, config: string): Promise<StasisRead>
+  // Those of `wants` not known built behind the answer asking for them.
+  build(wants: StasisWant[]): void
 }
 interface ReaderOptions {
   store: KeptStore<unknown>
@@ -51,7 +65,8 @@ interface ReaderOptions {
   stopping(): boolean
 }
 
-type Job = { key: string; input: LockfileInput; github: string; token: string }
+type Job = { key: string; input: LockfileInput; github: string; token: string; priority: number; asked: number }
+const keyOf = (repoId: number, commit: string, config: string) => `${repoId}\0${STASIS_DEPENDENCIES_READ}\0${commit}\0${config}`
 const optional = (value: unknown) => value === undefined || typeof value === 'string'
 const dependenciesOf = (value: unknown) => Array.isArray(value) && value.every(one => plainObject(one) && typeof one['name'] === 'string'
   && typeof one['version'] === 'string' && optional(one['integrity']) && optional(one['patch'])) ? value as StasisDependency[] : null
@@ -59,17 +74,35 @@ const dependenciesOf = (value: unknown) => Array.isArray(value) && value.every(o
 export function stasisDependencyReader({ store, build, behind, stopping }: ReaderOptions): StasisDependencyReader {
   const known: Lru<{ read: StasisRead; until: number }> = lru(500_000, ({ read }) => read.status === 'ready' ? read.dependencies.length + 1 : 1)
   const hold = (key: string, read: StasisRead, until = Infinity) => { known.set(key, { read, until }); return read }
-  // The one being built here, till when none is tried after one found its slot busy, and the one asked for last meanwhile.
-  let building: string | null = null, busyTill = 0, next: Job | null = null
+  const kept = async (key: string) => {
+    const dependencies = dependenciesOf((await store.read(key))?.value)
+    return dependencies && hold(key, { status: 'ready', dependencies })
+  }
+  // Those waiting, the one asked for longest ago first; the one being built here; and till when none is tried after one found its slot busy.
+  const waiting = new Map<string, Job>()
+  let building: string | null = null, busyTill = 0
 
-  async function built({ key, input, github, token }: Job) {
+  // The one to build next: of the highest priority, then asked for last; those not asked for since LAPSED_MS let go.
+  function next(): Job | null {
+    let best: Job | null = null
+    for (const job of waiting.values()) {
+      if (Date.now() - job.asked >= LAPSED_MS) waiting.delete(job.key)
+      else if (!best || job.priority >= best.priority) best = job
+    }
+    if (best) waiting.delete(best.key)
+    return best
+  }
+
+  async function built(job: Job) {
+    // Another instance may have built it since it was asked for.
+    if (await kept(job.key)) return
     const stop = new AbortController()
     const watching = setInterval(() => { if (stopping()) stop.abort() }, STOPPING_EVERY_MS)
     watching.unref()
     try {
-      const dependencies = await build(input, github, token, stop.signal)
-      await store.write(key, dependencies, Date.now())
-      hold(key, { status: 'ready', dependencies })
+      const dependencies = await build(job.input, job.github, job.token, stop.signal)
+      await store.write(job.key, dependencies, Date.now())
+      hold(job.key, { status: 'ready', dependencies })
     } catch (err) {
       if (stop.signal.aborted) return
       const refused = err instanceof BundleBuildError
@@ -78,38 +111,52 @@ export function stasisDependencyReader({ store, build, behind, stopping }: Reade
       if (code === 'build-busy' || code === 'build-yielded') { busyTill = Date.now() + BUSY_MS; return }
       if (!refused) console.warn('managed: stasis dependencies build failed:', err)
       const transient = !refused || TRANSIENT.has(code)
-      hold(key, { status: 'failed', error: code, transient }, Date.now() + (transient ? TRANSIENT_HELD_MS : FAILED_HELD_MS))
+      hold(job.key, { status: 'failed', error: code, transient }, Date.now() + (transient ? TRANSIENT_HELD_MS : FAILED_HELD_MS))
     } finally { clearInterval(watching) }
   }
 
-  // `first` built, then the one asked for last meanwhile, and so on while the first began FOLLOWED_WITHIN_MS ago or less.
-  async function run(first: Job) {
+  // Those waiting built, each the next (next), while the first of them began FOLLOWED_WITHIN_MS ago or less.
+  async function run() {
     const began = Date.now()
     try {
-      for (let job: Job | null = first; job; job = Date.now() - began < FOLLOWED_WITHIN_MS && Date.now() >= busyTill && !stopping() ? next : null) {
+      for (let job = next(); job; job = Date.now() - began < FOLLOWED_WITHIN_MS && Date.now() >= busyTill && !stopping() ? next() : null) {
         building = job.key
-        next = null
         await built(job)
       }
-    } finally { building = next = null }
+    } finally { building = null }
   }
 
   return {
-    async read({ repoId, fullName }, token, commit, config, branch) {
-      const key = `${repoId}\0${STASIS_DEPENDENCIES_READ}\0${commit}\0${config}`
+    async read(repoId, commit, config) {
+      const key = keyOf(repoId, commit, config)
       const held = known.get(key)
       if (held && Date.now() < held.until) return held.read
-      const kept = dependenciesOf((await store.read(key))?.value)
-      if (kept) return hold(key, { status: 'ready', dependencies: kept })
-      const job = { key, input: { repoId, commit, config, ...branch !== undefined && { branch } }, github: fullName, token }
-      if (building !== null) next = building === key ? next : job
-      else if (Date.now() >= busyTill && !stopping()) {
-        building = key
-        behind(run(job))
+      return await kept(key) ?? { status: 'pending' }
+    },
+    build(wants) {
+      for (const { repo, token, commit, config, branch, priority } of wants) {
+        const key = keyOf(repo.repoId, commit, config)
+        if (key === building) continue
+        // Asked for again: last in line, at the higher of its priorities, with its latest asker's token and branch.
+        const had = waiting.get(key)
+        waiting.delete(key)
+        waiting.set(key, { key, input: { repoId: repo.repoId, commit, config, ...branch === undefined ? had?.input.branch === undefined ? {} : { branch: had.input.branch } : { branch } },
+          github: repo.fullName, token, priority: Math.max(priority, had?.priority ?? priority), asked: Date.now() })
+        if (waiting.size > MAX_WAITING) waiting.delete(waiting.keys().next().value!)
       }
-      return { status: 'pending' }
+      if (building === null && waiting.size > 0 && Date.now() >= busyTill && !stopping()) behind(run())
     },
   }
+}
+
+// How many versions the lockfiles in the directory of the stasis.config.json
+// at `config` add that want reviews, as a review counts them by its
+// directories' paths (pull-dependency-reviews.ts reviewedDependencies
+// `wantedIn`): none where it holds to no lockfile there, or tells no review.
+export function wantingBeside(wantedIn: Map<string[], number>, config: string): number {
+  let count = 0
+  for (const [paths, wanted] of wantedIn) if (!paths.some(isStasisConfig) && paths.some(path => directoryOf(path) === directoryOf(config))) count += wanted
+  return count
 }
 
 // The stasis.config.json at `config` as a directory of a review's

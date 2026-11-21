@@ -245,7 +245,7 @@ import { eachOf } from './queue.ts'
 import { lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
 import { MAX_REQUIRED_REVIEWS, type PublishedReview, type RepoDependencyReview } from './repository-dependency-reviews.ts'
 import { EVERY_LOCKFILE, type LockfileScope, heldTo, isStasisConfig, reviewedIn, scopeOf, stasisConfigs } from './lockfile-scope.ts'
-import { type StasisDependencyReader, stasisDependencyReader, stasisDirectory, withReach } from './stasis-dependencies.ts'
+import { type StasisDependencyReader, type StasisWant, stasisDependencyReader, stasisDirectory, wantingBeside, withReach } from './stasis-dependencies.ts'
 import { type BundledVersion, bundleDependencies, installsBundle } from './bundle-dependency-reviews.ts'
 import { type CommentReviews, type ReviewBaselineStore, baselineFor, heldDependencies, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
 import { formattedPull, withFormatted } from './dependency-review-comments.ts'
@@ -2586,24 +2586,29 @@ async function handleRepositoryPullDependencies(res: ServerResponse, deps: Manag
 // Pull requests `numbers`' answers (pullDependencyAnswer), as many read at
 // once as PULLS_AT_ONCE, by the commits `commits` names of each where it
 // does, else `{ number, error }` where GitHub fails it; and whether all of
-// them were kept.
+// them were kept. The Stasis builds they want asked for together, once all
+// are known, so the one of highest priority is built first; or added to
+// `wants`, where given, for its caller to ask for with others.
 async function pullDependencyAnswers(deps: ManagedHttpDeps, fullName: string, token: string, user: StoredUser, repoId: number, numbers: number[], review: boolean,
-  commits: Map<number, PullCommits> | undefined) {
-  const answers = await eachOf(numbers, PULLS_AT_ONCE, number => pullDependencyAnswer(deps, fullName, token, user, repoId, number, review, commits?.get(number))
+  commits: Map<number, PullCommits> | undefined, wants?: StasisWant[]) {
+  const asking = wants ?? []
+  const answers = await eachOf(numbers, PULLS_AT_ONCE, number => pullDependencyAnswer(deps, fullName, token, user, repoId, number, review, commits?.get(number), asking)
     .catch((err: unknown) => {
       // GitHub asked, though it failed: its access asked again after.
       if (err instanceof GithubApiError) return { value: { number, error: err.message }, kept: false }
       throw err
     }))
+  if (!wants) stasisReader(deps).build(asking)
   return { value: answers.map(({ value }) => value), kept: answers.every(({ kept }) => kept) }
 }
 
 // Pull request `number`'s answer, as the endpoint gives it, and whether all
 // of it was kept, GitHub asked for none of it: its base's and head's commits
 // as a page of its repository's open pull requests read them (`commits`,
-// kept and read again as that page is), else as kept by its number.
+// kept and read again as that page is), else as kept by its number. The
+// Stasis builds it wants asked for once its review is known (askBuilds).
 async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, token: string, user: StoredUser, repoId: number, number: number, review: boolean,
-  commits?: PullCommits) {
+  commits?: PullCommits, wants?: StasisWant[]) {
   const kept = pullDependencyKept(deps, repoId)
   const reading: { told?: PullDependencies } = {}
   // Where its review is on, those of lockfiles it leaves out told to none,
@@ -2631,11 +2636,9 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
   // With what the stasis.config.json files it holds to reach, each a
   // directory of its own, none waited for; a lockfile's versions those reach
   // not marked as its package manager's alone (withReach).
-  const asked: GithubAsked = { github: false }
-  const scoped = setting?.enabled ? withReach(heldDependencies({ ...pulled, lockfiles: [...pulled.lockfiles,
-    ...await stasisDirectories(deps, fullName, token, repoId, setting.lockfiles, pulled.base, pulled.head, asked, pullRefs(answered.value.baseRef, answered.value.headRef, answered.value.fork),
-      pulled.baseless === true)] },
-  setting.lockfiles)) : pulled
+  const asked: GithubAsked = { github: false }, wanted: StasisWant[] = []
+  const scoped = setting?.enabled ? withReach(heldDependencies({ ...pulled, lockfiles: [...pulled.lockfiles, ...await stasisDirectories(deps, fullName, token, repoId, setting.lockfiles,
+    pulled.base, pulled.head, asked, wanted, pullRefs(answered.value.baseRef, answered.value.headRef, answered.value.fork), pulled.baseless === true)] }, setting.lockfiles)) : pulled
   const now = review ? await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(scoped)) : null
   // Its review by the lockfiles they were told by, though they have changed
   // since; turned off meanwhile, all of them, as where it is off.
@@ -2657,8 +2660,10 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
   })
   // Each patch its lockfiles name by its hash alone with its file (npm-patch.ts), where its review is in effect.
   const patched = state ? await withPatchFiles(told, repoId, fullName, token, patchStore(deps.db, deps.config.debug), asked) : told
-  const bases = new Map<string, ReviewedBase>()
-  const dependencies = await reviewedDependencies(patched, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: noting, namedBases: bases })
+  const bases = new Map<string, ReviewedBase>(), wantedIn = new Map<string[], number>()
+  const dependencies = await reviewedDependencies(patched, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: noting, namedBases: bases,
+    wantedIn })
+  askBuilds(deps, wanted, wantedIn, wants)
   // The comment the host formats of the reader's reviews of its versions, for
   // its copy button, but those its comments make of theirs already.
   const formatted = await formattedPull(reviewed, deps.db, user.id, told, state, { repository: fullName, number }, commented, bases)
@@ -2669,18 +2674,35 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
 // What the stasis.config.json files repository `repoId`'s review holds to
 // (`scope`) have Stasis reach, each a directory of dependencies by its own
 // path (stasis-dependencies.ts stasisDirectory): at `head`, against `base`
-// where one is given and it isn't read without it (`baseless`). None is waited for: one not built yet is built behind
-// the answer (stasisReader), told the branch its commit is of where `refs`
-// names it, a pull request's head's, or its base's, which holds `base`. An
-// open pull request's head that is a fork's (`refs.fork`) is no commit of
-// the repository's own, which Stasis refuses: nothing is built for it.
+// where one is given and it isn't read without it (`baseless`). None is
+// waited for: those still to be built are added to `wanted`, for the answer
+// to ask for once its review is known (askBuilds), each told the branch its
+// commit is of where `refs` names it, a pull request's head's, or its
+// base's, which holds `base`. An open pull request's head that is a fork's
+// (`refs.fork`) is no commit of the repository's own, which Stasis refuses:
+// nothing is built for it.
 function stasisDirectories(deps: ManagedHttpDeps, fullName: string, token: string, repoId: number, scope: LockfileScope, base: string | null, head: string,
-  asked: GithubAsked, refs: PullRefs = {}, baseless = false): Promise<DirectoryDependencies[]> {
+  asked: GithubAsked, wanted: StasisWant[], refs: PullRefs = {}, baseless = false): Promise<DirectoryDependencies[]> {
   if (refs.fork) return Promise.resolve(stasisConfigs(scope).map(config => ({ paths: [config], error: 'stasis-failed', detail: 'commit-not-own' })))
   const reader = stasisReader(deps), reads = lockfileKept(deps, repoId)
-  return Promise.all(stasisConfigs(scope).map(config => stasisDirectory(config, base, head,
-    commit => reader.read({ repoId, fullName }, token, commit, config, commit === head ? refs.headRef : refs.baseRef),
-    (commit, held) => lockedAt(fullName, token, commit, reads, held, asked), baseless)))
+  return Promise.all(stasisConfigs(scope).map(config => stasisDirectory(config, base, head, async commit => {
+    const read = await reader.read(repoId, commit, config)
+    const branch = commit === head ? refs.headRef : refs.baseRef
+    if (read.status === 'pending') wanted.push({ repo: { repoId, fullName }, token, commit, config, ...branch === undefined ? {} : { branch }, priority: 0 })
+    return read
+  }, (commit, held) => lockedAt(fullName, token, commit, reads, held, asked), baseless)))
+}
+
+// The Stasis builds `wanted` names (stasisDirectories), each at the priority
+// the review it was told in gives it: how many versions the lockfiles beside
+// its stasis.config.json add that want reviews, as it counts them by its
+// directories (`wantedIn`, wantingBeside), none where the review holds to
+// none there. Added to `wants`, where given, for its caller to ask for with
+// others'; else asked for now.
+function askBuilds(deps: ManagedHttpDeps, wanted: StasisWant[], wantedIn: Map<string[], number>, wants?: StasisWant[]) {
+  const ranked = wanted.map(want => ({ ...want, priority: wantingBeside(wantedIn, want.config) }))
+  if (wants) wants.push(...ranked)
+  else if (ranked.length > 0) stasisReader(deps).build(ranked)
 }
 
 // What reads repositories' Stasis dependencies, one a database: kept by it,
@@ -2720,9 +2742,11 @@ async function handleRepositoryBranchDependencies(res: ServerResponse, deps: Man
 
 // The default branch's answer, as GET branch-dependencies gives it, and
 // whether all of it was kept, GitHub asked for none of it; its review's
-// setting as read already (`known`), where it was.
+// setting as read already (`known`), where it was. The Stasis builds it
+// wants asked for as a pull request's are (askBuilds), of no priority, as it
+// adds none: added to `wants`, where given.
 async function branchDependencyAnswer(deps: ManagedHttpDeps, fullName: string, token: string, user: StoredUser, repoId: number,
-  known?: RepoDependencyReview | null): Promise<{ value: object; kept: boolean }> {
+  known?: RepoDependencyReview | null, wants?: StasisWant[]): Promise<{ value: object; kept: boolean }> {
   const headRead = await defaultTip(deps, repoId, fullName, token)
   const head = headRead.sha
   if (!head) return { value: { head: null, review: null }, kept: false }
@@ -2734,10 +2758,12 @@ async function branchDependencyAnswer(deps: ManagedHttpDeps, fullName: string, t
   const read = await lockedAt(fullName, token, head, reads, path => heldTo(setting.lockfiles, path), asked)
   const { packages, paths } = lockedIn(read)
   // And what the stasis.config.json files it holds to reach there (stasisDirectories, withReach).
+  const wanted: StasisWant[] = []
   const locked = withReach({ base: head, head, cut: false, lockfiles: [
     { paths, added: [], more: 0, locked: packages.slice(0, MAX_LOCKED), moreLocked: Math.max(0, packages.length - MAX_LOCKED) },
     ...read.unread.map(path => ({ paths: [path], error: lockfileFormat(path) === 'bun' ? 'lockfile-unsupported' : 'lockfile-unreadable' })),
-    ...await stasisDirectories(deps, fullName, token, repoId, setting.lockfiles, null, head, asked)] }, read.lockfiles)
+    ...await stasisDirectories(deps, fullName, token, repoId, setting.lockfiles, null, head, asked, wanted)] }, read.lockfiles)
+  askBuilds(deps, wanted, new Map(), wants)
   const now = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(locked))
   if (!now) return { value: { head, review: null }, kept: !asked.github }
   // Every patch there kept, those its lockfiles name the files of too, for a link to find by its hash alone.
@@ -2860,10 +2886,16 @@ async function handleTeamDependencies(res: ServerResponse, deps: ManagedHttpDeps
 // tells them; whether all were written, none left for its time.
 async function teamRepositoryDependencies(deps: ManagedHttpDeps, access: WholeAccess, setting: RepoDependencyReview, deadline: number,
   send: (...lines: TeamDependencyLine[]) => Promise<boolean>, reauthorize: () => Promise<WholeAccess | Refusal>): Promise<boolean> {
+  // The Stasis builds its answers want, asked for a batch of pull requests at a time, its default branch's with the first.
+  const wants: StasisWant[] = []
+  try { return await teamRepositoryLines(deps, access, setting, deadline, send, reauthorize, wants) } finally { stasisReader(deps).build(wants) }
+}
+async function teamRepositoryLines(deps: ManagedHttpDeps, access: WholeAccess, setting: RepoDependencyReview, deadline: number,
+  send: (...lines: TeamDependencyLine[]) => Promise<boolean>, reauthorize: () => Promise<WholeAccess | Refusal>, wants: StasisWant[]): Promise<boolean> {
   const repoId = access.repo.repoId
   type Read = { branch: object | null; pulls?: { items: TeamPull[]; more: boolean; error?: string }; commits?: Map<number, PullCommits> }
   const read = await readWholeRepositoryOf<Read>(deps, access, async (fullName, token, user) => {
-    const branch = await branchDependencyAnswer(deps, fullName, token, user, repoId, setting)
+    const branch = await branchDependencyAnswer(deps, fullName, token, user, repoId, setting, wants)
     if (!(branch.value as { review?: unknown }).review) return { value: { branch: null }, kept: branch.kept }
     const pulls = await teamOpenPulls(deps, repoId, fullName, token, deadline)
     return { value: { branch: branch.value, pulls: { items: pulls.items, more: pulls.more, ...pulls.failed === null ? {} : { error: pulls.failed } }, commits: pulls.commits },
@@ -2879,8 +2911,9 @@ async function teamRepositoryDependencies(deps: ManagedHttpDeps, access: WholeAc
   for (let at = 0; at < numbers.length; at += TEAM_PULLS_TOGETHER) {
     if (Date.now() > deadline) return false
     const batch = numbers.slice(at, at + TEAM_PULLS_TOGETHER)
-    const pulled = await readWholeRepositoryOf(deps, access, (fullName, token, user) => pullDependencyAnswers(deps, fullName, token, user, repoId, batch, true, commits),
+    const pulled = await readWholeRepositoryOf(deps, access, (fullName, token, user) => pullDependencyAnswers(deps, fullName, token, user, repoId, batch, true, commits, wants),
       reauthorize)
+    stasisReader(deps).build(wants.splice(0))
     const dependencies = 'error' in pulled ? batch.map(number => ({ number, error: pulled.error })) : pulled.value
     if (!await send({ repoId, dependencies, ...await withDeltas(deps, dependencies) })) return false
   }
