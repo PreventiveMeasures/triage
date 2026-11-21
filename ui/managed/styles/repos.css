@@ -29,12 +29,6 @@
 .breadcrumb {
   flex-wrap: wrap;
 }
-.breadcrumb .breadcrumb-current {
-  margin: 0;
-  color: var(--text);
-  font-size: .85rem;
-  font-weight: 500;
-}
 .public-repository-form {
   padding: 1rem;
   margin: -1rem 0 1.5rem;

@@ -312,6 +312,13 @@ input[type=checkbox] {
 .breadcrumb-separator {
   color: var(--muted);
 }
+/* The repository's and bundle's title, in their breadcrumb. */
+.breadcrumb .breadcrumb-current {
+  margin: 0;
+  color: var(--text);
+  font-size: .85rem;
+  font-weight: 500;
+}
 .msg {
   margin: 1rem 0;
   padding: 1.1rem 1.25rem;
@@ -493,6 +500,20 @@ a { cursor: default; }
 .loading-row span + span {
   width: 65%;
   height: .5rem;
+}
+/* The drag-over overlay of the reports, bundles and link-import pages. */
+.dropzone {
+  position: absolute;
+  inset: .6rem;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  border-radius: var(--ui-radius, 10px);
+  background: rgb(from var(--bg) r g b / .94);
+  color: var(--accent);
+  font-weight: 600;
+  pointer-events: none;
 }
 .drop-card {
   display: flex;
