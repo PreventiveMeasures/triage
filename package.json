@@ -184,6 +184,7 @@
     "server-managed/queue.ts",
     "server-managed/repo-path.ts",
     "server-managed/report-migration.ts",
+    "server-managed/report-opening.ts",
     "server-managed/report-query.ts",
     "server-managed/report-response.ts",
     "server-managed/report-store.ts",

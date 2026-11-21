@@ -1,5 +1,5 @@
 import { revalidateKindOf } from '@preventive/report'
-import { activeRevalidateKinds, canLockConfirmed } from './finding-filters.js'
+import { activeRevalidateKinds, canLockConfirmed, confirmedCoverage, confirmedIsDefault, defaultConfidenceFloor } from './finding-filters.js'
 import { mergeReportGroups } from './workspace-groups.js'
 import { mergeLinkedWorkspaceGroups } from './linked-workspace-groups.js'
 
@@ -59,6 +59,25 @@ function rowsOf({ linked, app }) {
   const ids = new Set()
   for (const group of linked) if (group.some(confirmed)) for (const f of appTabs(group)) ids.add(f.id)
   return ids
+}
+
+// Whether a managed report may be switched to open on Confirmed whatever
+// Confirmed hides (Manage → Reports, common/finding-filters.js
+// confirmedCoverage): only where the switch changes something, a set whose
+// pass leaves Confirmed rows of its own to show, but which the opening rule
+// keeps on the confidence range, as Confirmed would hide a finding the range
+// shows. Asked of the set as the App view merges it, with no copy counted as
+// switched already. A set with contradicting verdicts opens with no App
+// layer, and so with no Confirmed to open on; one of nothing but other
+// analyzers' unjudged findings has no pass to have an answer.
+export function confirmedDefaultOffered(reports, duplicatesOf = () => []) {
+  const { groups, conflicts } = mergeReportGroups(reports, { hideRuledOut: true })
+  if (conflicts.size > 0) return false
+  const linked = mergeLinkedWorkspaceGroups(groups, duplicatesOf, appTabs)
+  const visible = linked.map(appTabs).filter((g) => g.length > 0)
+  const kinds = activeRevalidateKinds('confirmed', '')
+  if (!visible.some((g) => g.some((f) => kinds.includes(revalidateKindOf(f))))) return false
+  return !confirmedIsDefault(visible, defaultConfidenceFloor(linked, appTabs), confirmedCoverage(linked, appTabs, revalidateKindOf), revalidateKindOf)
 }
 
 // A workspace's rows as its basic App view merges them, and whether it has one.

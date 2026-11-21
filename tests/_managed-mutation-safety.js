@@ -36,7 +36,9 @@ export async function seedReport(db, store, userId, repoId = 1) {
   const bytes = Buffer.from(JSON.stringify({ source: 'deepview', findings: [{ id: 'shared-finding', title: 'Finding', file: 'a.js' }] }))
   await store.put(id, bytes)
   await db.insertReport({ id, filename: 'scan.json', contentType: 'application/json', byteSize: bytes.length,
-    sha256: createHash('sha256').update(bytes).digest('base64url'), uploadedBy: userId, repoId, visible: false }, Date.now())
+    sha256: createHash('sha256').update(bytes).digest('base64url'), uploadedBy: userId, repoId, visible: false,
+    // Read as an upload reads it (server-managed/report-opening.ts): nothing to offer.
+    confirmedOffered: false }, Date.now())
   return id
 }
 export async function seedBundle(db, store, userId, repoId = 1) {

@@ -20,7 +20,9 @@ import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.t
 import { ourRepoSlugs } from '../common/finding-repo.js'
 
 type Finding = Record<string, unknown>
-type TeamReport = { id: string; filename: string; data: unknown; repo: { github: string | null; directory: string } }
+// `confirmedDefault` where a manager switched the report to open on Confirmed
+// (common/finding-filters.js confirmedCoverage), left out otherwise.
+type TeamReport = { id: string; filename: string; data: unknown; repo: { github: string | null; directory: string }; confirmedDefault?: true }
 type ReportVisibility = { ids: Set<string>; sourcePaths: Set<string> }
 type Visibility = Map<string, ReportVisibility>
 const VISIBILITY_CACHE_MAX_ITEMS = 250_000
@@ -154,7 +156,7 @@ async function readWorkspaceReports(store: BlobStore, snapshot: TeamReportAccess
       // Backfill before filtering so links, annotations and the client agree on
       // IDs even when hiding a component would change the original row shape.
       await backfillFindingIds(groupsOf(parsed.data).flat())
-      reports[index] = { id: access.id, filename: access.filename, data: parsed.data, repo: access.repo }
+      reports[index] = { id: access.id, filename: access.filename, data: parsed.data, repo: access.repo, ...access.confirmedDefault ? { confirmedDefault: true as const } : {} }
     }
   }))
   for (const result of results) if (result.status === 'rejected') throw result.reason
@@ -211,7 +213,7 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
   // what its catalog entry tells and the board's copy: its findings without
   // their detail, and in App mode its rows as the App view shows them
   // (common/managed/finding-detail.js).
-  const view = managedTeamView(Object.assign(reports.map(({ filename, data }) => ({ filename, data })), { links }))
+  const view = managedTeamView(Object.assign(reports.map(({ filename, data, confirmedDefault }) => ({ filename, data, confirmedDefault })), { links }))
   const lite = liteWorkspace(reports, links, view)
   const restricted = snapshot.reports.some(report => !report.permissions.dependencies || !report.permissions.security)
   const encoded = {

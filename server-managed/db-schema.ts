@@ -27,6 +27,9 @@ export const inUserTeamScope = (user: string, row: string) => `EXISTS (SELECT 1 
   JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
   WHERE tu.user_id = ${user} AND tr.repo_id = ${row}.repo_id AND ${withinTeamPath(`${row}.repo_directory`)})`
 
+// A report's opening (report-opening.ts), added to databases created before it.
+export const REPORT_OPENING_COLUMNS = [['confirmed_offered', 'INTEGER'], ['confirmed_default', 'INTEGER NOT NULL DEFAULT 0']] as const
+
 export const MANAGED_SCHEMA = `
 CREATE TABLE IF NOT EXISTS managed_user (
   id             TEXT PRIMARY KEY,
@@ -133,7 +136,12 @@ CREATE INDEX IF NOT EXISTS managed_bundle_uploaded_at_idx ON managed_bundle(uplo
 -- links, nulled (not cascaded) when the user / selected repo goes away. bundle_id
 -- is the (nullable) auto-resolved link to a stored bundle; bundle_integrity is
 -- the report's declared primary bundle (from its bundleHashes), kept so a later
--- bundle upload of that integrity can re-link.
+-- bundle upload of that integrity can re-link. confirmed_offered is whether
+-- the report, alone, may be switched to open on Confirmed (Manage → Reports,
+-- report-opening.ts): 1 where its pass leaves Confirmed rows but the opening
+-- rule keeps it on the confidence range, 0 where the switch would change
+-- nothing, NULL where it is yet to be read (one uploaded before the column).
+-- confirmed_default is that switch, as a manager set it.
 CREATE TABLE IF NOT EXISTS managed_report (
   id               TEXT PRIMARY KEY,
   slug             TEXT NOT NULL,
@@ -151,7 +159,9 @@ CREATE TABLE IF NOT EXISTS managed_report (
   visible          INTEGER NOT NULL DEFAULT 0,
   bundle_id        TEXT REFERENCES managed_bundle(id) ON DELETE SET NULL,
   bundle_integrity TEXT,
-  uploaded_at      INTEGER NOT NULL
+  uploaded_at      INTEGER NOT NULL,
+  confirmed_offered INTEGER,
+  confirmed_default INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS managed_report_uploaded_at_idx ON managed_report(uploaded_at);

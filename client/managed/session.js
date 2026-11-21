@@ -195,7 +195,9 @@ export async function fetchTeamReports(teamId, { signal, reportId = null, lite =
     const content = reportContent(entry, body.values)
     if (!content || typeof entry.id !== 'string' || typeof entry.filename !== 'string' || seen.has(entry.id)) return null
     seen.add(entry.id)
-    reports.push({ id: entry.id, filename: entry.filename, ...content })
+    // `confirmedDefault`: a manager switched it to open on Confirmed
+    // (common/finding-filters.js confirmedCoverage).
+    reports.push({ id: entry.id, filename: entry.filename, ...content, ...entry.confirmedDefault === true ? { confirmedDefault: true } : {} })
   }
   const links = responseLinks(body)
   if (links === null) return null

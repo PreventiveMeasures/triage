@@ -877,7 +877,7 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   resetGraph2()
   for (const entry of findings) {
     await ingestReport(entry.filename, entry.data, gen, {
-      renderView: false, managedReportId: entry.id, managedRepo: entry.repo, keepLens: Boolean(workspace.folded),
+      renderView: false, managedReportId: entry.id, managedRepo: entry.repo, managedConfirmedDefault: entry.confirmedDefault === true, keepLens: Boolean(workspace.folded),
     })
     if (isStaleLoad(gen)) return false
   }
@@ -960,7 +960,7 @@ async function replaceManagedReports(workspace, findings, { gen, hydrate, annota
     clearMergedGroups()
     for (const entry of entries) {
       const ingested = await ingestReport(entry.filename, entry.data, gen, {
-        renderView: false, managedReportId: entry.id, managedRepo: entry.repo, keepFilters: true, keepLens: true,
+        renderView: false, managedReportId: entry.id, managedRepo: entry.repo, managedConfirmedDefault: entry.confirmedDefault === true, keepFilters: true, keepLens: true,
       })
       if (isStaleLoad(gen)) return false
       if (!ingested) { await failManagedTeamLoad('Could not load all team reports. Please try again.'); return false }
@@ -1487,7 +1487,7 @@ export async function leaveWorkspace(workspaceId, mode = 'detach', { triage = 'k
 // push. The headless `window.__loadFile` path passes nothing, staying
 // unguarded so it keeps accumulating across calls (the print pipeline
 // relies on that).
-async function ingestReport(name, content, gen = null, { renderView = true, managedReportId = null, managedRepo = null, keepFilters = false, keepLens = false } = {}) {
+async function ingestReport(name, content, gen = null, { renderView = true, managedReportId = null, managedRepo = null, managedConfirmedDefault = false, keepFilters = false, keepLens = false } = {}) {
   const stale = () => gen !== null && isStaleLoad(gen)
   try {
     // Finish both hints before rendering the Link button. Copy remains
@@ -1601,6 +1601,11 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
           _depsDirectory: depsDirectory,
           _managedReportId: managedReportId,
           _bundleHashes: data.bundleHashes ?? [],
+          // Whether a manager switched its team report to open on Confirmed
+          // whatever Confirmed hides, which counts the finding as covered
+          // (common/finding-filters.js confirmedCoverage). The report's own
+          // value, never one its content wrote, and none outside managed mode.
+          _confirmedDefault: managedReportId !== null && managedConfirmedDefault === true,
         }
         inheritReportMeta(filled, data)
         // Which PRODUCER this finding came from — a `source` marker

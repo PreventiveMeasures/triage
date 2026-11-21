@@ -7,7 +7,7 @@ import { migrateReportLocations } from './report-migration.ts'
 import { initCommentMethods } from './comments.ts'
 import { initActivityMethods } from './activity.ts'
 import { revisionSchema } from './revisions.ts'
-import { MANAGED_SCHEMA, REPO_UPLOAD_INDEXES, VIEW_SESSION_INDEX } from './db-schema.ts'
+import { MANAGED_SCHEMA, REPORT_OPENING_COLUMNS, REPO_UPLOAD_INDEXES, VIEW_SESSION_INDEX } from './db-schema.ts'
 import { GITHUB_LINK_USER_COLUMNS } from './github-links.ts'
 import { REPOSITORY_DEPENDENCY_REVIEW_COLUMNS } from './repository-dependency-reviews.ts'
 import { DEPENDENCY_REVIEW_COLUMNS, DEPENDENCY_REVIEW_INDEXES } from './dependency-reviews.ts'
@@ -108,6 +108,9 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     ensureColumn(db, 'managed_report', 'repo_embedded', 'INTEGER NOT NULL DEFAULT 0')
     migrateReportLocations(db, join(dirname(path), 'reports'))
     ensureColumn(db, 'managed_report', 'analyzer', 'TEXT')
+    // Existing reports are read for it as the reports page lists them
+    // (report-opening.ts), and none was switched yet.
+    for (const [column, type] of REPORT_OPENING_COLUMNS) ensureColumn(db, 'managed_report', column, type)
     // Existing rows predate publication controls and were already visible.
     // Backfill only when adding the column; newly inserted rows still use the
     // hidden default and must be explicitly published.

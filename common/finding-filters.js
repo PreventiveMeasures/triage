@@ -214,8 +214,18 @@ function effectiveFloor(groups, confMin) {
 }
 
 // Both the opening default and the dropdown lock use the same coverage:
-// findings represented by Confirmed rows, plus findings explicitly ruled out.
+// findings represented by Confirmed rows, plus findings explicitly ruled out,
+// plus those a manager let Confirmed hide (`_confirmedDefault`).
 // Read the original groups before `tabs` folds away their source members.
+//
+// A managed report switched to Confirmed by default (Manage → Reports) has
+// each of its findings stamped `_confirmedDefault` as it is read, its own
+// value whatever the report wrote (ingest.js, common/managed/team-app.js).
+// A finding Confirmed would hide is then a cost its manager accepted, and
+// counts as covered here, so both the opening outcome and the App lock (a
+// team's App mode) look past it. Only where EVERY copy of it is so stamped:
+// the same finding in a report nobody switched is still that report's to
+// lose, and keeps the view on Confidence.
 export function confirmedCoverage(groups, tabs, kindOf) {
   // A workspace may carry an un-stamped source copy from report A while
   // report B explicitly ruled out the same id. The ruled-out copy is
@@ -225,9 +235,14 @@ export function confirmedCoverage(groups, tabs, kindOf) {
   // even when the App finding that caused the ruling has no
   // `revalidateInputs` list of its own.
   const covered = new Set(groups.ruledOutIds ?? [])
+  const waived = new Map()
   for (const raw of groups) {
-    for (const f of raw) if (['refuted', 'unreachable'].includes(kindOf(f))) covered.add(tabKey(f))
+    for (const f of raw) {
+      if (['refuted', 'unreachable'].includes(kindOf(f))) covered.add(tabKey(f))
+      waived.set(tabKey(f), waived.get(tabKey(f)) !== false && f._confirmedDefault === true)
+    }
   }
+  for (const [key, all] of waived) if (all) covered.add(key)
   for (const raw of groups) {
     const g = tabs(raw)
     if (g.length === 0) continue
