@@ -312,6 +312,7 @@
     "common/managed/report-content.ts",
     "common/managed/repository-alias.ts",
     "common/managed/report-filter.ts",
+    "common/managed/risk-routes.js",
     "common/managed/roles.ts",
     "common/managed/routes.d.ts",
     "common/managed/routes.js",

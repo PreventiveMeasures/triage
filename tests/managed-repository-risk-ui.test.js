@@ -675,3 +675,71 @@ test('a dismissed alert of an advisory npm tells none of lists none of its own, 
   assert.deepEqual([...page._advisories.values()].map(row => [row.id, [...row.usedIn]]), [['GHSA-35jh-r3h4-6jhm', ['org/b/package-lock.json', 'org/a/package-lock.json']]],
     'listed by the open one, the dismissed one with it; debug\'s still none')
 })
+
+// Risk's choices: two teams by slug, one repository.
+const riskChoices = () => ({ teams: [{ id: 't1', slug: 'a1', name: 'One' }, { id: 't2', slug: 'b2', name: 'Two' }], repos: [{ repoId: 7, fullName: 'org/seven' }] })
+// The page told of what changed, as Lit tells it.
+const told = (page, ...names) => page.willUpdate(new Map(names.map(name => [name, undefined])))
+
+test('the page scans the scope its route names: a team by its slug and a repository by its id, each once listed, saying where a link\'s isn\'t', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  const follow = selection => { page.selection = selection; told(page, 'selection') }
+  const shown = () => [page._scope, page._target, page._unlisted]
+  follow({ riskScope: 'team', riskTarget: 'b2' })
+  assert.deepEqual(shown(), ['team', '', null], 'its team found once the teams are read')
+  page._choices = riskChoices()
+  told(page, '_choices')
+  assert.deepEqual(shown(), ['team', 't2', null])
+  follow({ riskScope: 'repo', riskTarget: 7 })
+  assert.deepEqual(shown(), ['repo', '7', null])
+  follow({ riskScope: 'team' })
+  assert.deepEqual(shown(), ['team', '', null], 'one to choose')
+  follow({ riskScope: 'team', riskTarget: 'gone' })
+  assert.deepEqual(shown(), ['team', '', 'team'])
+  assert.match(templateText(page.render()), /<p class="msg" role="status">This link’s team isn’t listed\. Choose a team\.<\/p>/u)
+  follow({ riskScope: 'repo', riskTarget: 8 })
+  assert.deepEqual(shown(), ['repo', '', 'repo'])
+  assert.match(templateText(page.render()), /This link’s repository isn’t connected\. Choose a repository\./u)
+  follow(null)
+  assert.deepEqual(shown(), ['all', '', null], 'none names All')
+  // Teams read again, the scope it shows stays.
+  page._choose('team', 't1')
+  page._choices = riskChoices()
+  told(page, '_choices')
+  assert.deepEqual(shown(), ['team', 't1', null])
+})
+
+test('another scope the route names stops the scan, as leaving the page does; the same one keeps it', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._choices = riskChoices()
+  page.selection = { riskScope: 'team', riskTarget: 'b2' }
+  told(page, 'selection')
+  const scan = page._scan = new AbortController()
+  page._state = 'running'
+  page.selection = { riskScope: 'team', riskTarget: 'b2' }
+  told(page, 'selection')
+  assert.deepEqual([page._state, scan.signal.aborted], ['running', false])
+  page.selection = { riskScope: 'all' }
+  told(page, 'selection')
+  assert.deepEqual([page._scope, page._state, scan.signal.aborted], ['all', 'idle', true])
+})
+
+test('a scope chosen on the page shows at once and opens its page, a team by its slug, a repository by its id; not while scanning', t => {
+  const events = []
+  const document = new EventTarget()
+  document.addEventListener('managed-admin-navigate', event => { events.push(event.detail) })
+  globalThis.document = document
+  t.after(() => { delete globalThis.document })
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._choices = riskChoices()
+  page._pick('team')
+  page._pick('team', 't2')
+  assert.deepEqual([page._scope, page._target], ['team', 't2'])
+  page._pick('repo', '7')
+  page._pick('all')
+  assert.deepEqual(events, [{ view: 'manage-repo-risk', riskScope: 'team' }, { view: 'manage-repo-risk', riskScope: 'team', riskTarget: 'b2' },
+    { view: 'manage-repo-risk', riskScope: 'repo', riskTarget: 7 }, { view: 'manage-repo-risk', riskScope: 'all' }])
+  page._state = 'running'
+  page._pick('team', 't1')
+  assert.deepEqual([page._scope, events.length], ['all', 4])
+})

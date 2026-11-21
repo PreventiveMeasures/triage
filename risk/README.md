@@ -272,7 +272,7 @@ Severities, the most severe first: `critical` (red), `high` (orange), `moderate`
 It covers the repository's workflows, the actions of its own they use, and every action and reusable workflow of another repository they name.
 Each is read from its code and resolved on GitHub.
 Only the managed server runs it, in a repository risk scan (`server-managed/repository-actions.ts`).
-The results show on Manage → Repositories → Risk's Actions tab (`ui/managed/repository-risk-actions.js`).
+The results show on Manage → Risk's Actions tab (`ui/managed/repository-risk-actions.js`).
 
 ```js
 import { keptSource, resolveAction, scanWorkflow, usesOfKey } from './risk/index.js'

@@ -90,12 +90,13 @@ Build the UI with `pnpm build` before starting a managed or combined server.
 | `/npm[/:name[@:version][/:tab]]` | npm package lookup, or a version; `:version` may be a dist-tag |
 | `/npm/:name@:version/review[/:base@:baseVersion]` | Review a package, or an update from a base version |
 | `/manage[/{bundle,scans,report,history}]` | Manage overview, Bundles, Scans, Reports, Activity history (`?actor=:login` filters it) |
-| `/manage/{deduplication,repositories,repositories/risk,users,team,import}` | Admin pages |
+| `/manage/{deduplication,repositories,users,team,import}` | Admin pages |
+| `/manage/risk/{all,team[/:team],repository[/:repoId]}` | Admin: Risk, scanning every repository, a team's or one repository; without a team or repository, one to choose |
 | `/manage/links` | Public links, only while sharing is enabled |
 | `/my/{profile,reviews}` | Profile and linked GitHub accounts, My reviews |
 
 On bundle, repository and npm version pages, `…/code/:file` opens Code at a file, and `…/compare[/:other[/code]]` opens Compare with another bundle, commit or version.
-Older names still open: `/diff` opens Code, `history` opens Commits, and `/manage/code/` links open the `/repo/` page.
+Older names still open: `/diff` opens Code, `history` opens Commits, `/manage/code/` links open the `/repo/` page, and `/manage/risk` and `/manage/repositories/risk` open `/manage/risk/all`.
 
 Teams, reports and bundles have persistent, server-assigned slugs: the last UUID component when it is unique, and otherwise the full ID.
 Finding IDs are percent-encoded as one path component, and a finding opens only under a team or report.

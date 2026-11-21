@@ -848,10 +848,30 @@ test('a scan that fails as a whole throws once its lines are read', async () => 
   await assert.rejects(Array.fromAsync(scan(source)), /database gone/u)
 })
 
-test('the repository risk page is a manage page of its own URL', () => {
-  const route = parseManagedRoute(new URL('https://triage.example/manage/repositories/risk'))
-  assert.deepEqual(route, { view: 'manage-repo-risk' })
-  assert.equal(managedRoutePath(route), '/manage/repositories/risk')
+test('Risk is a manage page whose scopes are pages of their own: all, a team\'s by its slug, a repository\'s by its id, or one to choose', () => {
+  const parse = path => parseManagedRoute(new URL(`https://triage.example${path}`))
+  for (const [path, route] of [
+    ['/manage/risk/all', { view: 'manage-repo-risk' }],
+    ['/manage/risk/team', { view: 'manage-repo-risk', riskScope: 'team' }],
+    ['/manage/risk/team/a1b2c3d4', { view: 'manage-repo-risk', riskScope: 'team', riskTarget: 'a1b2c3d4' }],
+    ['/manage/risk/repository', { view: 'manage-repo-risk', riskScope: 'repo' }],
+    ['/manage/risk/repository/42', { view: 'manage-repo-risk', riskScope: 'repo', riskTarget: 42 }],
+  ]) {
+    assert.deepEqual(parse(path), route, path)
+    assert.equal(managedRoutePath(route), path, `${path}, back`)
+  }
+  assert.deepEqual(parse('/manage/risk/team/a1b2c3d4/'), { view: 'manage-repo-risk', riskScope: 'team', riskTarget: 'a1b2c3d4' }, 'a trailing slash')
+  for (const path of ['/manage/risk', '/manage/repositories/risk']) {
+    assert.deepEqual(parse(path), { view: 'manage-repo-risk' }, `${path} opens All`)
+  }
+  assert.equal(managedRoutePath({ view: 'manage-repo-risk', riskScope: 'all' }), '/manage/risk/all', 'All named or not')
+  for (const path of ['/manage/risk/all/1', '/manage/risk/repo/1', '/manage/risk/repository/0', '/manage/risk/repository/x', '/manage/risk/team/a.b', '/manage/risk/team/a/b', '/manage/risk/organization']) {
+    assert.equal(parse(path), null, path)
+  }
+  for (const route of [{ riskScope: 'all', riskTarget: 1 }, { riskScope: 'team', riskTarget: 'a/b' }, { riskScope: 'team', riskTarget: 1 },
+    { riskScope: 'repo', riskTarget: '42' }, { riskScope: 'repo', riskTarget: 0 }, { riskScope: 'org' }]) {
+    assert.equal(managedRoutePath({ view: 'manage-repo-risk', ...route }), null, JSON.stringify(route))
+  }
 })
 
 // A managed server over HTTP with one signed-in user of `role`, its answers

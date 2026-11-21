@@ -1387,6 +1387,7 @@ function renderImpl() {
       el.allowShare = state.managed?.allowShare === true
       if (state.currentView === 'manage-scans') el.selection = state.scanSelection
       if (state.currentView === 'manage-bundles') el.createRepoId = state.bundleCreationRepoId
+      if (state.currentView === 'manage-repo-risk') el.selection = state.riskSelection
     }
     if (slot.firstElementChild) {
       configure(slot.firstElementChild)
