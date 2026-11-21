@@ -84,6 +84,7 @@ import { renderHighlighted } from './render-finding.js'
 import { render } from './render.js'
 import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON, TERMINAL_ICON, WRAP_ICON } from './lit-icons.js'
 import { focusTerminal } from './terminal-attach.js'
+import { openAdminPage } from '../managed/navigation.js'
 
 // The bundle Graph tab's prep (buildBundleGraphData), which the refresh
 // helpers below hand lazy ui/graph.js again on each chip click.
@@ -92,6 +93,11 @@ let _currentBundlePrep = null
 const triageOf = f => sharedFindingTriage(f, state.triage.get(tabKey(f)))
 // `n` and the noun it counts, `many` its plural.
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
+// `cache`'s value for `key`, made by `make` the first time it is asked for.
+const keep = (cache, key, make) => {
+  if (!cache.has(key)) cache.set(key, make())
+  return cache.get(key)
+}
 
 // The bundle as buildGraph (graph/data.js) takes an analyzer's tree dump:
 // keyed by paths with their shared prefix stripped, so graph nodes and the
@@ -99,8 +105,7 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 // out of the bundle dropped. `origToStripped` maps each original path to its
 // key. Kept a bundle.
 const bundleTrees = new WeakMap()
-function buildBundleTree(details) {
-  if (bundleTrees.has(details)) return bundleTrees.get(details)
+const buildBundleTree = details => keep(bundleTrees, details, () => {
   const sizes = bundleSourceSizes(details)
   const imports = bundleImportsAsMap(details)
   const origFiles = [...sizes.keys()]
@@ -110,9 +115,8 @@ function buildBundleTree(details) {
   origFiles.forEach((orig, i) => {
     tree[stripped[i]] = { imports: [...imports.get(orig) ?? []].map((target) => origToStripped.get(target)).filter(Boolean), size: sizes.get(orig) }
   })
-  bundleTrees.set(details, { tree, origToStripped })
-  return bundleTrees.get(details)
-}
+  return { tree, origToStripped }
+})
 
 // Bundle-matched findings by triage bucket, for the graph topbar's selector.
 export function countBundleTriageBuckets(details, sourcePaths = null) {
@@ -251,24 +255,20 @@ export function buildBundleGraphData(details) {
 const bundleGraphScopes = new WeakMap()
 function bundleGraphScope(full, reasons, requested) {
   const selected = reasons.has(requested) ? requested : null
-  if (!bundleGraphScopes.has(full)) bundleGraphScopes.set(full, new Map())
-  const scopes = bundleGraphScopes.get(full)
-  if (!scopes.has(selected)) {
+  return keep(keep(bundleGraphScopes, full, () => new Map()), selected, () => {
     const scope = filterBundleGraphReason(full.tree, full.origToStripped, new Map(selected === null ? [] : [[selected, reasons.files(selected)]]), selected)
-    scopes.set(selected, { ...scope, files: Object.keys(scope.tree), focused: new Map() })
-  }
-  return scopes.get(selected)
+    return { ...scope, files: Object.keys(scope.tree), focused: new Map() }
+  })
 }
 
 // The bundle Graph tab's sidebar and top packages, drawn by lazy ui/graph.js.
+const graphMod = () => _currentBundlePrep && loadedGraphMod()
 export function refreshBundleGraphSidebar() {
-  const mod = _currentBundlePrep && loadedGraphMod()
-  if (mod) mod.refreshSidebar(_currentBundlePrep, { isBundleContext: true, findingsJump: !isManagedUiMode() })
+  graphMod()?.refreshSidebar(_currentBundlePrep, { isBundleContext: true, findingsJump: !isManagedUiMode() })
 }
 
 export function refreshBundleGraphTopPkgs() {
-  const mod = _currentBundlePrep && loadedGraphMod()
-  if (mod) mod.refreshTopPkgs(_currentBundlePrep)
+  graphMod()?.refreshTopPkgs(_currentBundlePrep)
 }
 
 export function setCurrentBundleGraphPrep(prep) {
@@ -281,12 +281,9 @@ export function setCurrentBundleGraphPrep(prep) {
 function renderBundleSizeDistribution(dist, sort, details) {
   const { totalByPkg, whyQueries, total } = dist
   if (total === 0) return nothing
-  if (!dist.sorted.has(sort)) {
-    dist.sorted.set(sort, [...totalByPkg.entries()].toSorted((a, b) => Number(b[0] === '__own__') - Number(a[0] === '__own__')
-      || (sort === 'size' ? b[1] - a[1] : 0)
-      || pkgLabel(a[0]).localeCompare(pkgLabel(b[0])) || a[0].localeCompare(b[0])))
-  }
-  const sorted = dist.sorted.get(sort)
+  const sorted = keep(dist.sorted, sort, () => [...totalByPkg.entries()].toSorted((a, b) => Number(b[0] === '__own__') - Number(a[0] === '__own__')
+    || (sort === 'size' ? b[1] - a[1] : 0)
+    || pkgLabel(a[0]).localeCompare(pkgLabel(b[0])) || a[0].localeCompare(b[0])))
   return html`<div class="bundles-dist">
     <div class="bundles-dist-bar" aria-hidden="true">
       ${repeat(sorted, ([pkg]) => pkg, ([pkg, size]) => html`<span
@@ -386,8 +383,8 @@ const orderButtons = (label, options, value, pick) => html`<span class="bundles-
 // Reports columns, Reports only where some OPFS report matches. `sources`
 // and `sizes` are parallel, a size null where unknown. `resources` (Stasis
 // assets, an npm version's binaries) weigh in Packages and list among Files,
-// but count apart from Sources and open no viewer. `unpackedSize` is the
-// bytes every file adds up to, `lines` their lines of code. `leadColumn`
+// but count apart from Sources and open no viewer. Unpacked is what every
+// file of a known size adds up to, `lines` their lines of code. `leadColumn`
 // replaces Packages, `trailColumns` follow Files, `summaryExtra` follows the
 // facts, `overviewClass` names the layout; `fileIcon` and `fileTag` render
 // around each Files row's path, `fileFlags` gives a file's flags as its tags
@@ -395,11 +392,13 @@ const orderButtons = (label, options, value, pick) => html`<span class="bundles-
 // narrows the Files list alone, its label in the column's head with a way
 // back to every file.
 function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, {
-  bundleSize = null, unpackedSize = null, resources = null, details = null, leadColumn = null, trailColumns = nothing, summaryExtra = nothing,
+  bundleSize = null, resources = null, details = null, leadColumn = null, trailColumns = nothing, summaryExtra = nothing,
   fileTag = null, fileIcon = null, fileFlags = null, overviewClass = '', fileFilter = null, lines = null, sized = (measure, value, text) => text,
 } = {}) {
   const facts = overviewFiles(sources, sizes, packageDirs, details)
   const { prefix, stripped, packages } = facts
+  const known = sizes.filter((size) => typeof size === 'number')
+  const unpackedSize = known.length > 0 ? known.reduce((sum, size) => sum + size, 0) : null
   // Files by name, or by size, largest first and unknown last, name breaking
   // ties; by flags too where any file listed is flagged (file-flags.js byFlags).
   const shown = stripped.map((_, i) => i).filter((i) => !fileFilter || fileFilter.keeps(sources[i]))
@@ -704,9 +703,7 @@ function bundleViewerFindings(details, path, content, byFile = null) {
   const lineFindings = new Map()
   fileFindings.forEach((f, idx) => {
     const ln = parseInt(f.line, 10)
-    if (!Number.isFinite(ln) || ln <= 0) return
-    if (!lineFindings.has(ln)) lineFindings.set(ln, [])
-    lineFindings.get(ln).push({ f, idx })
+    if (Number.isFinite(ln) && ln > 0) keep(lineFindings, ln, () => []).push({ f, idx })
   })
   return { fileFindings, lineFindings }
 }
@@ -790,16 +787,11 @@ function revealBundleTreeFile(path, prefix) {
   revealBundleCodeCurrent()
 }
 
-function collapseBundleTree(tree) {
-  const walk = (node) => {
-    for (const child of node.dirs.values()) {
-      _bundleTreeUserOpen.set(child.path, false)
-      walk(child)
-    }
+function closeBundleTreeDirs(node) {
+  for (const child of node.dirs.values()) {
+    _bundleTreeUserOpen.set(child.path, false)
+    closeBundleTreeDirs(child)
   }
-  walk(tree)
-  _bundleTreeOpenings++
-  render()
 }
 
 // The rail's terminal toggle, and the pane's close. Opening puts the caret
@@ -866,17 +858,6 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
     for (const d of n.dirs.values()) if (containsCurrent(d)) return true
     return false
   }
-  // live(.open) reconciles a native toggle on the next render.
-  const computeOpen = (childPath, child) => {
-    if (expandAll) return true
-    if (_bundleTreeUserOpen.has(childPath)) return _bundleTreeUserOpen.get(childPath)
-    return Boolean(opened?.has(childPath)) || containsCurrent(child)
-  }
-  // Click precedes the browser's native toggle, including Enter/Space.
-  // Listening to toggle would also record programmatic search expansion.
-  const onSummaryClick = (childPath) => (e) => {
-    _bundleTreeUserOpen.set(childPath, !e.currentTarget.parentElement.open)
-  }
   return html`<ul class=${classMap({ 'bundle-code-tree': true, root: depth === 0 })}
     aria-label=${depth === 0 ? 'Source files' : nothing}
     @keydown=${depth === 0 ? navigateBundleSourceTree : nothing}
@@ -899,9 +880,14 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
         Object.assign(el.dataset, { tooltipLoc: String(loc), tooltipSize: formatBytes(bytes) })
       } : undefined
       const stats = dirIssueStats(child, issueIndex)
+      // live(.open) reconciles a native toggle on the next render.
+      const open = expandAll || (_bundleTreeUserOpen.has(childPath) ? _bundleTreeUserOpen.get(childPath)
+        : Boolean(opened?.has(childPath)) || containsCurrent(child))
+      // Click precedes the browser's native toggle, including Enter/Space.
+      // Listening to toggle would also record programmatic search expansion.
       return html`<li class="bundle-code-tree-dir">
-        <details .open=${live(computeOpen(childPath, child))}>
-          <summary @click=${onSummaryClick(childPath)} .prepareTooltip=${weigh}
+        <details .open=${live(open)}>
+          <summary @click=${(e) => { _bundleTreeUserOpen.set(childPath, !e.currentTarget.parentElement.open) }} .prepareTooltip=${weigh}
             data-tooltip-package=${info?.name ?? nothing}
             data-tooltip-ecosystem=${info?.ecosystem ?? nothing}
             data-tooltip-version=${info?.version ?? nothing}
@@ -964,8 +950,16 @@ function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex, prefix
     // A filtered tree holds matches alone, each directory for one inside:
     // all open, so every hit shows at once.
     ? renderBundleSourceTree(shown, currentPath, 0, issueIndex, Boolean(query), formats, sources, query ? null : defaultOpenDirectories(tree))
-    : html`<div class="bundle-code-search-empty">No files match.</div>`)
+    : railEmpty('No files match.'))
 }
+
+// The rail's results in a mode other than its tree: what they are over them,
+// or why there are none.
+const railEmpty = text => html`<div class="bundle-code-search-empty">${text}</div>`
+const railResults = (summary, results) => html`<div class="bundle-code-search-results">
+    <div class="bundle-code-search-summary">${summary}</div>
+    ${results}
+  </div>`
 
 // What the tree's rows show of a bundle's matched findings
 // (bundleFindingsByFile): each file's count and worst severity.
@@ -977,10 +971,7 @@ function bundleIssuesKey(issueIndex) {
 // own source first, then dependencies, each in path order. Cached per
 // sources map, which bundleSourcesAsMap itself caches per bundle.
 const searchOrderCache = new WeakMap()
-function bundleSearchOrder(details, sources) {
-  if (!searchOrderCache.has(sources)) searchOrderCache.set(sources, ownSourceFirst([...sources.keys()].toSorted(), bundlePackageDirs(details)))
-  return searchOrderCache.get(sources)
-}
+const bundleSearchOrder = (details, sources) => keep(searchOrderCache, sources, () => ownSourceFirst([...sources.keys()].toSorted(), bundlePackageDirs(details)))
 
 // The rail's Largest mode: its sources largest first, sized as the Overview
 // sizes them and filtered by path as Files is. Sorted once a bundle; capped,
@@ -989,28 +980,22 @@ const LARGEST_FILES_LIMIT = 1000
 const _largestFiles = new WeakMap()
 function renderBundleCodeLargestResults(details, sources, query, currentPath, prefix = '') {
   const sizes = bundleSourceSizes(details)
-  if (!_largestFiles.has(sources)) {
-    _largestFiles.set(sources, [...sources.keys()].filter(p => sizes.get(p) != null)
-      .toSorted((a, b) => sizes.get(b) - sizes.get(a) || a.localeCompare(b)))
-  }
-  const ranked = _largestFiles.get(sources)
+  const ranked = keep(_largestFiles, sources, () => [...sources.keys()].filter(p => sizes.get(p) != null)
+    .toSorted((a, b) => sizes.get(b) - sizes.get(a) || a.localeCompare(b)))
   const q = query.toLowerCase()
   const files = q ? ranked.filter(p => stripPathPrefix(p, prefix).toLowerCase().includes(q)) : ranked
-  if (files.length === 0) return html`<div class="bundle-code-search-empty">No files match.</div>`
+  if (files.length === 0) return railEmpty('No files match.')
   const shown = files.length > LARGEST_FILES_LIMIT ? files.slice(0, LARGEST_FILES_LIMIT) : files
-  return html`<div class="bundle-code-search-results">
-    <div class="bundle-code-search-summary">${shown.length < files.length
-      ? `${shown.length.toLocaleString()} largest of ${files.length.toLocaleString()} files`
-      : `${files.length.toLocaleString()} ${files.length === 1 ? 'file' : 'files'} by size`}</div>
-    <ul class="bundle-code-largest">
+  return railResults(shown.length < files.length
+    ? `${shown.length.toLocaleString()} largest of ${files.length.toLocaleString()} files`
+    : `${files.length.toLocaleString()} ${files.length === 1 ? 'file' : 'files'} by size`, html`<ul class="bundle-code-largest">
       ${repeat(shown, p => p, p => html`<li><button
         type="button"
         class=${classMap({ 'bundle-code-largest-file': true, current: p === currentPath })}
         data-bundle-view-source=${p}
         aria-current=${p === currentPath ? 'true' : nothing}
       ><span class="bundle-code-largest-path" data-tooltip-truncated data-tooltip=${p}>${stripPathPrefix(p, prefix)}</span><span class="bundle-code-largest-size">${formatBytes(sizes.get(p))}</span></button></li>`)}
-    </ul>
-  </div>`
+    </ul>`)
 }
 
 const MAX_RAIL_HITS_PER_FILE = 20
@@ -1065,11 +1050,9 @@ function renderBundleCodeContentResults(details, sources, query, currentPath, pr
   }
   const { results, totalHits } = bundleCodeRailHits(details, sources, query)
   if (results.length === 0) {
-    return html`<div class="bundle-code-search-empty">No matches.</div>`
+    return railEmpty('No matches.')
   }
-  return html`<div class="bundle-code-search-results">
-    <div class="bundle-code-search-summary">${plural(totalHits, 'hit')} in ${plural(results.length, 'file')}</div>
-    ${results.map(({ path: p, hits }) => html`<div class=${classMap({ 'bundle-code-search-file': true, current: p === currentPath })}>
+  return railResults(html`${plural(totalHits, 'hit')} in ${plural(results.length, 'file')}`, results.map(({ path: p, hits }) => html`<div class=${classMap({ 'bundle-code-search-file': true, current: p === currentPath })}>
       <button
         type="button"
         class="bundle-code-search-file-name"
@@ -1090,8 +1073,7 @@ function renderBundleCodeContentResults(details, sources, query, currentPath, pr
           </button>
         </li>`)}
       </ul>
-    </div>`)}
-  </div>`
+    </div>`))
 }
 
 // The rail's Issues mode, offered only where the bundle has matched findings
@@ -1105,11 +1087,9 @@ function renderBundleCodeIssuesResults(issueIndex, query, currentPath, prefix = 
       || f.severity.replaceAll('_', ' ').includes(q) || (f.description ?? '').toLowerCase().includes(q))
     .toSorted((a, b) => (SEVERITY_ORDER[b.finding.severity] ?? 0) - (SEVERITY_ORDER[a.finding.severity] ?? 0) || a.file.localeCompare(b.file))
   if (flat.length === 0) {
-    return html`<div class="bundle-code-search-empty">No matches.</div>`
+    return railEmpty('No matches.')
   }
-  return html`<div class="bundle-code-search-results">
-    <div class="bundle-code-search-summary">${plural(flat.length, 'issue')}</div>
-    <ul class="bundle-code-search-issues">
+  return railResults(plural(flat.length, 'issue'), html`<ul class="bundle-code-search-issues">
       ${flat.map(({ file, finding, fileIdx }) => {
         const sev = finding.severity
         const isCurrent = file === currentPath && state.bundleSourceFindingIdx === fileIdx
@@ -1129,8 +1109,7 @@ function renderBundleCodeIssuesResults(issueIndex, query, currentPath, prefix = 
           </button>
         </li>`
       })}
-    </ul>
-  </div>`
+    </ul>`)
 }
 
 // The sources the Code tab picks its default file from: a Stasis bundle's
@@ -1142,28 +1121,24 @@ function renderBundleCodeIssuesResults(issueIndex, query, currentPath, prefix = 
 const _bundleCodeDefaults = new WeakMap()
 function bundleCodeDefaultSources(details, sources) {
   if (details.kind !== 'stasis') return sources
-  if (_bundleCodeDefaults.has(sources)) return _bundleCodeDefaults.get(sources)
-  const packageDirs = bundlePackageDirs(details)
-  const ownSources = new Map([...sources].filter(([file]) =>
-    !/(?:^|\/)node_modules(?:\/|$)/u.test(file)
-      && !/(?:^|\/)(?:node_modules|dependencies|vendor)(?:\/|$)/u.test(packageDirs?.get(file) ?? file)))
-  const defaults = ownSources.size > 0 ? ownSources : sources
-  _bundleCodeDefaults.set(sources, defaults)
-  return defaults
+  return keep(_bundleCodeDefaults, sources, () => {
+    const packageDirs = bundlePackageDirs(details)
+    const ownSources = new Map([...sources].filter(([file]) =>
+      !/(?:^|\/)node_modules(?:\/|$)/u.test(file)
+        && !/(?:^|\/)(?:node_modules|dependencies|vendor)(?:\/|$)/u.test(packageDirs?.get(file) ?? file)))
+    return ownSources.size > 0 ? ownSources : sources
+  })
 }
 
 // The Code tab's tree of a bundle's sources, built from paths without the
 // prefix its rail shows over it, the files keeping their full paths; built
 // once a bundle, kept by the sources as the defaults are.
 const _bundleCodeTrees = new WeakMap()
-function bundleCodeTree(details, sources, allPaths) {
-  if (!_bundleCodeTrees.has(sources)) {
-    const packageModules = details.kind === 'stasis' ? details.bundle.modules : null
-    const prefix = bundleSourceTreePrefix(stripCommonPathPrefix(allPaths).prefix, packageModules, allPaths)
-    _bundleCodeTrees.set(sources, { prefix, tree: buildBundleSourceTree(allPaths.map(p => stripPathPrefix(p, prefix)), allPaths, packageModules) })
-  }
-  return _bundleCodeTrees.get(sources)
-}
+const bundleCodeTree = (details, sources, allPaths) => keep(_bundleCodeTrees, sources, () => {
+  const packageModules = details.kind === 'stasis' ? details.bundle.modules : null
+  const prefix = bundleSourceTreePrefix(stripCommonPathPrefix(allPaths).prefix, packageModules, allPaths)
+  return { prefix, tree: buildBundleSourceTree(allPaths.map(p => stripPathPrefix(p, prefix)), allPaths, packageModules) }
+})
 
 // The file the Code tab opens on where none is picked, of those with text:
 //   1. an npm version's `main`, a repository directory's readme,
@@ -1177,14 +1152,9 @@ function bundleCodeTree(details, sources, allPaths) {
 // Findings play no part, so the file doesn't change as they arrive. Null
 // where no file has text.
 function pickDefaultBundleCodeFile(details, sources) {
-  for (const entry of details.npmEntries ?? []) {
-    if (typeof sources.get(entry) === 'string') return entry
-  }
-  if (details.kind === 'stasis' && details.bundle) {
-    for (const entry of details.bundle.entries) {
-      if (typeof sources.get(entry) === 'string') return entry
-    }
-  }
+  const entry = [...details.npmEntries ?? [], ...details.kind === 'stasis' && details.bundle ? details.bundle.entries : []]
+    .find(file => typeof sources.get(file) === 'string')
+  if (entry !== undefined) return entry
   if (!details.npmEntries) {
     const texts = [...sources].flatMap(([file, content]) => typeof content === 'string' ? [file] : [])
     const named = shallowestNamed(texts, ['package.json']) ?? shallowestNamed(texts, ['index.ts', 'index.js', 'main.ts', 'main.js'])
@@ -1281,7 +1251,7 @@ function renderBundleCodeView(details, entry = null) {
             <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="4.5"/><circle cx="8" cy="8" r="1.5"/><path d="M8 0v3m0 10v3M0 8h3m10 0h3"/></svg>
           </button>
           <button type="button" class="bundle-code-rail-action" aria-label="Collapse directories" data-tooltip="Collapse directories"
-            ?disabled=${searchMode !== 'files' || !!pathQuery || tree.dirs.size === 0} @click=${() => collapseBundleTree(tree)}>
+            ?disabled=${searchMode !== 'files' || !!pathQuery || tree.dirs.size === 0} @click=${() => { closeBundleTreeDirs(tree); _bundleTreeOpenings++; render() }}>
             ${COLLAPSE_DIRS_ICON}
           </button>
         </span>
@@ -1510,31 +1480,28 @@ function renderSearchFile(fileResult, prefix, radius) {
 
 // The Search tab's results for the query, scanned through the refinement
 // history (bundle-search-scan.js, by the bundle's integrity), grouped by file.
+const searchResults = content => html`<div class="bundle-search-results">
+      ${content}
+    </div>`
 function renderBundleSearchResults(details, sources, query, useRegex, caseSensitive, showContext) {
   if (!query) {
-    return html`<div class="bundle-search-results">
-      <div class="bundle-search-hint">
+    return searchResults(html`<div class="bundle-search-hint">
         Search across every ${details.npm ? 'file of this version' : details.repository ? 'file of this directory' : 'source in this bundle'}. Each match shows the surrounding
         lines for context — fewer matches get more context. Toggle
         <span class="bundle-search-hint-kbd">Aa</span> for case-sensitive and
         <span class="bundle-search-hint-kbd">.*</span> for regular-expression matching.
-      </div>
-    </div>`
+      </div>`)
   }
   const result = runBundleSearch(details.integrity ?? '', sources, query, useRegex, caseSensitive, bundleSearchOrder(details, sources))
   if (result.error) {
-    return html`<div class="bundle-search-results">
-      <div class="bundle-search-error">
+    return searchResults(html`<div class="bundle-search-error">
         <span class="bundle-search-error-label">Invalid regular expression</span>
         <span class="bundle-search-error-msg mono">${result.error}</span>
-      </div>
-    </div>`
+      </div>`)
   }
   const { fileResults, totalHits, truncated } = result
   if (fileResults.length === 0) {
-    return html`<div class="bundle-search-results">
-      <div class="bundle-search-empty">No matches.</div>
-    </div>`
+    return searchResults(html`<div class="bundle-search-empty">No matches.</div>`)
   }
   // The prefix of every source, not just those matching, so it holds still
   // between keystrokes.
@@ -1555,10 +1522,7 @@ function renderBundleSearchResults(details, sources, query, useRegex, caseSensit
 // The common prefix of every source's path, kept by the sources, as the
 // scan order is (bundleSearchOrder).
 const searchPrefixCache = new WeakMap()
-function bundleSearchPrefix(sources) {
-  if (!searchPrefixCache.has(sources)) searchPrefixCache.set(sources, stripCommonPathPrefix([...sources.keys()].toSorted()).prefix)
-  return searchPrefixCache.get(sources)
-}
+const bundleSearchPrefix = sources => keep(searchPrefixCache, sources, () => stripCommonPathPrefix([...sources.keys()].toSorted()).prefix)
 
 // The lines (1-based) of `path` the search matches, which its gutter in the
 // sidebar marks: null where the query can't say (empty, no content, a regex
@@ -1651,11 +1615,9 @@ function renderBundleSearchView(details, entry = null) {
 
 // One button of the bundle slide's tab strip, inert while an npm version
 // opens; `onTab` opening its tab where no bundle is shown to switch.
-const bundleTab = (key, label, tab, opening = false, onTab = null) => onTab
-  ? html`<button type="button" class=${classMap({ 'bundles-tab': true, active: tab === key })} aria-selected=${String(tab === key)} role="tab"
-    @click=${() => { if (key !== tab) onTab(key) }}>${label}</button>`
-  : html`<button type="button" class=${classMap({ 'bundles-tab': true, active: tab === key })}
-  data-bundle-tab="${key}" aria-selected=${String(tab === key)} role="tab" ?disabled=${opening}>${label}</button>`
+const bundleTab = (key, label, tab, opening = false, onTab = null) => html`<button type="button" class=${classMap({ 'bundles-tab': true, active: tab === key })}
+  data-bundle-tab="${onTab ? nothing : key}" aria-selected=${String(tab === key)} role="tab" ?disabled=${!onTab && opening}
+  @click=${onTab ? () => { if (key !== tab) onTab(key) } : nothing}>${label}</button>`
 
 // The tabs an npm version shows, each `[key, label]`: Review where the reader
 // publishes dependency reviews to some team, as their session says (an
@@ -1711,7 +1673,7 @@ function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = f
   } : nothing
   return html`<div class="bundles-view bundles-slide-view">
     <bundle-slide-header class="bundles-slide-header"><header class="bundles-slide-bar">
-      ${isManagedUiMode() && entry.managedId && entry.repoId == null ? breadcrumb('Bundles', () => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-bundles' }, bubbles: true, composed: true }))) : nothing}
+      ${isManagedUiMode() && entry.managedId && entry.repoId == null ? breadcrumb('Bundles', () => openAdminPage('manage-bundles')) : nothing}
       ${npm ? breadcrumb('npm', () => navigateToNpm()) : nothing}
       <span class="bundles-slide-icon" aria-hidden="true">${appMarkup(npm ? NPM_ICON_SVG : repository ? REPO_ICON_SVG : BUNDLE_ICON_SVG)}</span>
       <div class=${classMap({ 'bundles-slide-title': true, 'bundles-slide-repository': Boolean(repository) })}>
@@ -1761,10 +1723,19 @@ export function renderRepositoryCodeOpening(opening) {
   { opening: !historyOnly, onTab: tabsOpen ? key => openRepositoryCodeTab(opening, key) : null })
 }
 
-// The open bundle's slide (bundleSlideView), the body the active tab's
-// (state.bundleDetailsTab), coerced where the bundle doesn't offer it: an npm
-// version shows NPM_TABS, a repository's directory REPOSITORY_CODE_TABS.
-function renderBundleSlide(entry) {
+// The bundles view: the selected bundle's slide (`state.selectedBundle`, set
+// from the sidebar's list; bundleSlideView), or a pointer back to that list.
+// The slide's body is the active tab's (state.bundleDetailsTab), coerced
+// where the bundle doesn't offer it: an npm version shows NPM_TABS, a
+// repository's directory REPOSITORY_CODE_TABS.
+export function renderBundlesList(bundles) {
+  const selected = state.selectedBundle
+  const entry = selected ? bundles.find((b) => b.integrity === selected) : null
+  if (!entry) {
+    return html`<div class="bundles-view bundles-view-empty">
+      <p class="bundles-empty-hint">Pick a bundle from the sidebar to open it.</p>
+    </div>`
+  }
   const npm = Boolean(entry.npm)
   if (npm && !NPM_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'overview'
   const repository = Boolean(entry.repository)
@@ -1840,13 +1811,11 @@ function renderBundleSlide(entry) {
 // without (a markdown report's: Codex, Claude Security) by the bucket a
 // package or repository slide renders (`ctx.kind`, `ctx.bucketKey`), through
 // its index's `_keyReports` (client/bundle-finding-index.js).
-function bundleIssueReportsTemplate(finding, ctx = {}) {
-  if (!finding) return nothing
-  let reports = []
-  if (finding.fileHash) reports = reportsForFinding(finding.fileHash, finding)
-  if (reports.length === 0 && ctx.bucketKey) {
-    if (ctx.kind === 'package') reports = reportsForFindingByPackage(ctx.bucketKey, finding)
-    else if (ctx.kind === 'repository') reports = reportsForFindingByRepo(ctx.bucketKey, finding)
+function bundleIssueReportsTemplate(finding, { kind, bucketKey }) {
+  let reports = finding.fileHash ? reportsForFinding(finding.fileHash, finding) : []
+  if (reports.length === 0 && bucketKey) {
+    if (kind === 'package') reports = reportsForFindingByPackage(bucketKey, finding)
+    else if (kind === 'repository') reports = reportsForFindingByRepo(bucketKey, finding)
   }
   if (reports.length === 0) return nothing
   const extra = reports.length - 2
@@ -1997,19 +1966,6 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
   </div>`
 }
 
-// The bundles view: the selected bundle's slide (`state.selectedBundle`, set
-// from the sidebar's list), or a pointer back to that list.
-export function renderBundlesList(bundles) {
-  const selected = state.selectedBundle
-  const selectedEntry = selected ? bundles.find((b) => b.integrity === selected) : null
-  if (!selectedEntry) {
-    return html`<div class="bundles-view bundles-view-empty">
-      <p class="bundles-empty-hint">Pick a bundle from the sidebar to open it.</p>
-    </div>`
-  }
-  return renderBundleSlide(selectedEntry)
-}
-
 // A tray with a down arrow, in the text's color.
 const DOWNLOAD_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
   <path d="M8 2v8"/>
@@ -2137,14 +2093,6 @@ function renderBundleOverviewFallback(meta, exportsCol, { placeholder = nothing,
   </div>`
 }
 
-// The bytes a bundle's files take once unpacked: the sum of every known
-// file size, by the measure the Packages column weighs them with. Null
-// when no file has a size to add.
-function bundleUnpackedSize(sizes) {
-  const known = sizes.filter((size) => typeof size === 'number')
-  return known.length > 0 ? known.reduce((sum, size) => sum + size, 0) : null
-}
-
 // The Overview tab: the bundle's facts, known before it parses (until
 // bundle-load.js has read it, `details` is null or a previous bundle's), and
 // once parsed a sourcemap's (version, output, source root, names) or a
@@ -2196,7 +2144,7 @@ function renderBundleDetails(entry, details) {
       ${json.names || details.namesCount != null ? html`<dt>Names</dt><dd>${json.names?.length ?? details.namesCount}</dd>` : nothing}
     `
     // No package metadata: packages bucket by the path heuristic.
-    return renderBundleSourcesPanel(meta, extras, sources, sizes, null, exportsCol, { bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes) })
+    return renderBundleSourcesPanel(meta, extras, sources, sizes, null, exportsCol, { bundleSize: details.size })
   }
   if (parsed && details.kind === 'stasis' && details.bundle) {
     const bundle = details.bundle
@@ -2216,7 +2164,7 @@ function renderBundleDetails(entry, details) {
         ? html`<dt>Resolution kinds</dt><dd>${sortedKinds.join(', ')}</dd>`
         : nothing}
     `
-    return renderBundleSourcesPanel(meta, extras, sourceNames, sizes, bundlePackageDirs(details), exportsCol, { bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources, details })
+    return renderBundleSourcesPanel(meta, extras, sourceNames, sizes, bundlePackageDirs(details), exportsCol, { bundleSize: details.size, resources, details })
   }
   // Loading shows the facts alone: a "Loading…" line flickered too briefly to
   // help, and pushed the columns down on every open. A Stasis bundle with no
@@ -2230,13 +2178,10 @@ function renderBundleDetails(entry, details) {
 // resources: kept by its files' kinds (bundleFileKinds keeps those a
 // bundle), so the Overview's facts are kept by them (overviewFiles).
 const _stasisOverviewFiles = new WeakMap()
-function stasisOverviewFiles(kinds) {
-  if (!_stasisOverviewFiles.has(kinds)) {
-    const sourceNames = [...kinds.keys()]
-    _stasisOverviewFiles.set(kinds, { sourceNames, resources: new Set(sourceNames.filter((path) => kinds.get(path) === 'resource')) })
-  }
-  return _stasisOverviewFiles.get(kinds)
-}
+const stasisOverviewFiles = kinds => keep(_stasisOverviewFiles, kinds, () => {
+  const sourceNames = [...kinds.keys()]
+  return { sourceNames, resources: new Set(sourceNames.filter((path) => kinds.get(path) === 'resource')) }
+})
 // An npm package version's Overview: its manifest beside the files its
 // tarball holds, with the tarball to download. Its details arrive with it,
 // whole, so there is no loading state to show. The summary lays out as the
@@ -2251,8 +2196,10 @@ function renderNpmPackageOverview(entry, details) {
   const exportsCol = html`<div class="bundles-overview-exports">
     <div class="bundles-overview-exports-row">${npmPackageLinks(entry)}${downloadButton}</div>
   </div>`
+  const meta = (prefix, files) => npmOverviewMeta(entry, { prefix, githubFigures: npmGithubFigures(entry), provenance: npmProvenanceFact(entry),
+    provenanceNamesBuilder: npmProvenanceNamesBuilder(entry.npm), files })
   if (details?.integrity !== entry.integrity || !details.json) {
-    return renderBundleOverviewFallback(npmOverviewMeta(entry, { githubFigures: npmGithubFigures(entry), provenance: npmProvenanceFact(entry), provenanceNamesBuilder: npmProvenanceNamesBuilder(entry.npm) }), exportsCol, { overviewClass: 'npm-overview' })
+    return renderBundleOverviewFallback(meta(), exportsCol, { overviewClass: 'npm-overview' })
   }
   // Files lists every file, tagged by what its bytes hold; the binary ones,
   // which have no text to show, are listed again in a column of their own.
@@ -2262,9 +2209,8 @@ function renderNpmPackageOverview(entry, details) {
   const { paths, binaries, content } = npmFilesRead(details)
   // Socket's alerts on the files they name, beside each one's tag.
   const alerts = npmSocketFileAlerts(entry.npm)
-  return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, { prefix, githubFigures: npmGithubFigures(entry), provenance: npmProvenanceFact(entry),
-    provenanceNamesBuilder: npmProvenanceNamesBuilder(entry.npm), files: paths }), npmOverviewExtras(entry, paths, details), sources, sizes, null, nothing, {
-    bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources: binaries,
+  return renderBundleSourcesPanel(prefix => meta(prefix, paths), npmOverviewExtras(entry, paths, details), sources, sizes, null, nothing, {
+    bundleSize: details.size, resources: binaries,
     leadColumn: html`${npmDependenciesColumn(entry)}${npmAdvisoriesColumn(entry)}`, trailColumns: npmBinaryColumn(binaries, sizeMap),
     summaryExtra: html`${npmAlerts(entry, paths)}${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details)}${npmStatsRow(entry, downloadButton, npmOverviewBadges(entry))}`,
     // Sized by what the package holds beyond the files every package has.
