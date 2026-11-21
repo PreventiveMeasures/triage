@@ -13,44 +13,21 @@
     &:focus { border-color: var(--accent); outline: none; }
   }
 
-  /* Sort dropdown reads as a button rather than a tight form
-     control — the bare select replaces the prior `Sort: [select]`
-     pair, so the selected option carries the role label and
-     deserves the visual weight a button would get. Slightly wider
-     padding + a `min-width` so changing direction (`Severity ↓` →
-     `Confidence ↑`) doesn't shift its neighbour.
-
-     Native browser select arrow varies wildly across UAs (Chrome
-     puts a small triangle; Safari uses a chunky inset chevron) and
-     none of them sit nicely against the toolbar's chrome. Strip
-     the native chrome and draw our own chevron via a background
-     SVG, right-aligned with breathing room — same shape and tone
-     as the design prototype's `.field.select::after` (muted
-     45deg-rotated borders) but baked into the select so we don't
-     need a wrapper. */
+  /* The sort select reads as a button: its value is the label. Native select
+     arrows differ wildly across browsers, so the chrome is stripped and the
+     host draws a chevron (below); `min-width` keeps a longer value from
+     shifting its neighbor. */
   & select.sort-select {
     padding: .3rem 1.7rem .3rem .55rem;
     min-width: 8.5rem;
     font-weight: 500;
-    appearance: none; -webkit-appearance: none;
-    /* Transparent so the glass-shell toolbar shows through — matches
-       the sibling `conf-filter` / `source-filter` / `.sev-chip`
-       treatment in the same row. Chevron is drawn by the
-       `revalidate-filter` / `findings-sort` host `::after` below since
-       pseudo-elements don't apply to <select>. */
+    appearance: none;
+    /* Transparent over the glass toolbar, as the sibling filters. */
     background: transparent;
   }
 
-  /* Custom chevron — two muted borders rotated 45deg form a down-
-     chevron, same approach the design prototype uses for
-     `.field.select::after`. The host components below own the
-     position-relative + chevron pseudo; the inner `.sort-select`
-     `<select>` has the right padding (1.7rem → chevron at .55rem
-     from the right with the glyph itself ~.4rem wide).
-     `pointer-events: none` on the chevron lets a click fall
-     through to the select. (`analyzer-select` left this list when it
-     became a custom dropdown — its trigger is a real <button>, so
-     the chevron is an inline svg; see the analyzer-btn rules below.) */
+  /* Chevron on the host's ::after, as pseudo-elements don't apply to a
+     <select>; it lets clicks fall through. */
   & :is(revalidate-filter, findings-sort) {
     position: relative;
     display: inline-block;
@@ -69,13 +46,8 @@
 
   & repo-filter { display: inline-block; min-width: 0; max-width: 100%; }
 
-  /* Analyzer / model filter — custom dropdown (trigger pill + a
-     two-column popover panel, see view/analyzer-select.js). The host
-     stays position: relative as the panel's conceptual anchor; the
-     panel itself is top-layer with fixed coords from the component.
-     Trigger mirrors the sort select's chrome (30px transparent pill,
-     muted chevron, 8.5rem min-width so picking a longer value
-     doesn't shove its neighbours around for short selections). */
+  /* Analyzer / model filter: a trigger pill with a popover panel
+     (view/analyzer-select.js), chrome as the sort select's. */
   & analyzer-select {
     position: relative;
     display: inline-block;
@@ -92,26 +64,20 @@
 
     &:hover { border-color: var(--accent); }
     &:focus-visible { border-color: var(--accent); outline: none; }
-    /* Any analyzer / model filter applied → accent the label so the
-       narrowed state reads at a glance (matches the active source /
-       view-mode chips). */
+    /* Accent when any analyzer / model filter applies. */
     &.active { color: var(--accent); }
 
     & .analyzer-btn-label {
       flex: 1;
       text-align: left;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      /* Combination labels (`Claude Security · opus 4 7`) can get
-         long — cap and ellipsize instead of letting the trigger eat
-         the filter row. */
+      /* Combination labels get long; cap and ellipsize. */
       max-width: 18rem;
     }
     & svg { color: var(--muted); flex-shrink: 0; }
   }
 
-  /* Confidence slider track tint + thumb fill flow off the toolbar's
-     accent. Live value label uses tabular nums so the dash stays
-     centered as the bounds change width (e.g. `0–10` vs `10–10`). */
+  /* Slider tinted by the accent; tabular read-out so the dash stays put. */
   & range-slider {
     color: var(--accent);
     margin: 0 .25rem;
@@ -122,26 +88,12 @@
     font-size: .72rem;
     font-variant-numeric: tabular-nums;
 
-    /* Separator dash sits between the two value spans in a dimmer
-       tone with breathing room either side — matches the design
-       prototype's `.vals .sep` (faint color, 2px each side). Named
-       `dash`, not `sep`: this one separates two values inside one
-       control, which is a different thing from the group dividers
-       the toolbar row used to carry between its controls (dropped —
-       the row's `gap` tells the groups apart on its own). */
+    /* `dash`, not `sep`: it separates two values inside one control. */
     & .dash { color: var(--muted); margin: 0 .15rem; }
   }
 
-  /* Confidence filter — bordered shell wrapping the label, the
-     dual-thumb slider, and the live `low – high` mirror. Matches
-     the design prototype's `.conf-slider`: subtle inset background,
-     soft border, label in the muted toolbar tone with slight
-     letter-spacing. The slider's own `0 .25rem` margin (above) is
-     reset here so the shell's flex `gap` controls spacing.
-
-     Element selector (rather than a `.conf-filter` class on a
-     wrapping div) — the `<conf-filter>` host element IS the layout
-     container; no separate wrapper needed. */
+  /* Confidence filter: a bordered shell around the label, the dual-thumb
+     slider and the `low – high` read-out; the host is the layout container. */
   & conf-filter {
     position: relative;
     display: inline-flex; align-items: center;
@@ -160,31 +112,20 @@
     }
     & range-slider { margin: 0; }
 
-    /* Slider + read-out travel together, so the outcome dropdown can
-       take the pair's place as one when it replaces them. `visibility`
-       rather than `display`: the pair keeps its box, so the block is
-       exactly as wide in either mode and the toolbar row doesn't
-       reflow when the filter is switched between them. Hidden also
-       means unreachable by pointer and keyboard, so the thumbs can't
-       be dragged to a range that wouldn't apply. */
+    /* The slider and read-out hide together when an outcome replaces them;
+       `visibility`, not `display`, so the block keeps its width and the row
+       doesn't reflow. Hidden also means unreachable by pointer and keyboard. */
     & .conf-range {
       display: inline-flex; align-items: center; gap: .5rem;
     }
     & :is(.conf-range, .conf-range-label).replaced { visibility: hidden; }
-    /* Blocked range (nothing on screen to range over): still drawn, so
-       the block keeps its shape and the outcome dropdown on the end
-       keeps working — just visibly out of service. `inert`, set with
-       the class, is what stops the thumbs being dragged. */
+    /* Blocked (nothing to range over): drawn but out of service; `inert`, set
+       with the class, stops the thumbs. */
     & :is(.conf-range, .conf-range-label).disabled { opacity: .35; }
 
-    /* The outcome dropdown reads as one arrow-down on the end of the
-       block rather than a second control: no border of its own (the
-       block's is right there), and a fixed ARROW SLOT wide — just the
-       chevron the shared `:is(repo-filter, …)` rule paints, with the
-       select transparent behind it. The slot is the same width in both
-       modes, which is what keeps the block from changing width when an
-       outcome replaces the range: the value it then shows is drawn out
-       of flow, over the space the hidden label + slider still hold. */
+    /* The outcome dropdown is one chevron at the block's end: no border, a
+       fixed slot the same width in both modes, so the block doesn't change
+       width; a chosen value is drawn out of flow over the hidden range. */
     & revalidate-filter {
       position: relative;
       display: inline-flex; align-items: center;
@@ -205,14 +146,9 @@
 
       &::after { right: .25rem; }
 
-      /* Replacing the range: the select spans the block instead of its
-         slot, which is what puts the value at the block's left edge —
-         where the reader's eye already is, and where the label it
-         replaced began. `position: static` on the host is what hands
-         that job to the select: with the host unpositioned, both the
-         select and the chevron anchor to the block itself, so the
-         chevron keeps the exact place it sits in when idle
-         (.55rem block padding + .25rem = .8rem). */
+      /* Replacing the range, the select spans the block so its value starts
+         where the label did. The unpositioned host lets select and chevron anchor
+         to the block, so the chevron keeps its idle place (.55rem + .25rem). */
       &.replaces {
         position: static;
 
@@ -227,15 +163,8 @@
         &::after { right: .8rem; }
       }
 
-      /* The partial switch, riding inside the Confirmed row (see
-         revalidate-filter.js). It sits ON the select, which spans the
-         whole block — so it needs a layer of its own to take the click
-         that would otherwise open the dropdown. Anchored to the right,
-         clear of the chevron: the select's value starts at the left
-         edge and pinning the chip to the end of that word would mean
-         measuring rendered text. `translateY` off the vertical middle
-         rather than a flex line, since the block it hangs in is the
-         select's box, not a row of its own. */
+      /* The partial switch rides on the select that spans the block, so it needs
+         its own layer to take the click; anchored right, clear of the chevron. */
       & .partial-cycle {
         position: absolute;
         right: 1.75rem;
@@ -250,15 +179,8 @@
         white-space: nowrap;
         cursor: default;
 
-        /* Every mode is a state, the default one included: `+ Partial`
-           says those rows are in and on screen, which is worth showing
-           rather than leaving as a blank the reader has to interpret.
-           So all three wear the chip — one hue each, set once here and
-           picked per class below.
-
-           Green in, red out, yellow for the narrowed rows on their own
-           — the same yellow the partial STAMP wears on the card, so
-           the chip and the rows it is sorting read as one idea. */
+        /* Every mode wears the chip, the default included: green in, red out,
+           yellow for the narrowed rows alone (the partial stamp's yellow). */
         --chip: var(--muted);
         color: var(--chip);
         border: 1px solid rgb(from var(--chip) r g b / .45);
@@ -283,13 +205,9 @@
   & .result-count { color: var(--muted); margin-left: auto; }
 }
 
-/* Analyzer / model dropdown panel — native popover (top layer, so no
-   toolbar overflow or stacking context can clip it), one
-   `.analyzer-menu-col` per dimension with a hairline separator
-   between. Fixed coords come from the component's beforetoggle /
-   updated() positioning; inset: auto + margin: 0 zero out the UA's
-   auto-centering of popover="auto" so those coords take effect
-   (same recipe as `.triage-menu` in finding-row.css). */
+/* Analyzer / model panel: a native popover (top layer, unclipped), a column
+   per dimension. `inset: auto; margin: 0` undo the UA's centering so the
+   component's fixed coordinates apply (as `.triage-menu`, finding-row.css). */
 .analyzer-menu[popover] {
   position: fixed;
   inset: auto;
@@ -303,20 +221,15 @@
   box-shadow: 0 4px 12px rgb(0 0 0 / .25);
   font-size: .825rem;
   max-width: calc(100vw - 8px);
-  /* WCO: the popover sits in the top layer above body's drag baseline.
-     Row buttons are no-drag via the central `button` selector, but the
-     panel's own padding / gap pixels would inherit drag and eat clicks
-     landing on the chrome between rows. */
+  /* WCO: the panel's padding and gaps would inherit the body's drag and eat
+     clicks between rows. */
   -webkit-app-region: no-drag; app-region: no-drag;
 }
-/* Hidden state — the popover API toggles `:popover-open`; keep the
-   stack tight (display: none) when closed. */
 .analyzer-menu[popover]:not(:popover-open) { display: none; }
 .analyzer-menu[popover]:popover-open { display: flex; }
 .analyzer-menu-sep { border-left: 1px solid var(--border); }
-/* Up to three columns (App mode adds Validation model): on a narrow
-   screen they share its width, their labels ellipsized, rather than
-   push the panel past its edge. */
+/* Up to three columns: on a narrow screen they share the width, labels
+   ellipsized. */
 @media (width <= 36rem) {
   .analyzer-menu-col { min-width: 0; flex: 1 1 0; }
 }
@@ -324,10 +237,8 @@
   display: flex; flex-direction: column;
   gap: 1px;
   min-width: 9rem;
-  /* Long model lists (big workspace merges) scroll inside their
-     column instead of growing the panel past the viewport — the
-     component's positioning only flips above/below, it doesn't
-     shrink the panel. */
+  /* Long lists scroll in their column; the component only flips the panel
+     above / below, it doesn't shrink it. */
   max-height: 60vh;
   overflow-y: auto;
 }
@@ -347,15 +258,12 @@
   text-align: left;
   font-family: inherit; font-size: .78rem;
 
-  /* Fixed-width tick slot — the ✓ appears in place on the active row
-     instead of shifting every label to the right. */
+  /* A fixed tick slot so the ✓ doesn't shift labels. */
   &::before { content: ''; width: .8rem; flex-shrink: 0; }
   &.active::before { content: '✓'; color: var(--accent); }
   &:hover { background: var(--surface); }
-  /* Cross-filtered to zero by the other column's selection — dimmed
-     as "no findings carry this combination" but still clickable (an
-     empty result is visible and recoverable; a disabled row would
-     trap the user into clearing dimensions in a fixed order). */
+  /* Cross-filtered to zero: dimmed but clickable, so the user is never
+     trapped into clearing dimensions in a fixed order. */
   &.zero { opacity: .45; }
 
   & .analyzer-menu-label {
@@ -370,31 +278,16 @@
   }
 }
 
-/* Trash toggle — used in the findings .toolbar AND the graph
-   topbar's extra row, so the rule lives outside `.toolbar` to apply
-   in both contexts. `margin-left: auto` is intentionally NOT here:
-   the graph topbar uses an explicit `.g2-spacer` to push the button
-   to the right, and inheriting margin-left would interfere with
-   that intentional layout. */
-/* Export button — the download icon at the end of the first toolbar
-   row, beside the app lens. `display: contents` on the host so the
-   button itself is the flex item: the component renders `nothing`
-   where the export makes no sense (graph / kanban), and a host that
-   still counted as an item would leave the row's gap behind it.
-   Sized and framed like the other standalone controls in the row
-   (the view-mode group above): 30px tall, bordered,
-   accent on hover. */
+/* Export button at the end of the first row. The host is `display:
+   contents` so the button is the flex item: where it renders nothing (graph,
+   kanban) no gap is left behind. */
 download-button { display: contents; }
 .toolbar-export-btn {
   height: 30px; box-sizing: border-box;
   display: inline-flex; align-items: center; justify-content: center;
   padding: 0 .55rem;
-  /* An icon button in this row, styled as the others are: TRANSPARENT
-     over the toolbar's own glass — a `--bg` fill would paint an opaque
-     black box on it — with the glyph in `--muted` and the group's
-     border for a frame. Hover lifts the glyph to `--text` over the
-     same faint tint the view-mode buttons use, so the two read as one
-     family. */
+  /* Transparent over the toolbar's glass (a `--bg` fill would be an opaque
+     box), muted glyph, hover tint as the view-mode buttons. */
   background: transparent; color: var(--muted);
   border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
   font-family: inherit;
@@ -404,25 +297,16 @@ download-button { display: contents; }
   & svg { display: block; }
 }
 
-/* Triage state selector — Fixed / Invalid / Deleted / Ignored
-   buttons. Visible buttons follow the bucket counts; the active one
-   (matching state.shownTriage) takes the bucket's accent color.
-   Lives at the right of the toolbar row by default.
-
-   Shell mirrors `source-filter` above: a single bordered, rounded
-   container with flush chips inside divided by `border-right` on
-   every chip except the last. Per-bucket colors land on the active
-   chip's text only — the shared shell stays neutral. */
-/* Shared shell for the triage-bucket selectors. Both
-   `<triage-selector>` (findings toolbar + graph topbar + packages /
-   repositories pages) and `<slide-triage-tabs>` (Invalid / Deleted
-   tabs in the slide-out headers) get the bordered pill chrome
-   directly on the host element — no wrapping div, no class
-   indirection. The slide variant overlays its own positioning
-   rules via `.packages-slide-view slide-triage-tabs { ... }` in
-   report.css. */
+/* Bordered pill shells of the segmented controls, on the host elements.
+   `slide-triage-tabs` (slide headers) is positioned in report.css. */
 triage-selector,
-slide-triage-tabs {
+slide-triage-tabs,
+revalidation-switch,
+view-mode-buttons,
+source-filter,
+severity-mode-switch .severity-mode-chips,
+annotation-filter,
+severity-chips {
   display: inline-flex;
   height: 30px; box-sizing: border-box;
   border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
@@ -439,21 +323,10 @@ slide-triage-tabs {
   &:not(:has(.toolbar-export-btn, annotation-filter, revalidation-switch)) { display: none; }
 }
 
-/* The shared mode-switch supplies the App control. This wrapper joins it
-   to the detail/upstream buttons in a single bordered pill. */
-/* ONE pill holding both halves — the switch and the detail icon flush
-   against it, divided the way `source-filter` and the severity lens
-   divide their chips. The border and the rounding live here rather
-   than on the buttons: two bordered boxes at the end of the row read
-   as two unrelated controls, and this is one decision in two parts.
-   The detail half requires an available App switch. Conflicts replace
-   both halves with a button using the same shell. */
-revalidation-switch {
-  display: inline-flex; align-items: center;
-  height: 30px; box-sizing: border-box;
-  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
-  overflow: hidden;
-}
+/* One pill for the App switch and its detail / upstream icons, divided as
+   `source-filter`'s chips: one decision in two parts. Conflicts replace
+   both halves with a button in the same shell. */
+revalidation-switch { align-items: center; }
 .revalidation-toggle {
   height: 100%;
 
@@ -470,17 +343,11 @@ revalidation-switch {
 
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
 }
-/* The detail icon — stacked plates, lit when the app view is showing
-   the rows the pass re-rated (revalidation-switch.js). An icon chip in
-   the `annotation-chip` mould rather than a second switch: what it
-   changes is how much of one view is drawn, not what the view is
-   about.
-
-   DISABLED, not dropped, while the layer is off — there is nothing to
-   unfold in the code view, but a control that vanishes under the click
-   that made it useless drags the width of the row after it. Faded and
-   inert, and it lights again when the layer comes back. */
-.revalidation-detail {
+/* The detail icon (revalidation-switch.js): lit while the app view shows
+   the rows the pass re-rated. Disabled rather than removed while the layer
+   is off, so the row's width doesn't change under the click. */
+.revalidation-detail,
+.revalidation-upstream {
   display: inline-flex; align-items: center; justify-content: center;
   width: 30px; height: 100%; box-sizing: border-box;
   padding: 0;
@@ -492,35 +359,18 @@ revalidation-switch {
 
   &:hover:not(:disabled) { color: var(--text); background: rgb(from var(--text) r g b / .06); }
   &.on { color: var(--accent); background: var(--surface-active); }
-  &:disabled { opacity: .4; cursor: default; }
+  &:disabled { opacity: .4; }
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
 }
-/* The upstream icon — a dependency branch, lit while the list is the
-   dependencies' own code (revalidation-switch.js). Same chip as the
-   detail glyph beside it. It is available with the App layer and disabled
-   when the reader has explicitly switched to code mode, because the code
-   view's dependency filter already covers the same scope. */
+/* The upstream icon: lit while the list is the dependencies' own code;
+   disabled in explicit code mode, whose dependency filter covers it. */
 .revalidation-upstream {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 30px; height: 100%; box-sizing: border-box;
-  padding: 0;
-  background: transparent;
-  border: none;
-  color: var(--muted);
-  cursor: default;
   transition: background .12s, color .12s;
 
-  /* Divided from the half before it the way the switch divides from the
-     detail glyph — and only when there IS one, so a lone upstream chip
-     keeps the shell's own border and nothing more. */
+  /* Divided from a half before it, if any. */
   &:not(:first-child) { border-left: 1px solid var(--border); }
-  &:hover:not(:disabled) { color: var(--text); background: rgb(from var(--text) r g b / .06); }
-  &.on { color: var(--accent); background: var(--surface-active); }
-  &:disabled { opacity: .4; cursor: default; }
-  &:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
 }
-/* No buckets to show → the component renders nothing and tags itself
-   `is-empty`; drop the pill chrome so an empty bordered box doesn't linger. */
+/* No buckets: the component renders nothing and tags itself `is-empty`. */
 triage-selector.is-empty { display: none; }
 .triage-state-btn {
   background: transparent; border: none; color: var(--muted);
@@ -533,55 +383,45 @@ triage-selector.is-empty { display: none; }
   &:not(:last-child) { border-right: 1px solid var(--border); }
   &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
   &.active { background: var(--surface-active); }
-
 }
 .triage-state-btn.active.triage-state-deleted    { color: var(--critical); }
-.triage-state-btn.active.triage-state-fixed      { color: var(--green, #4ade80); }
-.triage-state-btn.active.triage-state-inprogress { color: var(--warning, #d97706); }
+.triage-state-btn.active.triage-state-fixed      { color: var(--green); }
+.triage-state-btn.active.triage-state-inprogress { color: var(--warning); }
 .triage-state-btn.active.triage-state-invalid    { color: var(--muted); }
-.triage-state-btn.active.triage-state-ignored    { color: var(--accent, #2563eb); }
+.triage-state-btn.active.triage-state-ignored    { color: var(--accent); }
 
-/* `<entity-search>` is the lone holdout that still needs
-   `display: contents` — its template is just a bare `<input>`, so
-   the host has to stay layout-transparent to let the input be a
-   direct flex child of the page toolbar. Every other component
-   host in this family owns its layout via an element selector
-   rule above (view-mode-buttons, triage-selector, slide-triage-tabs,
-   triage-filter, severity-chips, source-filter, toolbar-search,
-   conf-filter, analyzer-select, repo-filter, revalidate-filter,
-   findings-sort, entity-sort). */
+/* `display: contents`: the host's template is a bare <input> that must be a
+   direct flex child of the page toolbar. */
 entity-search { display: contents; }
 
-view-mode-buttons {
-  display: inline-flex;
-  /* Pinned to 30px so the View chooser matches the rest of the
-     toolbar controls (.sev-chip / triage-filter / toolbar-search
-     — all 30px). Without this the group measured ~27px
-     from button intrinsic + group border, which exposed as a step
-     against the 30px chip row. */
-  height: 30px; box-sizing: border-box;
-  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
-  overflow: hidden;
+/* The segmented controls' chips: flush buttons, a rule between them. */
+view-mode-buttons .view-mode-btn,
+source-filter .source-chip,
+severity-mode-switch .severity-mode-chip,
+annotation-filter .annotation-chip,
+severity-chips > .sev-chip {
+  display: inline-flex; align-items: center;
+  background: transparent; border: none; color: var(--muted);
+  transition: background .12s, color .12s;
 
+  &:not(:last-child) { border-right: 1px solid var(--border); }
+  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+}
+
+view-mode-buttons {
   & .view-mode-btn {
-    background: transparent; border: none; color: var(--muted);
-    /* Slightly bumped from .2rem .42rem / 14px icons so the trio
-       reads as a primary toolbar control without dominating it.
-       Icons are 16px (see VIEW_ICONS in render.js). */
+    /* Icons are 16px (VIEW_ICONS in render.js). */
     padding: .28rem .5rem;
-    display: inline-flex; align-items: center; justify-content: center;
-    transition: background .12s, color .12s;
+    justify-content: center;
     font-family: inherit;
 
-    &:not(:last-child) { border-right: 1px solid var(--border); }
-    &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
     &.active { color: var(--accent); background: var(--surface-active); }
     & svg { display: block; }
   }
 }
 
-/* Paper marks selected icon controls with the same ring as its filters.
-   The inherited property also reaches the Findings chooser inside a graph. */
+/* Paper rings selected icon controls as its filters; the property also
+   reaches the Findings chooser inside a graph. */
 :is(.revalidation-detail, .revalidation-upstream, .view-mode-btn) { position: relative; }
 :is(.revalidation-detail.on, .revalidation-upstream.on, .view-mode-btn.active,
     .g2-layout-tabs button[aria-pressed='true'], .activity-views button[aria-pressed='true'])::before {
@@ -596,36 +436,19 @@ view-mode-buttons {
   pointer-events: none;
 }
 
-/* Source filter — two flush toggle chips ("Sources" / "Dependencies")
-   in a bordered shell, same shape as the view-mode group above so
-   the two segmented controls in the toolbar read as siblings.
-   Single-select with toggle-off: at most one chip is active, and
-   re-clicking the active chip clears the Set (no filter). See
-   filters.js — the predicate is gated on `size === 1`. Active
-   chip carries the accent recolor. */
+/* Source filter: "Sources" / "Dependencies", single-select with toggle-off
+   (filters.js gates on `size === 1`). */
 source-filter {
-  display: inline-flex;
-  height: 30px; box-sizing: border-box;
-  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
-  overflow: hidden;
-
   & .source-chip {
-    background: transparent; border: none; color: var(--muted);
     padding: 0 .55rem;
-    display: inline-flex; align-items: center;
-    transition: background .12s, color .12s;
     font-family: inherit; font-size: .75rem;
 
-    &:not(:last-child) { border-right: 1px solid var(--border); }
-    &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
     &.active { color: var(--accent); background: var(--surface-active); }
   }
 }
 
-/* Corrected / Original severity lens — a muted `Severity` label followed
-   by a 2-chip bordered pill, mirroring `source-filter`'s shell. Single
-   chip always active (no empty state), so no toggle-off recolor needed
-   beyond `.active`. Governs what the severity chips to its right count. */
+/* Corrected / Original severity lens: a label and a 2-chip pill, one always
+   active. Governs what the severity chips to its right count. */
 severity-mode-switch {
   display: inline-flex; align-items: center; gap: .4rem;
   height: 30px; box-sizing: border-box;
@@ -633,43 +456,22 @@ severity-mode-switch {
   & .severity-mode-label {
     color: var(--muted); font-size: .7rem; font-weight: 500; letter-spacing: .04em;
   }
-  & .severity-mode-chips {
-    display: inline-flex; height: 30px; box-sizing: border-box;
-    border: 1px solid var(--border); border-radius: var(--ui-radius, 4px); overflow: hidden;
-  }
   & .severity-mode-chip {
-    background: transparent; border: none; color: var(--muted);
     padding: 0 .55rem;
-    display: inline-flex; align-items: center;
-    transition: background .12s, color .12s;
     font-family: inherit; font-size: .75rem; cursor: default;
 
-    &:not(:last-child) { border-right: 1px solid var(--border); }
-    &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
     &.active { color: var(--accent); background: var(--surface-active); }
   }
 }
 
-/* Shared shell for annotation filters and the separate row filters next
-   to App mode. Same pill chrome as source-filter. */
+/* Annotation filters and the row filters beside App mode. */
 annotation-filter {
-  display: inline-flex;
-  height: 30px; box-sizing: border-box;
-  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
-  overflow: hidden;
-
   & .annotation-chip {
     position: relative;
-    background: transparent; border: none; color: var(--muted);
     padding: 0 .45rem;
-    display: inline-flex; align-items: center;
-    transition: background .12s, color .12s;
     cursor: default;
 
-    &:not(:last-child) { border-right: 1px solid var(--border); }
-    &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
-    /* Tri-state: 'with' = accent (filled flag cloth); 'without' = accent
-       with a diagonal strike marking "exclude". */
+    /* Tri-state: 'with' accent, 'without' accent with a strike. */
     &.sel-with,
     &.sel-without { color: var(--accent); background: var(--surface-active); }
     &.sel-with .flag-cloth { fill: var(--accent); }
@@ -687,39 +489,17 @@ annotation-filter {
   display: flex; gap: .75rem; flex-wrap: wrap; align-items: center;
 }
 
-/* Search field — ported from the DeepView.0 prototype's `.field.grow`
-   pattern. The wrapper paints `var(--bg)` (a notch darker than the
-   toolbar's `var(--surface)`) so the field reads as a sunken pill;
-   the input inside is borderless + transparent so it sits on the
-   wrapper's bg without stacking a second background.
-   The generic `.toolbar input[type="text"]` rule above (specificity
-   0,2,1) would otherwise paint `var(--bg)` + a border + padding on this
-   input, stacking a second border inside the host pill (with extra padding
-   between input and pill). The reset below qualifies the host with its
-   always-present `[kind]` attribute (0,2,2) so it outweighs that generic
-   rule wherever `<toolbar-search>` is used.
-   `flex: 1 1 14rem` mirrors the prototype's `flex: 1 1 220px` so
-   the field expands when there's room and stays at a comfortable
-   minimum when the row gets cramped. */
-/* Search field + result-count pair, grouped as one flex item of
-   the parent `.toolbar-row`. When the row needs to wrap (narrow
-   viewport, details panel open), this whole pair flips to
-   `flex-basis: 100%` and breaks to a new line together — the
-   search bar grows inside this wrapper and the count rides its
-   right edge, instead of the count clinging to the chips' line
-   and the search dropping alone. */
+/* Search field + result count as one flex item: when the row wraps the pair
+   breaks to its own line together. */
 .search-row {
   display: inline-flex; align-items: center; gap: .65rem;
   flex: 1 1 14rem; min-width: 12rem;
 }
 
-/* The `<toolbar-search>` element host (findings + Files tabs) and the
-   `.toolbar-search` shell class share this rule. The class form is used by
-   the graph topbar's path/package filter (view/graph/render.js), which can't
-   be the `<toolbar-search>` component — it's wired to the canvas dim
-   predicate with its own `graph2.pathFilter` state + clear button — but still
-   wants the same field look. The graph inlines this file into its shadow DOM
-   (graph-layout.js), so the class picks up the shell there. */
+/* The `<toolbar-search>` host and the `.toolbar-search` class (the graph's
+   path filter, which isn't the component but wants its look; graph-layout.js
+   inlines this file into its shadow DOM). A sunken pill with a borderless
+   input. */
 toolbar-search,
 .toolbar-search {
   display: inline-flex; align-items: center; gap: .5rem;
@@ -729,22 +509,16 @@ toolbar-search,
   background: var(--bg);
   border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
 
-  /* `:has(input:focus)` not `:focus-within` — the latter would drag the
-     accent border on when the trailing negate toggle takes focus. */
+  /* `:has(input:focus)`, not `:focus-within`: the negate toggle's focus
+     shouldn't ring the field. */
   &:has(input:focus) { border-color: var(--accent); }
 
-  /* Direct child only — the prefix lens. The negate button's icon
-     (a deeper svg) inherits its own color so the active state recolors. */
+  /* Direct child only: the negate button's icon colors itself. */
   & > svg { color: var(--muted); flex-shrink: 0; }
 
-  /* `&[kind]` (always present on the `<toolbar-search>` element host —
-     kind="findings"/"files") lifts this to specificity 0,3,1 — the `&` is the
-     `toolbar-search, .toolbar-search` list above, so `:is(…)` contributes the
-     class column — which beats the generic `.toolbar input[type='text']`
-     (0,2,1); without it the input keeps a second border + padding. The
-     `.toolbar-search` graph path-filter lives in the graph shadow DOM (not
-     inside a `.toolbar`), so there's no generic rule to outweigh — its input
-     rides the class form below. */
+  /* `&[kind]` (always on the host) lifts this to 0,3,1 to beat the generic
+     `.toolbar input[type='text']` (0,2,1), which would add a border and
+     padding. The graph's `.toolbar-search` isn't inside a `.toolbar`. */
   &[kind] input[type='text'],
   &.toolbar-search input[type='text'] {
     flex: 1; min-width: 0;
@@ -759,10 +533,8 @@ toolbar-search,
   }
 }
 
-/* Findings-search negate toggle — borderless icon button at the field's
-   right edge, shown only while the query is non-empty. Same shape +
-   recolor as `.sidebar-view-btn` (reports search) and
-   `.bundle-code-search-mode` (bundle code tree search). */
+/* Negate toggle at the field's end, shown with a query; as
+   `.sidebar-view-btn` and `.bundle-code-search-mode`. */
 .search-negate-btn {
   flex-shrink: 0;
   width: 20px; height: 20px;
@@ -781,46 +553,17 @@ toolbar-search,
   }
 }
 
-/* Below 1200px the severity-chips + triage-filter + search field
-   strip is too cramped to fit on one line — pushing the search-row
-   wrapper (search + result count, grouped in render.js) to
-   `flex-basis: 100%` makes it claim a full row and wrap as a unit.
-   Above 1200px the strip stays inline. */
+/* Below 1200px the search pair takes a full row, wrapping as a unit. */
 @media (width <= 1200px) {
   .toolbar-row.sev-row .search-row { flex-basis: 100%; }
 }
 
-/* The toolbar takes the full width of every findings view now — the
-   readability cap sits on the list below it (report.css), not on the
-   wrapper around both — so the strip no longer needs pulling back to
-   1200px when the table's details panel widens the wrapper. */
-
-/* Severity-filter chips — segmented control matching
-   `triage-selector` / `source-filter` so the three filter groups
-   in the toolbar read as siblings. Single bordered, rounded shell;
-   flush buttons inside divided by `border-right` on every chip
-   except the last. Each chip carries a small severity-colored
-   swatch + the tier name + the count as plain tabular-num text
-   (the previous bordered count badge inside the bordered chip
-   read as a box-in-a-box). Active chip takes a low-alpha tint of
-   its own severity color so the highlighted tier stays visually
-   distinguishable from the rest of the group. */
-severity-chips {
-  display: inline-flex;
-  height: 30px; box-sizing: border-box;
-  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
-  overflow: hidden;
-}
+/* Severity chips: a swatch, the tier and its count; the active chip takes a
+   tint of its severity. */
 severity-chips > .sev-chip {
-  display: inline-flex; align-items: center; gap: .35rem;
-  background: transparent; border: 0;
+  gap: .35rem;
   padding: 0 .4rem;
-  color: var(--muted);
   font-family: inherit; font-size: .8rem;
-  transition: background .12s, color .12s;
-
-  &:not(:last-child) { border-right: 1px solid var(--border); }
-  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
 
   & .sd {
     width: 8px; height: 8px; border-radius: 2px;
@@ -829,20 +572,12 @@ severity-chips > .sev-chip {
   }
 }
 
-/* Shared count bubbles for the severity and triage state filters, and a
-   team's header tabs. */
+/* Count bubbles of the severity and triage filters and a team's tabs: in
+   flow, so a chip's width follows its digits, lifted to the chip's top edge. */
 :is(.sev-chip, .triage-state-btn, .team-slide-tab) {
-  /* Count badge — same 8.5px pill as `.triage-filter .count`, but
-     kept in flex flow (not absolute) so the chip's width tracks the
-     count's digit count: a 1-digit `8` chip is narrower than a
-     3-digit `888` chip, both with the same trailing breathing room.
-     `align-self: flex-start` lifts the badge to the chip's top edge
-     (the rest of the row stays vertically centered) so the count
-     reads as the corner indicator the mark-color filter uses. */
   & .n {
     align-self: flex-start;
-    /* Negative side margins pull the badge tight to the label on
-       the left and out toward the chip's right edge. */
+    /* Pulled tight to the label and out toward the chip's edge. */
     margin: 1px -5px 0;
     color: var(--muted);
     font-variant-numeric: tabular-nums;
@@ -862,13 +597,8 @@ severity-chips > .sev-chip {
 severity-chips > button.sev-chip {
   &.active { color: var(--text); }
 
-  /* Per-severity hue on the swatch (always visible) + a wash on the
-     active chip's background so the highlight echoes the severity
-     color without the chip needing its own border. `.25` alpha — the
-     prior `.12` was barely visible for the muted-gray `--low`
-     against the dark page bg; .25 keeps vivid colors (critical /
-     high / info) tasteful while lifting the gray-family tiers
-     (low / bug / high-bug) into a clearly active band. */
+  /* Swatch in the severity's hue; the active chip's wash at .25 alpha, enough
+     to lift the gray tiers (low, bug) into a visible band. */
   &.critical      .sd { background: var(--critical); }
   &.high          .sd { background: var(--high); }
   &.medium        .sd { background: var(--medium); }
@@ -886,16 +616,9 @@ severity-chips > button.sev-chip {
   &.informational.active { background: rgb(from var(--info)     r g b / .25); }
 }
 
-/* Mark-color filter pill — ported from the DeepView.0 prototype's
-   `.triage-filter`. One pill with five compact circle buttons for
-   `none / red / blue / green / gray`; clicking toggles
-   `state.filterColors`. The active button gets a faint backdrop +
-   1px ring and the inner circle fills with the color (the inactive
-   state is just the colored ring). The unmarked button uses a
-   dashed ring to read as "no fill = no color". Per-button counts
-   sit as a small chip in the upper-right corner of the circle.
-   Colors match the per-row `<color-marker>` palette so the same
-   hue means the same thing across the chrome. */
+/* Mark-color filter: none / red / blue / green / gray circles toggling
+   state.filterColors, in the `<color-marker>` palette. Active fills the
+   circle; "none" has a dashed ring; counts sit at the corner. */
 triage-filter {
   display: inline-flex; align-items: center;
   background: var(--surface);
