@@ -73,9 +73,14 @@ export function renderTreeView(treeData, findingCounts) {
             const issues = totalFindings(findingCounts.get(file))
             const isSel = file === selected
             const sizeLabel = formatBytes(treeData[file].size)
+            // A disclosure for the details panel: Enter / Space click it
+            // (events.js, key-click.js).
             return html`<div
               class=${`tree-table-row${isSel ? ' selected' : ''}${issues === 0 ? ' clean' : ''}`}
               data-tree-select=${file}
+              role="button"
+              tabindex="0"
+              aria-expanded=${isSel ? 'true' : 'false'}
             >
               <span class="tree-table-name" data-tooltip-truncated data-tooltip=${file}>${file}</span>
               ${sevChips(file) ?? html`<span class="tree-table-clean-marker">—</span>`}

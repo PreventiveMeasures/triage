@@ -34,6 +34,10 @@
 :host(.mark-green) .row { background: var(--mark-green-bg); }
 :host(.mark-gray) .row  { background: var(--mark-gray-bg); }
 :host(.has-conflict) .row { outline: 2px dashed var(--accent); outline-offset: -2px; }
+/* The keyboard focus ring (the host is a tab stop, finding-table.js), on
+   `.row` as the other rings are; fainter than `.selected`'s, which wins. */
+:host(:focus-visible) { outline: none; }
+:host(:focus-visible) .row { outline: 2px solid rgb(from var(--accent) r g b / .5); outline-offset: -2px; }
 :host(.selected) .row { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* Deep-link arrival ring (keyframes in finding-marks.css): an inset shadow,

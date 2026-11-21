@@ -27,6 +27,7 @@ import { findingLinkFor } from './finding-link.js'
 import { revealFindingInReport } from './finding-link-nav.js'
 import { closeLinksPreview, getLinksPreview, openLinksPreview } from './links-preview.js'
 import { FOCUS_SPLIT_STEP, nudgeFocusSplit, resetFocusSplit, startFocusSplitDrag } from './focus-splitter.js'
+import { keyClickTarget } from './key-click.js'
 import { downloadReportsAsMarkdown, reportsToMarkdown } from './markdown-export.js'
 import { bundleToCycloneDx, bundleToSpdx, sbomBaseName } from './sbom.js'
 import { bundleSourceLines, bundleSourcesAsMap } from '../../common/bundle-sources.js'
@@ -64,6 +65,10 @@ function runClicks(table, e) {
   }
   return false
 }
+
+// A click ending a text selection isn't a pick. A keyboard click (Enter or
+// Space, key-click.js; `detail` 0) ends none, whatever is selected elsewhere.
+const endsSelection = (e) => e.detail !== 0 && Boolean(window.getSelection?.()?.toString())
 
 const toggleIn = (set, value) => { if (!set.delete(value)) set.add(value) }
 const onFindingsView = () => state.currentView === 'findings' || state.currentView === 'files'
@@ -1311,9 +1316,8 @@ const KANBAN_CLICKS = [
   [near('[data-kanban-nav]'), (el) => { navigateKanban(el.dataset.kanbanNav === 'next' ? 1 : -1) }],
   // A card in the dialog's rail. Re-clicking the open one keeps it: in the
   // rail the active card marks position, it isn't what the dialog came from.
-  [near('[data-kanban-select]'), (el) => {
-    // A click ending a text selection isn't a pick.
-    if (window.getSelection?.()?.toString()) return
+  [near('[data-kanban-select]'), (el, e) => {
+    if (endsSelection(e)) return
     if (el.dataset.gid) setKanbanPopoverGid(el.dataset.gid)
   }],
   // A compact card's action buttons run their own delegates; a read-only fix
@@ -1321,8 +1325,8 @@ const KANBAN_CLICKS = [
   [near('.kanban-action:not(.kanban-fix-note)'), () => {}],
   // A board card opens, switches or (the open one) closes the modal. The
   // backdrop is pointer-events: none, so this also fires for a card behind it.
-  [near('.kanban-card[data-kanban-source]'), (el) => {
-    if (window.getSelection?.()?.toString()) return
+  [near('.kanban-card[data-kanban-source]'), (el, e) => {
+    if (endsSelection(e)) return
     const gid = el.dataset.gid
     if (gid) setKanbanPopoverGid(state.kanbanPopoverGid === gid ? null : gid)
   }],
@@ -1445,12 +1449,23 @@ function navigateFocus(direction) {
 const FOCUS_CLICKS = [
   [near('[data-focus-nav]'), (el) => { navigateFocus(el.dataset.focusNav === 'next' ? 1 : -1) }],
   // A queue card swaps the centered finding (not on a text-selecting click).
-  [near('.focus-side-card[data-focus-select]'), (el) => {
-    if (window.getSelection?.()?.toString()) return
+  [near('.focus-side-card[data-focus-select]'), (el, e) => {
+    if (endsSelection(e)) return
     if (el.dataset.gid) setFocusGid(el.dataset.gid)
   }],
 ]
 report.addEventListener('click', (e) => { runClicks(FOCUS_CLICKS, e) })
+
+// The compact cards, table rows and Files rows are focusable but wired for
+// clicks (the tables above, `<finding-row>`'s `row-select`, REPORT_CLICKS's
+// `data-tree-select`), so Enter and Space click them (key-click.js says
+// when). Space would scroll the page; a held key clicks once.
+report.addEventListener('keydown', (e) => {
+  const el = keyClickTarget(e)
+  if (!el) return
+  e.preventDefault()
+  if (!e.repeat) el.click()
+})
 
 // The focus view's pane divider (focus-splitter.js): a primary-button drag
 // resizes the split, a double-click restores 1:1.

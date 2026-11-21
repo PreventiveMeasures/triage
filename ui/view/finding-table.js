@@ -24,11 +24,13 @@ class FindingTable extends LitElement {
 
   // Keyed by gid, so a re-sort or filter moves the rows rather than
   // handing each a neighbour's group: an unchanged row skips re-rendering.
+  // A row is a tab stop, its Enter / Space a click (events.js, key-click.js).
   render() {
     return html`${repeat(
       this.items ?? [],
       (g) => groupKey(g),
       (g) => html`<finding-row
+        tabindex="0"
         .group=${g}
         ?selected=${groupKey(g) === this.selectedGid}
       ></finding-row>`,
