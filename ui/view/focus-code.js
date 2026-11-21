@@ -19,12 +19,30 @@ import { revealCitedLines } from './reveal-cited.js'
 
 // integrity → { sources, packageFiles, packageDirs, imports, formats, loading, error }:
 // the bundles read last, KEPT_BUNDLE_SOURCES of them, each holding all its
-// files, those still loading kept too; one let go is read again once asked.
+// files, those still loading and those shown kept too, however many; one let
+// go is read again once asked.
 const KEPT_BUNDLE_SOURCES = 4
 const sourcesCache = new Map()
-// Past KEPT_BUNDLE_SOURCES, the least recently read let go, its files' colors with it.
+// The bundles the last pass of reads read (a render's: those its previews and
+// panel show), and those the pass under way reads.
+let shownSources = new Set()
+let showingSources = null
+function readSources(integrity) {
+  if (!showingSources) {
+    showingSources = new Set()
+    queueMicrotask(() => {
+      shownSources = showingSources
+      showingSources = null
+    })
+  }
+  showingSources.add(integrity)
+  return readKept(sourcesCache, integrity)
+}
+// Past KEPT_BUNDLE_SOURCES, the least recently read let go, its files' colors
+// with it; none shown, which a repaint would read again at once.
 function trimSources() {
-  trimKept(sourcesCache, KEPT_BUNDLE_SOURCES, entry => entry.loading, integrity => {
+  const held = (entry, integrity) => entry.loading || shownSources.has(integrity) || showingSources?.has(integrity)
+  trimKept(sourcesCache, KEPT_BUNDLE_SOURCES, held, integrity => {
     sourcesCache.delete(integrity)
     for (const key of [...highlightCache.keys()]) if (key.startsWith(`${integrity}\0`)) highlightCache.delete(key)
   })
@@ -272,7 +290,7 @@ function managedSource(reportId, file, kick) {
 export function bundleSource(integrity, file, { kick = true, reportId = null } = {}) {
   if (reportId) return managedSource(reportId, file, kick)
   if (isManagedUiMode()) return null
-  const cached = readKept(sourcesCache, integrity)
+  const cached = readSources(integrity)
   if (!cached) {
     if (!kick) return null
     // First sight of this integrity — kick the load and report
