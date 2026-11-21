@@ -119,9 +119,10 @@ A pull request is read where it changes a lockfile or a `stasis.config.json`, as
 
 A build can take minutes, so no answer waits for one:
 
-- it is started the first time it is asked for at a commit, behind the answer, which says Stasis is still building (**Stasis building…**) and fails nothing yet; the page asks again every 30 seconds;
-- builds are made one at a time, in the worker bundle creation uses, and give way to a bundle being created; one that finds the worker busy is started when next asked for;
-- a build that ends within a minute of starting is followed at once by the one asked for last meanwhile, so a pull request's head and merge base are built back to back; after a longer one, the next starts when the page asks again;
+- it is asked for the first time an answer finds it missing at a commit, once that answer's review is known, and built behind it; the answer says Stasis is still building (**Stasis building…**) and fails nothing yet; the page asks again every 30 seconds;
+- builds are made one at a time, in the worker bundle creation uses, and give way to a bundle being created;
+- the next build is the one of highest priority waiting: one of a `stasis.config.json` whose directory has a selected lockfile, by how many versions that lockfile adds in the pull request that want reviews, so the pull requests where Stasis can spare the most reviews come first; the rest, and the default branch's, after, the one asked for last first;
+- a build that ends within a minute of the first of a run is followed at once by the next; after a longer one, or one that found the worker busy, the next starts when the page asks again (every 30 seconds while it shows one); one not asked for in 2 minutes is dropped;
 - what a build downloads from npm (tarballs and version documents) is kept on disk for the builds after it: in the server's cache directory, or, where there is none, as on Vercel, in the instance's temporary directory for as long as that instance lives, shared with bundle creation, up to 512 MiB, emptied when found past that or when its disk is nearly full (Vercel's holds 500 MB);
 - what is built is kept in the database for a month by the repository, the commit and the file's path, so each commit is built once;
 - a pull request's builds tell Stasis the branch each commit is of (its `branch` option), its base branch for the merge base and its head branch where that is the repository's own, so it needn't list tags and branches to hold the commit to the repository's history.

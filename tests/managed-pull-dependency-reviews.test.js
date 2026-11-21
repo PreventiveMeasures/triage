@@ -1218,6 +1218,40 @@ test('a team\'s Dependencies read each open pull request\'s by the commits its p
   }
 })
 
+test('the Stasis builds waiting are made the one of highest priority first: a pull request\'s whose lockfile beside its stasis.config.json adds the most versions wanting reviews', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const users = await people(db)
+  const behind = []
+  const send = api(db, users, { track: work => { behind.push(work) } })
+  const entries = JSON.stringify({ entries: { 'index.js': {} } })
+  const files = { ...PULL.files, [head]: { ...PULL.files[head], 'stasis.config.json': entries, 'app/stasis.config.json': entries } }
+  github(t, { ...PULL, files, graphql: body => body.query.includes('defaultBranchRef') ? { repository: { defaultBranchRef: { target: { oid: head } } } } : {} })
+  // The first build holds the slot till it is let go; the rest are built at once.
+  const builds = []
+  let release
+  const blocked = new Promise(resolve => { release = () => resolve([]) })
+  buildLockfile = (leases, request) => { builds.push(request.input); return builds.length === 1 ? blocked : Promise.resolve([]) }
+  t.after(() => { buildLockfile = noBuild })
+  const setting = paths => send('/api/admin/repositories/dependency-review', { body: { repoId: 1, enabled: true, required: 1, since: null, lockfiles: { mode: 'include', paths } } })
+  const branch = () => send('/api/admin/repositories/branch-dependencies?repoId=1')
+  // The default branch's stasis.config.json built first, holding the slot.
+  await setting(['stasis.config.json'])
+  await branch()
+  await new Promise(resolve => { setImmediate(resolve) })
+  assert.equal(builds.length, 1)
+  // Meanwhile, the pull request's, then the default branch's again, which asks for app's at its head last.
+  await setting(['app/stasis.config.json', 'package-lock.json', 'stasis.config.json'])
+  const pull = await send(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId: '1', number: '5', review: '1' })}`)
+  assert.deepEqual(pull.body.lockfiles[0].added.map(pkg => [pkg.name, pkg.reviews]), [['left-pad', 0], ['ms', 0]], 'two versions beside its stasis.config.json want reviews')
+  await branch()
+  release()
+  while (behind.length > 0) await behind.shift()
+  assert.deepEqual(builds.map(({ commit, config: path }) => `${path}@${commit === head ? 'head' : commit === mergeBase ? 'base' : commit}`),
+    ['stasis.config.json@head', 'stasis.config.json@base', 'app/stasis.config.json@head', 'app/stasis.config.json@base'],
+    'the one under way; then its merge base\'s, beside the lockfile adding two wanting reviews; then app\'s, beside none, the one asked for last first')
+})
+
 test('a page of open pull requests names the branches each one\'s commits are of, its head\'s where it is no fork\'s; a build of its merge base is told its base\'s', async t => {
   const node = (number, more) => ({ number, title: `Pull ${number}`, state: 'OPEN', baseRefOid: tip, headRefOid: head, files: { totalCount: 0, nodes: [] }, ...more })
   const nodes = [node(5, { baseRefName: 'main', headRefName: 'bump-ms', isCrossRepository: false }), node(6, { baseRefName: 'release/1.2', headRefName: 'patch-1', isCrossRepository: true }),

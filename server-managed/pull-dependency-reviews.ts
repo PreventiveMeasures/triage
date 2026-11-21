@@ -262,8 +262,9 @@ export function heldDependencies<T extends PullDependencies>(told: T, scope: Loc
 // read (`commentsFailed`), and that reviews count by comments alone, those
 // published here not (`byComments`, where the host reads them), and that
 // they name bases (`reviewedBases`), and how many versions across its directories want
-// reviews, of those it adds (`toReview`) and the rest (`unreviewed`), and
-// can't be reviewed (`unsupported`), each once; how many the reviewed dependencies failed to
+// reviews, of those it adds (`toReview`, and onto `wantedIn`, each
+// directory's by its paths, all of them, not those told alone) and the rest
+// (`unreviewed`), and can't be reviewed (`unsupported`), each once; how many the reviewed dependencies failed to
 // answer (`unasked`), and whether they are registered (`reviewedDependencies`,
 // the commit reviewed since then none); and where the baseline couldn't be
 // read, why (`baselineError`), every version then wanting its reviews, or
@@ -274,8 +275,9 @@ export function heldDependencies<T extends PullDependencies>(told: T, scope: Loc
 // lockfiles the review holds to (`lockfiles`, lockfile-scope.ts, told in its
 // terms where not every one) are left out (heldDependencies).
 export async function reviewedDependencies(told: PullDependencies, state: RepoReviewState | null,
-  { baseline = null, baselineUnread = [], baselineError = null, reviewed = null, commentReviews = null, namedBases = new Map() }: { baseline?: Set<string> | null
-    baselineUnread?: string[]; baselineError?: string | null; reviewed?: ReviewedDependencies | null; commentReviews?: CommentReviews | null; namedBases?: Map<string, ReviewedBase> } = {}) {
+  { baseline = null, baselineUnread = [], baselineError = null, reviewed = null, commentReviews = null, namedBases = new Map(), wantedIn = new Map() }: { baseline?: Set<string> | null
+    baselineUnread?: string[]; baselineError?: string | null; reviewed?: ReviewedDependencies | null; commentReviews?: CommentReviews | null; namedBases?: Map<string, ReviewedBase>
+    wantedIn?: Map<string[], number> } = {}) {
   const scope = state?.lockfiles ?? EVERY_LOCKFILE
   const answered = heldDependencies(told, scope)
   const baseless = told.baseless === true
@@ -338,6 +340,7 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
   }, baseless))
   const unread = baselineUnread.filter(path => heldTo(scope, path))
   const listed = dirs.filter(dir => 'unreviewed' in dir)
+  for (const dir of listed) wantedIn.set(dir.paths, distinct([dir.toReview], versionKey))
   return { ...answered, cut, lockfiles: dirs.map(dir => 'unreviewed' in dir ? capped(dir) : dir), review: { required: state.required,
     since: reviewed ? null : state.since, canReview: state.canReview, ...reviewed ? { reviewedDependencies: true } : {}, ...reviewed?.base ? { reviewedBases: true } : {},
     ...reviewed?.parseComments ? { byComments: true } : {},
