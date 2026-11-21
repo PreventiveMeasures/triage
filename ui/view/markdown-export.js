@@ -1,20 +1,14 @@
-// The "Download report" button's adapter: reads the viewer — which
-// findings are on screen, what the reader wrote on them, where their
-// locations link, which report each came from — and hands the plain
-// facts to the report library's writer (@preventive/report/src/write-md.js). Nothing
-// about markdown lives here.
+// The "Download report" button's adapter: the viewer's facts (the findings
+// on screen, the reader's annotations, where locations link, each one's
+// report) handed to the report library's writer (@preventive/report
+// write-md.js); nothing about markdown lives here.
 //
-// The set is the on-screen one: the active triage bucket (live, or a
-// trash bucket) narrowed by the toolbar filters, over the MERGED groups
-// the views render (a workspace's cross-report duplicates as one
-// finding with several cases), in the current sort order — so the file
-// matches what the reader sees, and what the confirmation dialog
-// counted: export-summary.js supplies both the bucket and the filter
-// descriptions, so the dialog and the document's header say the same
-// thing. When that dialog dropped a filter from the export, the relaxed
-// selection is installed as a filter override around this call
-// (events.js), and the header describes that selection — the one the
-// file was actually written under — rather than the toolbar's.
+// The set is the on-screen one — the triage bucket narrowed by the
+// filters, over the MERGED groups, in the current sort — with the bucket
+// and filter descriptions from export-summary.js, so the file, its header
+// and the confirmation dialog agree. A filter that dialog dropped is
+// installed as an override around this call (events.js), and the header
+// describes the selection the file was written under.
 
 import { listWorkspaces, state } from '#client/index.js'
 import { downloadBlob } from './dom.js'
@@ -24,21 +18,16 @@ import { commitUrl, commonPrefix, evidenceUrl, findingUrl, hasRevalidateField, h
 import { activeTabFor, findingRepoTarget, isIgnored, sortTabs, triageEntry, underlyingFindingsShown } from './group.js'
 import { writeMarkdown } from '@preventive/report'
 
-// The bucket's groups the selection in force lets through, in on-screen
-// order, each group's cases in the order the card's tab strip shows
-// them (the revalidation row first, then the annotated ones, then by
-// severity and confidence — group.js sortTabs), so the document's
-// primary case is the card's. Optionally keep only the card's active
-// sample, including its default selection when no tab was picked.
+// The bucket's groups the selection lets through, in on-screen order, each
+// one's cases in its card's tab order (group.js sortTabs), so the
+// document's primary case is the card's; or only the card's active one.
 function visibleGroups(bucket, oneSamplePerGroup) {
   return applySorting(applyFilters(bucket)).map((g) => oneSamplePerGroup ? [activeTabFor(g)] : sortTabs(g))
 }
 
-// The answers only the viewer has. Links resolve the way the card's
-// do (format.js findingUrl / evidenceUrl / commitUrl, against the
-// per-report repo the finding was stamped with at ingest); annotations
-// come off the finding's triage entry, not the finding — findings
-// carry no `fix` or `comment` field, ever.
+// The answers only the viewer has: links as the card resolves them
+// (format.js, against the repo stamped at ingest), and annotations off
+// the triage entry — findings carry no `fix` or `comment` field, ever.
 const HOOKS = {
   annotation(f) {
     const entry = triageEntry(f)
@@ -59,16 +48,10 @@ const HOOKS = {
   report: (f) => f._reportName ?? null,
 }
 
-// The repository the document is about, when there is one answer:
-// what every loaded report declares (its own `repo.github`), else the
-// one repo every own-source finding agrees on, else the URL typed into
-// the header chip — the same precedence the page header's repo chip
-// follows. A declaration speaks for the document only when EVERY
-// loaded report makes the same one: a report declaring none disagrees
-// as much as one naming another slug (one report's declaration says
-// nothing about the others' findings), and a mixed load falls through
-// to what the findings agree on — which is nothing for genuinely mixed
-// repos, each finding then naming its own on its meta line.
+// The repository the document is about, the header repo chip's
+// precedence: what EVERY loaded report declares alike (one declaring none
+// disagrees too), else the one repo every own-source finding agrees on,
+// else the URL typed into the chip; none for genuinely mixed repos.
 function documentRepo(reports, groups) {
   const declared = new Set(reports.map((r) => r.repo ?? null))
   const agreed = declared.size === 1 ? [...declared][0] : null
@@ -109,20 +92,15 @@ function documentTitle(reports, workspace) {
 export function reportsToMarkdown({ oneSamplePerGroup = false, shipped = null } = {}) {
   const hooks = shipped ? { ...HOOKS, evidence: (row, f, i) => evidenceUrl(row, f, findingRepoTarget(f), i, (r) => shipped(f, r)) } : HOOKS
   const reports = state.reports
-  // The selection in force — the confirm dialog's relaxed copy while an
-  // export runs under one, the toolbar's otherwise. The same one the
-  // `applyFilters` pass inside visibleGroups reads, so the header
-  // describes exactly the pass that picked the findings, and the counts
-  // are that pass's.
+  // The selection in force (the dialog's relaxed copy, else the toolbar's),
+  // the one visibleGroups' `applyFilters` reads: the header describes the
+  // pass that picked the findings.
   const fields = activeFilters()
   const bucket = exportBucketGroups()
   const groups = visibleGroups(bucket, oneSamplePerGroup)
   const workspace = currentWorkspace()
-  // The lens and the layer are named in the header only where they
-  // change what the document says: a set with no severity correction
-  // reads the same under either lens, and one with no revalidation
-  // stamp is the code view already. Scanned over the full loaded set,
-  // like the toolbar controls they describe.
+  // The lens and the layer are named only where they change the document
+  // (a correction, a revalidation stamp in the loaded set).
   const loaded = reports.flatMap((r) => r.groups ?? [])
   const hasCorrections = loaded.some((g) => g.some(hasSeverityCorrection))
   const hasRevalidation = loaded.some((g) => g.some(hasRevalidateField))
@@ -136,12 +114,9 @@ export function reportsToMarkdown({ oneSamplePerGroup = false, shipped = null } 
       bucket: exportBucketLabel(),
       severityMode: hasCorrections ? state.severityMode : null,
       revalidation: hasRevalidation ? state.showRevalidation : null,
-      // Which app view the groups above were built in: `visibleGroups`
-      // takes each group's cases through sortTabs, so the simplified
-      // one has already folded the rows the pass re-rated under its
-      // own — the document says so rather than leaving a reader to
-      // wonder where a case they remember went. Null with the layer
-      // off, where the fold is inert and the line reads "code view".
+      // Which app view built the groups: the simplified one (sortTabs)
+      // has folded the re-rated rows under the pass's, and the document
+      // says so. Null with the layer off, where the line reads "code view".
       revalidationDetail: hasRevalidation && state.showRevalidation !== false
         ? underlyingFindingsShown()
         : null,
@@ -152,11 +127,10 @@ export function reportsToMarkdown({ oneSamplePerGroup = false, shipped = null } 
   }, hooks)
 }
 
-// The file's name: the workspace's, a single report's own (its
-// extension traded for `.md`), or the common prefix of a batch — the
-// print button's heuristic, so a PDF and a markdown of the same view
-// sit side by side under one name. Characters no filesystem takes in
-// a name (a workspace can be called anything) become hyphens.
+// The file's name, the print button's heuristic so a PDF and a markdown
+// of one view share it: the workspace's, a single report's (`.md` for its
+// extension), or a batch's common prefix; characters no filesystem takes
+// become hyphens.
 export function targetFilename() {
   const workspace = currentWorkspace()
   const names = state.reports.map((r) => r.fileName)

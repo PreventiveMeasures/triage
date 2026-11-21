@@ -1,78 +1,53 @@
-// SBOM serializers for stasis bundles — CycloneDX (1.5) and SPDX
-// (2.3), both as JSON. A stasis `Bundle` records per-package metadata
-// in its `modules` Map (`Map<dir, { name, version, files }>`, see
-// `@exodus/stasis-core/bundle`): `node_modules/...` dirs are upstream
-// dependencies, non-`node_modules` dirs are workspace packages (the
-// `.` root + any monorepo siblings). That inventory maps onto an SBOM
-// component list, so we can emit a bill of materials straight from a
-// parsed bundle — no registry round-trip (unlike the Advisories tab,
-// which only needs name+version too).
+// SBOM serializers for stasis bundles — CycloneDX (1.5) and SPDX (2.3)
+// JSON — straight from a parsed bundle's `modules` inventory
+// (`Map<dir, { name, version, files }>`, @exodus/stasis-core/bundle), no
+// registry round-trip. The `.` workspace module is the root component and
+// every other named, versioned module (registry deps and monorepo
+// siblings alike) a component: a flat inventory, since the bundle inlines
+// the transitive set without per-edge provenance, so no edges beyond
+// root → component are claimed.
 //
-// The `.` workspace module is the document's primary/root component;
-// every other named+versioned module — registry deps AND any monorepo
-// workspace siblings — is listed as a component. This is a flat
-// inventory, not a resolved dependency graph: the bundle inlines the
-// full transitive set without per-edge provenance, so we don't claim
-// edges we can't substantiate beyond root→component.
-//
-// Pure module: no Lit / DOM / `state` imports, so the tests exercise
-// it directly and the download wiring (Blob + `downloadBlob`) stays in
-// `events.js`. Both builders take `{ now, uuid }` options so callers
-// (and tests) can pin the otherwise-nondeterministic timestamp +
-// document identifier.
+// Pure (the download wiring is events.js's); `{ now, uuid }` pin the
+// timestamp and document id for callers and tests.
 
-// Identifies this app as the SBOM's creating tool (the package name).
+// The SBOM's creating tool: this package.
 const TOOL_NAME = '@preventive/triage'
 
-// npm Package URL for a component, per the purl spec's npm type: the
-// name is lowercased (the spec requires npm names be lowercased) and,
-// for scoped names, split into a percent-encoded namespace + name
-// (`@scope/pkg` → `pkg:npm/%40scope/pkg@1.2.3`); plain names stay flat
-// (`pkg:npm/lodash@4.17.21`). The version is percent-encoded so
-// build-metadata `+` and the like survive as a valid purl, but not
-// lowercased — versions are case-sensitive.
+// npm Package URL, per the purl spec's npm type: the name lowercased, a
+// scoped one split into a percent-encoded namespace and name
+// (`pkg:npm/%40scope/pkg@1.2.3`); the version percent-encoded (so a
+// build-metadata `+` survives) but not lowercased, being case-sensitive.
 function npmPurl(name, version) {
   const lower = name.toLowerCase()
-  let namespace = ''
-  let bare = lower
-  if (lower.startsWith('@')) {
-    const slash = lower.indexOf('/')
-    if (slash > 0) {
-      namespace = lower.slice(0, slash)
-      bare = lower.slice(slash + 1)
-    }
-  }
-  const nsPart = namespace ? `${encodeURIComponent(namespace)}/` : ''
-  return `pkg:npm/${nsPart}${encodeURIComponent(bare)}@${encodeURIComponent(version)}`
+  const slash = lower.startsWith('@') ? lower.indexOf('/') : -1
+  const path = slash > 0 ? `${encodeURIComponent(lower.slice(0, slash))}/${encodeURIComponent(lower.slice(slash + 1))}` : encodeURIComponent(lower)
+  return `pkg:npm/${path}@${encodeURIComponent(version)}`
 }
 
-// Strip a bundle's stasis suffix for a clean SBOM filename / document
-// name: `ses.stasis.code.br` → `ses`. Falls back to dropping the final
-// extension for anything else, and to the unchanged name if that would
-// empty it.
+// A bundle's name without its stasis suffix (`ses.stasis.code.br` →
+// `ses`), else without its last extension, else unchanged.
 export function sbomBaseName(name) {
   const stasis = /^(.*?)\.stasis\.(?:code|resources)\.br$/u.exec(name)
   if (stasis) return stasis[1]
   return name.replace(/\.[^.]+$/u, '') || name
 }
 
-// Collect SBOM components from a parsed stasis bundle: every module
-// carrying a concrete name + version, de-duped by `name@version` (a
-// package present both hoisted and nested appears once; distinct
-// versions are kept — a bundle can legitimately ship two). On a key
-// collision the workspace-root (`.`) copy claims the slot, so a
-// self-dependency — a package that also pulls a registry copy of
-// itself — keeps the root as the document root rather than letting the
-// `node_modules` copy (which `Bundle.parseCode` records first) demote
-// it to a leaf. `dir` rides along so the document builders can
-// separate the root from everything else. Empty for sourcemaps and v0
-// stasis bundles (which record no name/version).
+// A module carrying a concrete name and version.
+const named = (info) => info?.name && typeof info.version === 'string' && info.version
+
+// A parsed stasis bundle's SBOM components: every named module, de-duped
+// by `name@version` (hoisted and nested copies once; distinct versions
+// kept). On a collision the workspace root (`.`) claims the slot, so a
+// package pulling a registry copy of itself stays the document root rather
+// than the `node_modules` copy (which `Bundle.parseCode` records first)
+// demoting it. `dir` lets the builders split the root off. Empty for
+// sourcemaps and v0 stasis bundles (no name/version).
 export function bundleSbomComponents(details) {
   const out = []
   if (details?.kind !== 'stasis' || !details.bundle?.modules) return out
   const indexByKey = new Map()
   for (const [dir, info] of details.bundle.modules) {
-    if (!info?.name || typeof info.version !== 'string' || !info.version) continue
+    if (!named(info)) continue
     const key = `${info.name}@${info.version}`
     const seenAt = indexByKey.get(key)
     if (seenAt !== undefined) {
@@ -85,22 +60,19 @@ export function bundleSbomComponents(details) {
   return out
 }
 
-// Cheap existence check for the render path — true as soon as one
-// module carries a concrete name + version, so the Overview can decide
-// whether to show the SBOM buttons without building (and discarding)
-// the full component array on every render.
+// The render path's cheap check (the Overview's SBOM buttons), without
+// building the component list.
 export function bundleHasSbomComponents(details) {
   if (details?.kind !== 'stasis' || !details.bundle?.modules) return false
   for (const [, info] of details.bundle.modules) {
-    if (info?.name && typeof info.version === 'string' && info.version) return true
+    if (named(info)) return true
   }
   return false
 }
 
-// Split the components into the single workspace root (the `.` module,
-// when present) and everything else. With no `.` module (a
-// `scope: node_modules` bundle) the root is synthesized from the
-// bundle filename so the document still has a thing it describes.
+// The workspace root (the `.` module) and the rest. Without one (a
+// `scope: node_modules` bundle) the root is made from the bundle's name,
+// so the document still describes something.
 function splitRoot(components, entry) {
   const rootComp = components.find((c) => c.dir === '.') ?? null
   const rest = rootComp ? components.filter((c) => c !== rootComp) : components
@@ -110,14 +82,11 @@ function splitRoot(components, entry) {
   return { root, rest }
 }
 
-function newUuid(uuid) {
-  return uuid ?? globalThis.crypto.randomUUID()
-}
+const newUuid = (uuid) => uuid ?? globalThis.crypto.randomUUID()
 
-// CycloneDX 1.5 JSON. The workspace root is the metadata component
-// (type application); every other package is a library component with
-// an npm purl as its bom-ref. Pretty-printed with a trailing newline
-// so the file reads cleanly and diffs sanely.
+// CycloneDX 1.5: the root is the metadata component (an application),
+// every other package a library with its purl as bom-ref. Pretty-printed,
+// with a trailing newline.
 export function bundleToCycloneDx(details, entry, { now = new Date(), uuid } = {}) {
   const components = bundleSbomComponents(details)
   const { root, rest } = splitRoot(components, entry)
@@ -142,17 +111,10 @@ export function bundleToCycloneDx(details, entry, { now = new Date(), uuid } = {
   return `${JSON.stringify(doc, null, 2)}\n`
 }
 
-function purlExternalRef(purl) {
-  return { referenceCategory: 'PACKAGE-MANAGER', referenceType: 'purl', referenceLocator: purl }
-}
-
-// SPDX 2.3 JSON. The DOCUMENT DESCRIBES the workspace root package,
-// which DEPENDS_ON each bundled component (a flat graph — the bundle
-// inlines the full transitive set, so a root→each edge is the honest
-// summary without inventing per-package edges we don't have). License
-// / download fields are NOASSERTION: a stasis bundle records neither.
-// The `created` stamp is trimmed to whole seconds (SPDX disallows
-// fractional seconds).
+// SPDX 2.3: the DOCUMENT DESCRIBES the root package, which DEPENDS_ON each
+// component (the flat graph above). License and download fields are
+// NOASSERTION, recorded by no stasis bundle; `created` is trimmed to whole
+// seconds, as SPDX requires.
 export function bundleToSpdx(details, entry, { now = new Date(), uuid } = {}) {
   const components = bundleSbomComponents(details)
   const { root, rest } = splitRoot(components, entry)
@@ -170,7 +132,7 @@ export function bundleToSpdx(details, entry, { now = new Date(), uuid } = {}) {
       copyrightText: 'NOASSERTION',
     }
     if (version) pkg.versionInfo = version
-    if (purl) pkg.externalRefs = [purlExternalRef(purl)]
+    if (purl) pkg.externalRefs = [{ referenceCategory: 'PACKAGE-MANAGER', referenceType: 'purl', referenceLocator: purl }]
     return pkg
   }
 

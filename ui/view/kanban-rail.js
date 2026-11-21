@@ -1,24 +1,15 @@
-// `<kanban-rail>` — the finding dialog's same-column rail, drawn a
-// screen at a time.
+// `<kanban-rail>` — the finding dialog's same-column rail, drawn a screen
+// at a time: a column holds thousands of findings, and building all their
+// cards was most of the dialog's wait. The cards in view and a screen
+// either side are drawn, two spacers standing in for the rest.
 //
-// A column can hold thousands of findings, and building every one of
-// their cards each time the dialog opened was most of its wait. So the
-// rail draws the cards in view and a screen's worth either side of
-// them, and two spacers stand in for the rest: one above the first card
-// drawn, one below the last.
-//
-// The spacers need the cards' heights, which wrap with their titles. A
-// card drawn is measured and its height kept; one never drawn is taken
-// to be as tall as the average of those that were. What a guess gets
-// wrong comes right as the card is drawn, and the rail puts the card the
-// reader was looking at back where it was, however much the cards above
-// it grew or shrank. By hand: Safari has no scroll anchoring to do it,
-// and findings.css turns the other browsers' off here so the two don't
-// both move the list.
-//
-// It keeps the open finding's card in view as the dialog moves to
-// another — nearest, as `scrollIntoView` would, which can't be asked of
-// a card that isn't drawn.
+// The spacers need the cards' heights, which wrap with their titles: a
+// drawn card is measured and kept, an undrawn one guessed at the average.
+// A wrong guess comes right as the card draws, and the rail puts the card
+// the reader was looking at back where it was — by hand, as Safari has no
+// scroll anchoring and findings.css turns the others' off here. It keeps
+// the open finding's card in view, nearest, as `scrollIntoView` would were
+// the card drawn.
 //
 // The host is the scroller, in light DOM so the page's card styles and
 // click delegates (events.js `[data-kanban-select]`) reach the cards.
@@ -87,9 +78,8 @@ class KanbanRail extends LitElement {
     // Measured heights by key, and their sum, for the guess.
     this._heights = new Map()
     this._total = 0
-    // Each list's keys, and the tops last worked out for one: a scroll
-    // event asks for them, and a column's keys are thousands of calls
-    // to `keyOf`. Heights changing bumps `_version`, which stales them.
+    // Each list's keys (thousands of `keyOf` calls) and the tops last
+    // worked out, for scroll events; a height changing bumps `_version`.
     this._keys = new WeakMap()
     this._version = 0
     this._tops = null
@@ -132,11 +122,9 @@ class KanbanRail extends LitElement {
   }
 
   // Lets go of every height measured, keeping the card at the top of the
-  // view where it is: it's found by the old heights, which the spacers
-  // were drawn with, before they go. The cards drawn are measured again,
-  // and the rest guessed from them. Two themes in a row before the rail
-  // redraws keep the first's card: by the second, the heights it was
-  // found by are gone, and the spacers are still the old ones.
+  // view where it is, found by the old heights (the spacers') before they
+  // go. Two themes before a redraw keep the first's card: by the second,
+  // those heights are gone and the spacers still the old ones.
   _forgetHeights() {
     this._carried ??= this._holdOf(this.items, this.scrollTop)
     this._heights.clear()
