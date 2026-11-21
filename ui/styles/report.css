@@ -4849,8 +4849,9 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-replay {
    versions want reviews, green where they pass, what it tells beside it, and
    under it, opened, its terms and its versions as a team's Dependencies tab
    lists them (.team-deps-row), in a scroll of their own. */
-/* Its label beside its line, not its details, once they open. */
-.bundles-detail-meta dt:has(+ dd.bundle-review > .bundle-review-details) { align-self: start; padding-top: .2rem; }
+/* Its label on its line's baseline, whether its details are open or not, so
+   opening them moves it not. */
+.bundles-detail-meta :is(dt:has(+ dd.bundle-review), dd.bundle-review) { align-self: baseline; }
 .bundles-detail-meta dd.bundle-review {
   min-width: 0; word-break: normal;
   & .bundle-review-line { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .6rem; }

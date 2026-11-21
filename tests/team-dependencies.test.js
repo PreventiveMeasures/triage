@@ -598,8 +598,8 @@ test('a version its lockfile alone asks for, the stasis.config.json beside it re
     assert.match(text, /role="status">Stasis is still working out what some <code>stasis\.config\.json<\/code> entries reach/u)
     assert.doesNotMatch(text, /review fails/u, 'one awaiting it fails nothing')
     const marked = text.split('<li>').find(row => row.includes('data-tooltip=only-pm@'))
-    assert.match(marked, /<span class="team-deps-unreached" role="img" aria-label=Asked for by its lockfile alone: the stasis\.config\.json beside it reaches it by no entry>!<\/span>/u, 'an exclamation mark, named')
-    assert.match(marked, /<span class="compare-tip-label">Asked for<\/span><span>by its lockfile alone: the stasis\.config\.json beside it reaches it by no entry<\/span>/u, 'and said in its tooltip')
+    assert.match(marked, /<span class="team-deps-unreached" role="img" aria-label=Asked for by the lockfile only, not stasis\.config\.json>!<\/span>/u, 'an exclamation mark, named')
+    assert.match(marked, /<span class="compare-tip-label">Asked for<\/span><span>by the lockfile only, not stasis\.config\.json<\/span>/u, 'and said in its tooltip')
     assert.doesNotMatch(text.split('<li>').find(row => row.includes('data-tooltip=by-both@')), /Asked for/u)
 
     view.pick('versions')
