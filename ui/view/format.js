@@ -397,7 +397,7 @@ export function fileLink(f, repoFallback) {
 
 // Only our own `#L42` / `#L10-L20` anchors; any other fragment isn't ours.
 function stripLineAnchor(url) {
-  return url.replace(/#L\d+(?:-L?\d+)?$/u, '')
+  return url.replace(GH_LINE_ANCHOR_RE, '')
 }
 
 function lineAnchor({ start, end }) {
@@ -547,22 +547,22 @@ const HRULE_RE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/u
 
 function leadingSpaces(line) { return /^ */u.exec(line)[0].length }
 
-// Each line's offset in the text it was split from, for inFence.
-function lineOffsets(lines) {
+// `src`'s lines, and whether line `i` sits in a fenced block (fenceRanges).
+function fencedLines(src) {
+  const ranges = fenceRanges(src)
+  const lines = src.split('\n')
   const offsets = []
   let at = 0
   for (const line of lines) { offsets.push(at); at += line.length + 1 }
-  return offsets
+  return { lines, inCode: (i) => inFence(ranges, offsets[i]) }
 }
 
 export function listSegments(text) {
   const src = typeof text === 'string' ? text : ''
   if (!src) return [text]
-  const ranges = fenceRanges(src)
-  const lines = src.split('\n')
-  const offsets = lineOffsets(lines)
+  const { lines, inCode } = fencedLines(src)
   // A marker inside a fenced snippet is code.
-  const startsItem = (i) => !inFence(ranges, offsets[i])
+  const startsItem = (i) => !inCode(i)
     && !HRULE_RE.test(lines[i])
     && LIST_ITEM_RE.test(lines[i])
 
@@ -587,7 +587,7 @@ export function listSegments(text) {
     while (i < lines.length) {
       const line = lines[i]
       // Inside a fence nothing is structural: the snippet is item content.
-      if (!inFence(ranges, offsets[i])) {
+      if (!inCode(i)) {
         if (!line.trim()) { item.lines.push(''); afterBlank = true; i++; continue }
         const indent = leadingSpaces(line)
         const marker = HRULE_RE.test(line) ? null : LIST_ITEM_RE.exec(line)
@@ -701,10 +701,8 @@ function trimBlankLines(lines) {
 export function quoteSegments(text, { alerts = true } = {}) {
   const src = typeof text === 'string' ? text : ''
   if (!/^ {0,3}>/mu.test(src)) return [text]
-  const ranges = fenceRanges(src)
-  const lines = src.split('\n')
-  const offsets = lineOffsets(lines)
-  const quoted = (i) => QUOTE_LINE_RE.test(lines[i]) && !inFence(ranges, offsets[i])
+  const { lines, inCode } = fencedLines(src)
+  const quoted = (i) => QUOTE_LINE_RE.test(lines[i]) && !inCode(i)
 
   const out = []
   let proseFrom = 0
@@ -720,10 +718,10 @@ export function quoteSegments(text, { alerts = true } = {}) {
       const line = lines[i]
       if (quoted(i)) {
         const content = line.replace(QUOTE_MARKER_RE, '')
-        const inCode = fence !== ''
+        const wasCode = fence !== ''
         fence = fenceAfter(fence, content)
         const own = content.replace(NESTED_MARKERS_RE, '')
-        paragraph = !inCode && !fence && own.trim() !== '' && !isLeafBlock(own)
+        paragraph = !wasCode && !fence && own.trim() !== '' && !isLeafBlock(own)
         body.push(content)
       } else if (paragraph && line.trim() && !isLeafBlock(line) && !LIST_ITEM_RE.test(line)) {
         body.push(line)

@@ -465,11 +465,8 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
       // A locked vault: prompt to unlock, and retry on success.
       if (err && err.message?.includes('vault locked')) {
         const ok = await openPasskeyUnlockDialog()
-        if (ok && !isStaleLoad(gen)) {
-          await switchToFile(name)
-          return
-        }
-        await unselect()
+        if (ok && !isStaleLoad(gen)) await switchToFile(name)
+        else await unselect()
         return
       }
       // A missing (or just quarantined) file isn't worth an alert. When a
@@ -580,10 +577,9 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   const hiddenReport = team.reports.find(r => r.id === reportId && r.visible === false)
   const viewSignal = currentViewSignal()
   const opened = reportId === null ? null : team.reports.find(r => r.id === reportId)
-  // Replace the previous view's controls at once, the team's header with its
-  // loading status in their place (a report's, the status alone), as its
-  // reports load. No partially hydrated findings may remain interactive
-  // during the awaits; a failed load goes Home rather than leave a partial view.
+  // The loading header replaces the previous view at once: no partially
+  // hydrated finding may stay interactive during the awaits, and a failed
+  // load goes Home rather than leave a partial view.
   closeSessionsExcept(new Set())
   clearReportSources()
   renderTriageLoading(reportId === null && !deduplication ? team.id : null)
@@ -596,11 +592,9 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   state.currentWorkspace = reportId === null ? `managed-team:${team.id}` : null
   state.currentManagedTeam = team.id
   state.currentManagedReport = reportId
-  // What will load, as the catalog names it, so that a catalog telling the
-  // same as it loads finds nothing changed (managed-report-catalog.js): a
-  // team's published reports, or a report of findings, the one its
-  // annotations are read for; a link report's span the reports it links,
-  // known once they are in.
+  // What will load, as the catalog names it, so a catalog that agrees finds
+  // nothing changed (managed-report-catalog.js); a link report's are known
+  // once they are in.
   state.managedReports = deduplication ? []
     : reportId === null ? team.reports.filter(r => r.visible !== false).map(r => ({ id: r.id, filename: r.filename }))
       : opened.analyzer === LINKS_KIND ? [] : [{ id: opened.id, filename: opened.filename }]
@@ -645,13 +639,11 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
     })
     if (isStaleLoad(gen)) return false
   }
-  // Hydrate every report before the merged view becomes interactive. The
-  // managed triage layer routes later edits by the per-report ids stamped
-  // above, so overlapping findings are sent to a report that actually owns
-  // them instead of silently posting them to the first report only.
-  // With the team feed, its annotation read (managed-feed.js), which knows
-  // the revision it reads at; else one of its own.
-  // Those `except` names keep what they hold (replaceManagedReports).
+  // Every report is hydrated before the merged view becomes interactive:
+  // later edits route by the per-report ids stamped above, to a report that
+  // owns the finding. `readAnnotations` is the team feed's read
+  // (managed-feed.js, which knows its revision), else one of its own; the
+  // ids in `except` keep what they hold (replaceManagedReports).
   const hydrate = async (signal, readAnnotations = createManagedAnnotationRead(state.currentManagedTeam, signal), except = undefined) => {
     const results = await Promise.all(findings.flatMap(entry => [
       hydrateManagedReportTriage(entry.id, { renderView: false, signal, readAnnotations, except }),
@@ -661,9 +653,8 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   }
   // A link report read as one of findings is read again for those it links.
   const annotations = selectedLink ? undefined : preload
-  // The board's copy leaving rows out is replaced by the whole reports once
-  // the view is shown (managed-details.js); details in sooner draw nothing
-  // until then, the view still loading.
+  // The board's folded copy is replaced by the whole reports once the view
+  // is shown (managed-details.js); details arriving sooner wait for that.
   const shown = Promise.withResolvers()
   let opening = null
   if (details) {
@@ -696,21 +687,18 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   return true
 }
 
-// What a view opens on (filters.js applyOpeningFilters), and the lens it is
-// read through: a later answer opens it again only while they are as it
-// opened.
+// What a view opens on (filters.js applyOpeningFilters) and the lens it is
+// read through: a later answer reopens it only while these are untouched.
 const OPENING_FIELDS = ['showRevalidation', 'upstreamOnly', 'revalidationDetailed', 'filterConfMin', 'filterConfMax', 'filterRevalidate', 'filterPartial', 'sortBy', 'severityMode']
 
-// The whole reports in place of a team board's copy of them, which left out
-// rows App mode does not show (common/managed/finding-detail.js `fold`):
-// ingested again as they are, the lens configured once they are all in, the
-// reader's filters left as they set them, or, while they leave the `opening`
-// ones alone throughout, those the whole reports open on. The findings the
-// board's copy held keep the annotations kept for them since, a reader's
-// edits among them; those it left out are hydrated from the annotations
-// read as the team opened, any told since caught up with (managed-feed.js).
-// The board is held as it was meanwhile (render.js), and takes nothing from
-// its reader. One that fails once begun goes Home, as a failed load does.
+// The whole reports in place of a team board's copy, which left out rows App
+// mode doesn't show (common/managed/finding-detail.js `fold`): re-ingested,
+// the lens configured once all are in, the reader's filters kept — or, if
+// the `opening` ones stayed untouched throughout, the whole reports' own.
+// Findings the copy held keep their annotations (a reader's edits among
+// them); those it left out are hydrated from the annotations read as the
+// team opened, caught up since (managed-feed.js). The board is held inert
+// meanwhile (render.js); a failure once begun goes Home, as a failed load.
 async function replaceManagedReports(workspace, findings, { gen, hydrate, annotations, opening }) {
   const whole = new Map(workspace.map(entry => [entry.id, entry]))
   const entries = findings.map(entry => whole.get(entry.id))
@@ -947,17 +935,11 @@ function clearActiveView({ forgetLastView = true } = {}) {
   showEmptyMainPane()
 }
 
-// Leave the current surface when the managed server's UI mode changes. This
-// is deliberately one operation rather than a handful of assignments in the
-// sidebar: report and workspace loads are asynchronous, and any one of them
-// can otherwise finish after the mode switch and put the old view back.
-//
-// The generation bump invalidates switchToFile/switchToWorkspace and their
-// ingest pipelines. Closing sessions stops local triage updates from arriving
-// while the landing screen is being painted. clearActiveView also removes the
-// persisted last-view pointer, so entering local mode cannot immediately
-// restore the managed report that was just open. Cold-start protocol detection
-// passes forgetLastView:false to leave local storage untouched.
+// Leave the current surface when the managed server's UI mode changes, as
+// one operation: the generation bump stops in-flight loads from putting the
+// old view back, closing sessions stops local triage updates during the
+// landing paint, and the last-view pointer goes so local mode can't restore
+// the managed report (cold-start detection passes forgetLastView: false).
 export function resetForClientModeTransition(options) {
   beginViewNavigation()
   closeSessionsExcept(new Set())
@@ -1150,11 +1132,11 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     configureDepsDir(state.reports)
     if (stampUpstreamFindings(state.reports)) clearMergedGroups()
     state.revalidateConflicts = getRevalidationConflicts()
-    // Restore/disable the lens before deriving opening filters, including when
-    // leaving a conflicted workspace for one of its individual reports. One
-    // to `keepLens` leaves it as it is: a team board's folded copy, whose rows
-    // left out might tell otherwise (render.js), and its whole reports
-    // ingested in its place, the lens configured once they are all in.
+    // The lens is restored / disabled before the opening filters are derived
+    // (leaving a conflicted workspace for one of its reports included) —
+    // except under `keepLens`: a team board's folded copy, whose left-out
+    // rows might say otherwise (render.js), and the whole reports replacing
+    // it, configured once all are in.
     configureReportRevalidation({ held: keepLens })
     // A view's reports ingested again, whole, keep the filters its reader
     // set. Otherwise the set opens on an auto-tuned floor, or Confirmed,

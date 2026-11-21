@@ -78,9 +78,8 @@ class CommentPreview extends HoverPreviewElement {
   render() {
     const managed = isManagedUiMode()
     const comments = managed ? managedCommentsFor(this.finding) : []
-    const hasComments = managed ? comments.length > 0 : Boolean(this.comment)
-    if (!hasComments) return nothing
-    const bodies = managed ? comments.map(comment => comment.body) : [this.comment]
+    const bodies = managed ? comments.map(comment => comment.body) : this.comment ? [this.comment] : []
+    if (bodies.length === 0) return nothing
     const wide = bodies.some(body => body.split(/[\r\n]/u).some(line => line.length > 100))
     return html`<button type="button" class="preview-trigger mark-comment" aria-label=${managed ? 'View comments' : 'Edit comment'}
       aria-details="comment-preview"

@@ -222,27 +222,29 @@ export function shouldLockConfirmed(groups) {
   return canLockConfirmed(groups, { tabs: drawnTabs, kindOf: revalidateKind, severityMode: state.severityMode })
 }
 
-// Put the confidence block (one control, two faces: an outcome, else the
-// range) where a fresh load of `groups` — the groups the view SHOWS — would
-// put it. Shared by a load's first report, a whole workspace once every
-// member is in, and the App switch, which reshapes the set (events.js).
+// The confidence block (one control, two faces: an outcome, else the range)
+// as a fresh load of `groups` — the groups the view SHOWS — opens it.
+function openingFilters(groups) {
+  const floor = defaultConfidenceFloor(groups)
+  return { filterConfMin: floor, filterConfMax: 10, filterRevalidate: defaultRevalidateFilter(groups, floor), filterPartial: '' }
+}
+
+// Shared by a load's first report, a whole workspace once every member is
+// in, and the App switch, which reshapes the set (events.js).
 export function applyOpeningFilters(groups, { resetSort = true } = {}) {
-  state.filterConfMin = defaultConfidenceFloor(groups)
-  state.filterConfMax = 10
-  state.filterRevalidate = defaultRevalidateFilter(groups, state.filterConfMin)
-  state.filterPartial = ''
+  Object.assign(state, openingFilters(groups))
   if (resetSort) state.sortBy = priorityApplies(groups) ? 'priority-desc' : 'severity'
 }
 
 // The filters a team's Kanban board opens on (and a team link opens it on
-// again): applyOpeningFilters' choices over every status on it, the range
-// at 0—10 where render.js drops it (rangeApplies). Asked of the board as it
-// is now, never of how this view happened to open.
+// again): the opening ones over every status on it, the range at 0—10
+// where render.js drops it (rangeApplies). Asked of the board as it is
+// now, never of how this view happened to open.
 function kanbanOpening(groups) {
   const drawn = groups.map(drawnTabs).filter((g) => g.length > 0)
-  const floor = defaultConfidenceFloor(groups)
-  return { filterConfMin: drawn.length > 0 && rangeApplies(drawn) ? floor : 0, filterConfMax: 10,
-    filterRevalidate: defaultRevalidateFilter(groups, floor), filterPartial: '' }
+  const opening = openingFilters(groups)
+  if (drawn.length === 0 || !rangeApplies(drawn)) opening.filterConfMin = 0
+  return opening
 }
 
 // The repository and severities the board is filtered to, for a team link
@@ -511,24 +513,19 @@ const PRIORITY_SORTS = { 'priority-desc': 'desc', 'priority-asc': 'asc' }
 // elsewhere) keeps insertion order. Each group's primary tab / priority is
 // resolved once, not per comparison (primaryTab re-sorts a group's tabs).
 export function applySorting(groups) {
+  const sortedBy = (key, cmp) => groups.map((g) => ({ p: key(g), g })).toSorted(cmp).map((x) => x.g)
   const dir = Object.hasOwn(PRIORITY_SORTS, state.sortBy) ? PRIORITY_SORTS[state.sortBy] : null
   if (dir) {
     // By the row's priority (priorityForGroup), valueless rows last.
     const missing = dir === 'desc' ? -1 : 11
-    return groups
-      .map((g) => ({ p: priorityForGroup(g), g }))
-      .toSorted((a, b) => {
-        const va = a.p ?? missing
-        const vb = b.p ?? missing
-        return (dir === 'desc' ? vb - va : va - vb)
-          || primaryTab(a.g).file.localeCompare(primaryTab(b.g).file)
-      })
-      .map((x) => x.g)
+    return sortedBy(priorityForGroup, (a, b) => {
+      const va = a.p ?? missing
+      const vb = b.p ?? missing
+      return (dir === 'desc' ? vb - va : va - vb)
+        || primaryTab(a.g).file.localeCompare(primaryTab(b.g).file)
+    })
   }
   const cmp = SORTERS[state.sortBy]
   if (!cmp) return [...groups]
-  return groups
-    .map((g) => ({ p: primaryTab(g), g }))
-    .toSorted((a, b) => cmp(a.p, b.p))
-    .map((x) => x.g)
+  return sortedBy(primaryTab, (a, b) => cmp(a.p, b.p))
 }
