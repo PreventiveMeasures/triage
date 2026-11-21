@@ -19,10 +19,13 @@ export async function sessionAdmin(db: ManagedSql, sessionId: string): Promise<{
 }
 
 export type ContentMutation = { type: 'delete' } | { type: 'repo'; repoId: number | null; directory: string } | { type: 'visibility'; visible: boolean }
+// A report's alone: whether it opens on Confirmed whatever Confirmed hides,
+// switched on only where its content offers it (report-opening.ts).
+export type ReportMutation = ContentMutation | { type: 'opening'; confirmedDefault: boolean }
 type RemovalRepo = Pick<ManagedRepo, 'repoId' | 'fullName' | 'addedAt'>
 type RemovalAnnotations = { reports: string; ids: string[] }
 export interface ManagementStore {
-  mutateReport(sessionId: string, id: string, change: ContentMutation): Promise<{ report: ReportRecord; user: StoredUser }>
+  mutateReport(sessionId: string, id: string, change: ReportMutation): Promise<{ report: ReportRecord; user: StoredUser }>
   mutateBundle(sessionId: string, id: string, change: ContentMutation): Promise<{ bundle: ManagedBundle; user: StoredUser }>
   // A repeated upload/build of stored bytes (see reuseBundle). Renames need the
   // access other bundle mutations need; a server build labels the row anyway.
@@ -33,7 +36,7 @@ export interface ManagementStore {
 }
 type ManagementDb = Pick<ManagedDb, 'sessionWithUser' | 'getReport' | 'getBundle' | 'listReports' | 'listReportsForRepo'
   | 'listBundlesForRepo' | 'listAllRepos' | 'listSelectedRepos' | 'userCanReadReport' | 'userCanReadBundle' | 'userCanReadRepoPath'
-  | 'deleteReport' | 'setReportRepo' | 'setReportVisible' | 'deleteBundle' | 'setBundleRepo' | 'setBundleVisible' | 'reuseBundle'
+  | 'deleteReport' | 'setReportRepo' | 'setReportVisible' | 'setReportConfirmedDefault' | 'deleteBundle' | 'setBundleRepo' | 'setBundleVisible' | 'reuseBundle'
   | 'deleteReportsForRepo' | 'deleteBundlesForRepo' | 'deleteRepo' | 'deleteTriage' | 'recordActivity'>
 
 // Only immutable bytes/format and repository membership affect the overlap
@@ -52,21 +55,24 @@ export function managementMethods(db: ManagementDb): ManagementStore {
     if (!roleAtLeast(s.user.role, role)) throw new ManagedMutationError(403, 'forbidden')
     return s.user
   }
-  async function destination(user: { id: string; role: string }, change: ContentMutation) {
+  async function destination(user: { id: string; role: string }, change: ReportMutation) {
     if (change.type !== 'repo' || change.repoId === null) return
     if (!(await db.listSelectedRepos()).some(repo => repo.repoId === change.repoId)) throw new ManagedMutationError(400, 'bad-repo')
     if (user.role !== 'admin' && !await db.userCanReadRepoPath(user.id, change.repoId, change.directory)) throw new ManagedMutationError(403, 'repo-forbidden')
   }
   return {
-    async mutateReport(sessionId: string, id: string, change: ContentMutation) {
+    async mutateReport(sessionId: string, id: string, change: ReportMutation) {
       const user = await authorize(sessionId, 'manage')
       const report = await db.getReport(id)
       if (!report || (user.role !== 'admin' && report.uploadedBy !== user.id && !await db.userCanReadReport(user.id, id))) throw new ManagedMutationError(404, 'no-report')
       if (user.role !== 'admin' && report.repoId !== null && !await db.userCanReadReport(user.id, id)) throw new ManagedMutationError(403, 'repo-forbidden')
       if (change.type === 'repo' && report.repoEmbedded) throw new ManagedMutationError(409, 'repo-in-report')
+      // Off is always allowed, even of one whose content no longer offers it.
+      if (change.type === 'opening' && change.confirmedDefault && report.confirmedOffered !== true) throw new ManagedMutationError(409, 'not-offered')
       if (change.type !== 'visibility') await destination(user, change)
       if (change.type === 'delete') await db.deleteReport(id)
       else if (change.type === 'visibility') await db.setReportVisible(id, change.visible)
+      else if (change.type === 'opening') await db.setReportConfirmedDefault(id, change.confirmedDefault)
       else await db.setReportRepo(id, change.repoId, change.directory)
       return { report, user }
     },

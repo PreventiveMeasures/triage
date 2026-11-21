@@ -2,7 +2,7 @@ import { inheritReportMeta, isAppFinding, reportEntries, revalidateKindOf } from
 import { collectDuplicates } from '../../client/linked-findings.js'
 import { dependencyDirectory, isDependencyFile } from '../../client/dependency-paths.js'
 import { hasRevalidateStamp } from '../finding-filters.js'
-import { workspaceApp, workspaceAppMetadata, workspaceAppRows } from '../workspace-app.js'
+import { confirmedDefaultOffered, workspaceApp, workspaceAppMetadata, workspaceAppRows } from '../workspace-app.js'
 import { mergeReportGroups } from '../workspace-groups.js'
 
 // The same classification as local workspaces, using only the complete,
@@ -74,13 +74,25 @@ function lensOf(reports, groups) {
   }
 }
 
+// Whether one stored report, alone and whole, may be switched to open on
+// Confirmed (common/workspace-app.js confirmedDefaultOffered), asked as it
+// is uploaded and of one uploaded before (server-managed/report-opening.ts).
+// Its findings' IDs are backfilled first, as a team's are.
+export function managedReportConfirmedDefaultOffered(filename, data) {
+  const { reports, duplicates } = viewReports([{ filename, data }])
+  return confirmedDefaultOffered(reports, id => [...duplicates.get(id) ?? []])
+}
+
 // The workspace's reports as a view holds them (ui/view/ingest.js), with the
 // duplicates its links name, and those its own `links` name alone (`linked`).
+// A report switched to open on Confirmed (`confirmedDefault`) stamps each of
+// its findings so, and no other finding is, whatever its report wrote
+// (common/finding-filters.js confirmedCoverage).
 function viewReports(workspace) {
   const duplicates = new Map(), linked = new Map(), reports = []
   collectDuplicates(workspace.links ?? [], duplicates)
   collectDuplicates(workspace.links ?? [], linked)
-  for (const { filename, data } of workspace) {
+  for (const { filename, data, confirmedDefault } of workspace) {
     if (data.source === 'links' && Array.isArray(data.links)) {
       collectDuplicates(data.links, duplicates)
       continue
@@ -88,7 +100,7 @@ function viewReports(workspace) {
     const entries = (reportEntries(data) ?? []).map(entry => Array.isArray(entry) ? entry : [entry])
     const judged = new Set(entries.flat().filter(hasRevalidateStamp).map(f => f.source ?? data.source ?? null))
     const groups = entries.map(group => group.map(f => {
-      const finding = { ...f, _source: f.source ?? data.source ?? null }
+      const finding = { ...f, _source: f.source ?? data.source ?? null, _confirmedDefault: confirmedDefault === true }
       inheritReportMeta(finding, data)
       if (!('isApp' in finding)) finding.isApp = isAppFinding(finding, finding._source)
       finding._sourcePass = judged.has(finding._source)

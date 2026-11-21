@@ -73,6 +73,7 @@
 //   GET  /api/admin/reports/<id> → admin|manage downloads a stored report | 401/403/404
 //   DELETE /api/admin/reports/<id> → admin|manage deletes a report | 401/403/404
 //   POST /api/admin/reports/set-repo → admin|manage attaches/detaches a report's repo | 401/403/404
+//   POST /api/admin/reports/set-opening → admin|manage switches a report to open on Confirmed, where it offers that | 401/403/404/409/503
 //   GET  /api/admin/reports/<id>/location → admin|manage live location suggestion | 401/403/404/503
 //   GET  /api/bundles/<id>/{metadata,contents} → authorized encoded bytes | 401/404/422
 //   GET  /api/bundles/<id>/advisories → published dependency advisories (security access), of one ?reason= or ?entry= point where given | 400/401/403/404
@@ -227,6 +228,7 @@ import { teamAppKey, teamAppStates, withWorkspaceSummary } from './team-app.ts'
 import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
+import { confirmedDefaultOffered, readConfirmedOffered, withConfirmedOffered } from './report-opening.ts'
 import { BundleBuildError, buildRepositoryBundle, buildRepositoryLockfile, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, type NpmVersionStore, VERSION_KEPT_MS, canReadPrivateNpm, npmFileRows, npmPublishTime, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions, readTogether } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
@@ -308,6 +310,7 @@ const REPO_RISK_PATH = '/api/admin/repositories/risk'
 const ADMIN_REPORTS_PATH = '/api/admin/reports'
 const REPORT_SET_REPO_PATH = '/api/admin/reports/set-repo'
 const REPORT_SET_VISIBLE_PATH = '/api/admin/reports/set-visible'
+const REPORT_SET_OPENING_PATH = '/api/admin/reports/set-opening'
 const REPORT_PREFIX = '/api/admin/reports/'
 const ADMIN_BUNDLES_PATH = '/api/admin/bundles'
 const BUNDLE_CREATE_PATH = '/api/admin/bundles/create'
@@ -1306,6 +1309,31 @@ async function handleSetReportVisible(req: IncomingMessage, res: ServerResponse,
   sendJson(res, 200, { ok: true, visible })
 }
 
+// POST /api/admin/reports/set-opening — switch a stored report to open on
+// Confirmed whatever Confirmed hides, or back to the outcome its view works
+// out (report-opening.ts). Body { reportId, confirmedDefault }. On only where
+// the report offers it (409 `not-offered`): one not read for that yet is read
+// first, 503 where its bytes cannot be. Off is always allowed.
+async function handleSetReportOpening(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await manageMutation(req, res, deps, cookie, { handed: true })
+  if (s == null) return
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { reportId, confirmedDefault } = body
+  if (typeof reportId !== 'string' || typeof confirmedDefault !== 'boolean') { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (confirmedDefault) {
+    // The mutation checks access again as it writes; this read only for one
+    // the manager may read, so it tells nothing of any other.
+    const stored = await canViewReport(deps, s.user, reportId) ? await deps.db.getReport(reportId) : null
+    if (stored?.confirmedOffered === null && await readConfirmedOffered(deps.db, deps.reportStore, stored) === null) { sendJson(res, 503, { error: 'unavailable' }); return }
+  }
+  const { report, user } = await deps.db.mutateReport(s.session.id, reportId, { type: 'opening', confirmedDefault })
+  if (report.confirmedDefault !== confirmedDefault) {
+    await activity(deps, user, 'visibility', confirmedDefault ? 'set a report to open on Confirmed' : 'set a report to open on its detected outcome', { reportId, report: report.filename, repo: await repositoryName(deps, report.repoId) })
+  }
+  sendJson(res, 200, { ok: true, confirmedDefault })
+}
+
 async function handleSetBundleVisible(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await manageMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
@@ -1340,10 +1368,13 @@ async function handleSetBundleRepo(req: IncomingMessage, res: ServerResponse, de
 // GET /api/admin/reports — the uploaded reports for the "Manage reports" page.
 // Visible to admin|manage. Read-only, so no CSRF (like /api/admin/users).
 // `maxBytes` lets the page show / pre-check the upload size cap; `repos` feeds
-// the upload repo picker.
+// the upload repo picker. Reports uploaded before their opening was read are
+// read for it as they list, a bounded share each time (report-opening.ts).
 async function handleListReports(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession): Promise<void> {
+  const catalog = await deps.db.getReportCatalog(session.id, Date.now())
   sendJson(res, 200, {
-    ...await deps.db.getReportCatalog(session.id, Date.now()),
+    ...catalog,
+    reports: await withConfirmedOffered(deps.db, deps.reportStore, catalog.reports),
     maxBytes: deps.config.maxReportBytes,
   })
 }
@@ -1458,13 +1489,15 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
   const contentType = (firstHeader(req.headers['content-type']) ?? '').split(';', 1)[0]!.trim() || 'application/json'
   // A JSON report's parse already in hand, not parsed again for its hashes.
   const { bundleId, integrity } = await resolveReportBundle(deps, s.user, parsed.format === 'json' ? parsed.data : null)
+  // Last, as it backfills the parse's finding IDs.
+  const confirmedOffered = await confirmedDefaultOffered(filename, parsed.data)
   const dataKey = await deps.reportStore.put(id, bytes)
   let report: ReportRecord
   try {
     report = await deps.db.insertOrReuseReport({
       id, filename, contentType, byteSize: bytes.length, sha256, dataKey,
       uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId,
-      repoDirectory: directory, repoEmbedded, analyzer, visible: false, bundleId, bundleIntegrity: integrity,
+      repoDirectory: directory, repoEmbedded, analyzer, visible: false, bundleId, bundleIntegrity: integrity, confirmedOffered,
     }, Date.now(), s.session.id)
   } catch (err) {
     // A successful COMMIT can lose its acknowledgement. Never delete a file
@@ -5771,6 +5804,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === REPORT_SET_VISIBLE_PATH) {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleSetReportVisible(req, res, deps, cookie); return
+    }
+    if (path === REPORT_SET_OPENING_PATH) {
+      if (method !== 'POST') { send405(res, 'POST'); return }
+      await handleSetReportOpening(req, res, deps, cookie); return
     }
     if (path === '/api/admin/reports/finding-ids') {
       if (method !== 'GET') { send405(res, 'GET'); return }

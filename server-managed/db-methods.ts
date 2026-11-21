@@ -132,6 +132,10 @@ export interface ReportRecord {
   analyzer: string | null
   visible: boolean
   bundleId: string | null
+  // Whether it may be switched to open on Confirmed (null: not read yet), and
+  // whether it is (report-opening.ts).
+  confirmedOffered: boolean | null
+  confirmedDefault: boolean
 }
 
 // One transaction snapshots all metadata needed to authorize, filter and
@@ -143,6 +147,8 @@ export interface ReportAccessRecord {
   sha256: string
   repo: { github: string | null; directory: string }
   permissions: TeamUserPermissions
+  // Set where a team snapshot reads a report switched to open on Confirmed.
+  confirmedDefault?: true
 }
 export interface TeamReportAccessSnapshot extends ReportAccessSnapshot {
   teamId: string | null
@@ -179,6 +185,8 @@ export interface ReportRecordInput {
   visible: boolean
   bundleId: string | null
   bundleIntegrity: string | null
+  // Read of its content as it is uploaded (report-opening.ts); none: not yet.
+  confirmedOffered?: boolean | null
 }
 
 // A report row for the "Manage reports" list — adds display joins: uploader
@@ -202,6 +210,8 @@ export interface AdminReport {
   bundleFilename: string | null
   bundleIntegrity: string | null
   uploadedAt: number
+  confirmedOffered: boolean | null
+  confirmedDefault: boolean
 }
 
 export interface RepoDataItem {
@@ -471,6 +481,12 @@ export interface ManagedDb extends DependencyReviewStore, RepositoryDependencyRe
   // directory path.
   setReportRepo(id: string, repoId: number | null, repoDirectory?: string): Promise<boolean>
   setReportVisible(id: string, visible: boolean): Promise<boolean>
+  // A manager's switch of a report to open on Confirmed, resolving true iff it
+  // changed; and, of those not read for it yet, whether each may be
+  // (report-opening.ts), all in one write, any another read already told
+  // left as it is.
+  setReportConfirmedDefault(id: string, on: boolean): Promise<boolean>
+  setReportsConfirmedOffered(read: readonly { id: string; offered: boolean }[]): Promise<void>
   // Per-finding triage annotations, keyed by finding id alone (shared by every
   // report carrying the finding). listTriage reads the rows for a set of ids —
   // the endpoint passes a viewer's visible findings of one report; a cleared
@@ -611,7 +627,7 @@ const USER_TEAM_SCOPES_SQL = (user: string) => `SELECT tr.team_id AS teamId, tr.
 // shows under every team whose repo it's attached to).
 const USER_TEAM_REPORTS_SQL = (user: string) => `SELECT DISTINCT tr.team_id AS teamId, r.id AS id, r.slug AS slug, r.filename AS filename, r.analyzer, r.visible, r.uploaded_at,
     r.sha256 AS sha256, r.bundle_id AS bundleId, r.repo_id AS repoId, r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
-    tu.view_dependencies AS dependencies, tu.view_security AS security,
+    r.confirmed_default AS confirmedDefault, tu.view_dependencies AS dependencies, tu.view_security AS security,
     (SELECT role FROM managed_user WHERE id = tu.user_id) AS role
   FROM managed_team_user tu
   JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
@@ -644,18 +660,20 @@ type UserTeamRows = {
   scopes: { teamId: string; repoId: number; path: string; fullName: string }[]
   reports: {
     teamId: string; id: string; slug: string; filename: string; analyzer: string | null; sha256: string; bundleId: string | null; repoId: number
-    repoDirectory: string; repoFullName: string | null; visible: number; dependencies: number; security: number; role: string
+    repoDirectory: string; repoFullName: string | null; visible: number; confirmedDefault: number; dependencies: number; security: number; role: string
   }[]
   bundles: (Omit<UserTeamBundle, 'visible'> & { teamId: string; visible: number })[]
 }
 
-// A catalog report's content key: its content, where it is, and what its
-// reader may see of it (their grants and role) under the link reports'
-// revision `links`. A team snapshot names it of each report it reads.
-type CatalogReportRow = Pick<UserTeamRows['reports'][number], 'sha256' | 'bundleId' | 'filename' | 'repoId' | 'repoDirectory' | 'repoFullName' | 'dependencies' | 'security'>
+// A catalog report's content key: its content, where it is, whether it opens
+// on Confirmed, and what its reader may see of it (their grants and role)
+// under the link reports' revision `links`. A team snapshot names it of each
+// report it reads.
+type CatalogReportRow = Pick<UserTeamRows['reports'][number], 'sha256' | 'bundleId' | 'filename' | 'repoId' | 'repoDirectory' | 'repoFullName' | 'confirmedDefault' | 'dependencies' | 'security'>
 function reportCatalogKey(r: CatalogReportRow, role: string, links: string): string {
   return createHash('sha256').update(JSON.stringify([
     r.sha256, r.bundleId, r.filename, r.repoId, r.repoDirectory, r.repoFullName, r.dependencies, r.security, role, links,
+    ...r.confirmedDefault === 1 ? ['confirmed'] : [],
   ])).digest('base64url')
 }
 
@@ -845,9 +863,9 @@ function prepareStatements(db: ManagedSql) {
     selectAllReposStmt: db.prepare(`SELECT ${REPO_COLUMNS} FROM managed_selected_repo ORDER BY full_name ASC`),
     insertReportStmt: db.prepare(
       `WITH candidate(id, slug) AS (VALUES (?, ?))
-       INSERT INTO managed_report (id, slug, filename, content_type, byte_size, sha256, uploaded_by, uploaded_by_login, repo_id, repo_directory, repo_embedded, analyzer, visible, bundle_id, bundle_integrity, uploaded_at, data_key, storage_encrypted)
+       INSERT INTO managed_report (id, slug, filename, content_type, byte_size, sha256, uploaded_by, uploaded_by_login, repo_id, repo_directory, repo_embedded, analyzer, visible, bundle_id, bundle_integrity, uploaded_at, data_key, storage_encrypted, confirmed_offered)
        SELECT id, CASE WHEN EXISTS (SELECT 1 FROM managed_report WHERE slug = candidate.slug) THEN id ELSE slug END,
-              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM candidate`,
+              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM candidate`,
     ),
     // LEFT JOINs so a report whose uploader / repo / bundle was removed (the FK
     // nulled) still lists, with null display fields.
@@ -858,7 +876,7 @@ function prepareStatements(db: ManagedSql) {
               r.repo_directory AS repoDirectory, r.repo_embedded AS repoEmbedded,
               r.analyzer AS analyzer, r.visible AS visible,
               r.bundle_id AS bundleId, b.filename AS bundleFilename, r.bundle_integrity AS bundleIntegrity,
-              r.uploaded_at AS uploadedAt
+              r.uploaded_at AS uploadedAt, r.confirmed_offered AS confirmedOffered, r.confirmed_default AS confirmedDefault
          FROM managed_report r
          LEFT JOIN managed_user u ON u.id = r.uploaded_by
          LEFT JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
@@ -871,7 +889,8 @@ function prepareStatements(db: ManagedSql) {
       `SELECT id, slug, filename, content_type AS contentType, byte_size AS byteSize,
               sha256, uploaded_by AS uploadedBy, uploaded_at AS uploadedAt,
               repo_id AS repoId, repo_directory AS repoDirectory, repo_embedded AS repoEmbedded,
-              analyzer AS analyzer, visible AS visible, bundle_id AS bundleId
+              analyzer AS analyzer, visible AS visible, bundle_id AS bundleId,
+              confirmed_offered AS confirmedOffered, confirmed_default AS confirmedDefault
          FROM managed_report WHERE id = ?`,
     ),
     selectReportByHashStmt: db.prepare(
@@ -917,9 +936,10 @@ function prepareStatements(db: ManagedSql) {
                       WHERE tu.user_id = v.uid AND tu.team_id = ? AND t.hidden = 0) AS member,
               (SELECT json_group_array(json_object('id', x.id, 'filename', x.filename, 'byteSize', x.byteSize, 'sha256', x.sha256,
                         'visible', x.visible, 'bundleId', x.bundleId, 'repoId', x.repoId, 'repoDirectory', x.repoDirectory, 'repoFullName', x.repoFullName,
-                        'dependencies', x.dependencies, 'security', x.security) ORDER BY x.id)
+                        'confirmedDefault', x.confirmedDefault, 'dependencies', x.dependencies, 'security', x.security) ORDER BY x.id)
                  FROM (SELECT DISTINCT r.id AS id, r.filename AS filename, r.byte_size AS byteSize, r.sha256 AS sha256, r.visible AS visible,
                               r.bundle_id AS bundleId, r.repo_id AS repoId, r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
+                              r.confirmed_default AS confirmedDefault,
                               tu.view_dependencies AS dependencies, tu.view_security AS security
                          FROM managed_team_user tu
                          JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
@@ -943,6 +963,9 @@ function prepareStatements(db: ManagedSql) {
     deleteReportStmt: db.prepare(`DELETE FROM managed_report WHERE id = ?`),
     setReportRepoStmt: db.prepare(`UPDATE managed_report SET repo_id = ?, repo_directory = ? WHERE id = ?`),
     setReportVisibleStmt: db.prepare(`UPDATE managed_report SET visible = ? WHERE id = ?`),
+    setReportConfirmedDefaultStmt: db.prepare(`UPDATE managed_report SET confirmed_default = ? WHERE id = ? AND confirmed_default <> ?`),
+    setReportsConfirmedOfferedStmt: db.prepare(`UPDATE managed_report SET confirmed_offered = ?
+      WHERE confirmed_offered IS NULL AND id IN (SELECT value FROM json_each(?))`),
     upsertTriageStmt: db.prepare(
       `INSERT INTO managed_finding_triage (finding_id, color, triage, comment, fix, flagged, updated_by, updated_by_login, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1117,7 +1140,7 @@ function prepareStatements(db: ManagedSql) {
               ${ENABLED_LINKS_SQL} AS links,
               (SELECT json_group_array(json_object('teamId', x.teamId, 'id', x.id, 'slug', x.slug, 'filename', x.filename, 'analyzer', x.analyzer,
                         'visible', x.visible, 'sha256', x.sha256, 'bundleId', x.bundleId, 'repoId', x.repoId, 'repoDirectory', x.repoDirectory,
-                        'repoFullName', x.repoFullName, 'dependencies', x.dependencies, 'security', x.security, 'role', x.role)
+                        'repoFullName', x.repoFullName, 'confirmedDefault', x.confirmedDefault, 'dependencies', x.dependencies, 'security', x.security, 'role', x.role)
                         ORDER BY x.uploaded_at DESC, x.filename ASC, x.id ASC)
                  FROM (${USER_TEAM_REPORTS_SQL('v.id')}) AS x) AS reports,
               (SELECT json_group_array(json_object('teamId', x.teamId, 'id', x.id, 'slug', x.slug, 'integrity', x.integrity, 'filename', x.filename,
@@ -1265,24 +1288,28 @@ type ReportListRow = {
   repoId: number | null; repoFullName: string | null
   repoDirectory: string; repoEmbedded: number; analyzer: string | null; visible: number
   bundleId: string | null; bundleFilename: string | null; bundleIntegrity: string | null
-  uploadedAt: number
+  uploadedAt: number; confirmedOffered: number | null; confirmedDefault: number
 }
 type ReportRow = {
   id: string; slug: string; filename: string; contentType: string; byteSize: number
   sha256: string; uploadedBy: string | null; uploadedAt: number
   repoId: number | null; repoDirectory: string; repoEmbedded: number; analyzer: string | null; visible: number
-  bundleId: string | null
+  bundleId: string | null; confirmedOffered: number | null; confirmedDefault: number
 }
+// Its opening's columns as a report gives them.
+const reportOpening = (row: { confirmedOffered: number | null; confirmedDefault: number }) =>
+  ({ confirmedOffered: row.confirmedOffered == null ? null : row.confirmedOffered === 1, confirmedDefault: row.confirmedDefault === 1 })
 
 // A report as an access snapshot read it, and as the snapshot gives it: with
 // every permission where the reader's role sees `whole` reports.
 type AccessRow = Pick<ReportAccessRecord, 'id' | 'filename' | 'byteSize' | 'sha256'> & {
-  repoDirectory: string; repoFullName: string | null; dependencies: number; security: number
+  repoDirectory: string; repoFullName: string | null; dependencies: number; security: number; confirmedDefault?: number
 }
 const accessRecord = (row: AccessRow, whole: boolean): ReportAccessRecord => ({
   id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
   repo: { github: row.repoFullName, directory: row.repoDirectory },
   permissions: { dependencies: whole || row.dependencies === 1, security: whole || row.security === 1 },
+  ...row.confirmedDefault === 1 ? { confirmedDefault: true as const } : {},
 })
 
 // Byte storage may outlast a logout or grant change. HTTP uploads reauthorize
@@ -1304,7 +1331,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
   async function getReport(id: string): Promise<ReportRecord | null> {
     const row = (await selectReportStmt.get(id)) as ReportRow | undefined
     if (row == null) return null
-    return { ...row, repoEmbedded: row.repoEmbedded === 1, visible: row.visible === 1 }
+    return { ...row, repoEmbedded: row.repoEmbedded === 1, visible: row.visible === 1, ...reportOpening(row) }
   }
   async function getReportByHash(sha256: string, analyzer: string | null): Promise<ReportRecord | null> {
     const row = await stmts.selectReportByHashStmt.get(sha256, analyzer) as { id: string } | undefined
@@ -1317,6 +1344,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
       report.sha256, report.uploadedBy, report.uploadedByLogin ?? null, report.repoId,
       report.repoDirectory ?? '', report.repoEmbedded ? 1 : 0, report.analyzer ?? null, report.visible ? 1 : 0, report.bundleId ?? null,
       report.bundleIntegrity ?? null, now, report.dataKey ?? null, report.dataKey ? 1 : 0,
+      report.confirmedOffered == null ? null : report.confirmedOffered ? 1 : 0,
     )
   }
   return {
@@ -1335,7 +1363,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
     },
     async listReports(userId?: string): Promise<AdminReport[]> {
       const rows = (await selectReportsStmt.all(...asManager(userId))) as ReportListRow[]
-      return rows.map(r => ({ ...r, repoEmbedded: r.repoEmbedded === 1, visible: r.visible === 1 }))
+      return rows.map(r => ({ ...r, repoEmbedded: r.repoEmbedded === 1, visible: r.visible === 1, ...reportOpening(r) }))
     },
     async listFindingCatalogReports(after: string, limit: number): Promise<Pick<ReportRecord, 'id' | 'byteSize'>[]> {
       return await stmts.findingCatalogReportsStmt.all(after, limit) as Pick<ReportRecord, 'id' | 'byteSize'>[]
@@ -1386,6 +1414,15 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
     },
     async setReportVisible(id: string, visible: boolean): Promise<boolean> {
       return anyChanged(await setReportVisibleStmt.run(visible ? 1 : 0, id))
+    },
+    async setReportConfirmedDefault(id: string, on: boolean): Promise<boolean> {
+      return anyChanged(await stmts.setReportConfirmedDefaultStmt.run(on ? 1 : 0, id, on ? 1 : 0))
+    },
+    async setReportsConfirmedOffered(read: readonly { id: string; offered: boolean }[]): Promise<void> {
+      for (const offered of [true, false]) {
+        const ids = read.filter(entry => entry.offered === offered).map(entry => entry.id)
+        if (ids.length > 0) await stmts.setReportsConfirmedOfferedStmt.run(offered ? 1 : 0, JSON.stringify(ids))
+      }
     },
   }
 }

@@ -61,6 +61,26 @@ function rowsOf({ linked, app }) {
   return ids
 }
 
+// Whether a managed report may be switched to open on Confirmed whatever
+// Confirmed hides (Manage → Reports, common/finding-filters.js
+// confirmedCoverage): only where the switch changes something, a set whose
+// pass leaves Confirmed rows of its own to show, but which is no basic App
+// view of its own, as the stricter of the two rules has it (canLockConfirmed):
+// Confirmed would hide a finding the opening range shows, or one not LOW the
+// 6–10 band shows below a floor the opening tuned higher. Asked of the set as
+// the App view merges it, with no copy counted as switched already. A set
+// with contradicting verdicts opens with no App layer, and so with no
+// Confirmed to open on; one of nothing but other analyzers' unjudged findings
+// has no pass to have an answer.
+export function confirmedDefaultOffered(reports, duplicatesOf = () => []) {
+  const { groups, conflicts } = mergeReportGroups(reports, { hideRuledOut: true })
+  if (conflicts.size > 0) return false
+  const linked = mergeLinkedWorkspaceGroups(groups, duplicatesOf, appTabs)
+  const kinds = activeRevalidateKinds('confirmed', '')
+  if (!linked.map(appTabs).some((g) => g.some((f) => kinds.includes(revalidateKindOf(f))))) return false
+  return !canLockConfirmed(linked, { tabs: appTabs, kindOf: revalidateKindOf, severityMode: 'corrected' })
+}
+
 // A workspace's rows as its basic App view merges them, and whether it has one.
 function appView(reports, duplicatesOf) {
   const { groups, conflicts } = mergeReportGroups(reports, { hideRuledOut: true })

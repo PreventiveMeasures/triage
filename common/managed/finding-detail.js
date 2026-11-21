@@ -66,7 +66,7 @@ const rows = data => (reportEntries(data) ?? []).flat().length
 // their App rows (`folded: 'rows'`). Folded, the `lens` the rows left out
 // tell (team-app.js managedTeamLens). All of it read from `view`, the
 // workspace's (team-app.js managedTeamView), where its builder has one.
-export function liteWorkspace(reports, links, view = managedTeamView(Object.assign(reports.map(({ filename, data }) => ({ filename, data })), { links }))) {
+export function liteWorkspace(reports, links, view = managedTeamView(Object.assign(reports.map(({ filename, data, confirmedDefault }) => ({ filename, data, confirmedDefault })), { links }))) {
   const shown = view.rows
   const fold = shown !== null || !view.conflicted()
   const lite = reports.map(report => ({ ...report, data: liteReportData(report.data, { fold, shown }) }))

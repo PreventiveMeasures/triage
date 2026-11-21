@@ -8,7 +8,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { WebSocket } from 'ws'
 import { type ManagedDb, type ManagedDbOptions, createManagedMethods } from './db-methods.ts'
 import { revisionSchema } from './revisions.ts'
-import { MANAGED_SCHEMA, REPO_UPLOAD_INDEXES, VIEW_SESSION_INDEX } from './db-schema.ts'
+import { MANAGED_SCHEMA, REPORT_OPENING_COLUMNS, REPO_UPLOAD_INDEXES, VIEW_SESSION_INDEX } from './db-schema.ts'
 import { STORAGE_SCHEMA } from './storage-db.ts'
 import { GITHUB_COMMIT_SCHEMA, GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUMN } from './github-metadata.ts'
 import { MANAGED_ISSUE_SCHEMA } from './managed-issues.ts'
@@ -40,7 +40,7 @@ const LOCK = 'SELECT pg_advisory_xact_lock(1937006964, 1835101793)'
 // Whether every version up to the latest is recorded, in one round trip at
 // a cold start: a database with no versions table yet (undefined_table) has
 // none. Outside a transaction, so the failed read aborts nothing.
-const SCHEMA_VERSIONS = 36
+const SCHEMA_VERSIONS = 37
 async function currentSchema(db: PgConnection): Promise<boolean> {
   try {
     const { rows } = await db.query(`SELECT count(*) AS n FROM managed_schema_version WHERE version BETWEEN 1 AND ${SCHEMA_VERSIONS}`)
@@ -139,6 +139,9 @@ async function migrateFrom12(db: PgConnection): Promise<void> {
   // The patch a dependency review's base is of, none of those written
   // before; each author's one draft of a comparison held to it too.
   await migration(db, 36, `ALTER TABLE managed_dependency_review ${addColumns(DEPENDENCY_REVIEW_COLUMNS)}`, DEPENDENCY_REVIEW_INDEXES)
+  // Whether a report may open on Confirmed, existing ones read for it as the
+  // reports page lists them (report-opening.ts), and none switched yet.
+  await migration(db, 37, `ALTER TABLE managed_report ${addColumns(REPORT_OPENING_COLUMNS)}`)
 }
 
 async function initialize(db: PgConnection): Promise<void> {
