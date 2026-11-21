@@ -6,6 +6,28 @@ import { providerIcon } from './provider-icons.js'
 
 const CHEVRON = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>`
 
+// `load(signal, apply)`'s answers (a cached one, then the fresh) to `apply`,
+// `first` for the first, until the host's next load (`_controller`): a
+// failure before any answer is its `_error`, and `settled` follows unless superseded.
+export async function loadLatest(host, load, apply, settled) {
+  host._controller?.abort()
+  const controller = host._controller = new AbortController()
+  let received = false
+  const take = data => {
+    if (controller.signal.aborted) return
+    const first = !received
+    received = true
+    apply(data, first)
+  }
+  try {
+    take(await load(controller.signal, take))
+  } catch (err) {
+    if (!controller.signal.aborted && !received) host._error = String(err?.message ?? err)
+  } finally {
+    if (!controller.signal.aborted) settled?.()
+  }
+}
+
 class ScanModelPicker extends LitElement {
   static properties = {
     loadModels: { attribute: false }, pending: { type: Boolean },
@@ -156,23 +178,13 @@ class ScanModelPicker extends LitElement {
   async _load() {
     this._controller?.abort()
     if (this.pending) return
-    const controller = new AbortController()
-    this._controller = controller
     this._error = null
-    let received = false
-    const apply = data => {
-      if (controller.signal.aborted) return
-      received = true
+    await loadLatest(this, (signal, apply) => this.loadModels(signal, apply), data => {
       this._models = data.models
       const selected = data.models.find((model) => model.id === this.value)
       if (!selected) this._select(data.defaultModel)
       else if (!selected.efforts.includes(this.effort)) this._setEffort(defaultEffort(selected))
-    }
-    try {
-      apply(await this.loadModels(controller.signal, apply))
-    } catch (err) {
-      if (!controller.signal.aborted && !received) this._error = String(err?.message ?? err)
-    }
+    })
   }
 
   _close() {

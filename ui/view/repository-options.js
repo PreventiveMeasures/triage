@@ -1,3 +1,5 @@
+import { matchingChoices } from './searchable-selector.js'
+
 // Presentation only: keep original values intact (URLs, numeric IDs, and
 // sentinel values all have different meanings to the consumers).
 export function repositoryParts(label) {
@@ -13,7 +15,6 @@ export function repositoryParts(label) {
   return match ? { owner: match[1], name: match[2] } : { owner: null, name: label }
 }
 
-const searchKey = value => value.normalize('NFKC').toLocaleLowerCase()
 const compare = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
 export const OTHER_REPOSITORIES = Symbol('other repositories')
 
@@ -30,8 +31,8 @@ export function repositoryChoices(options, query = '', organization = null, { in
   const otherCount = entries.filter(entry => !entry.special && !entry.reset && isOther(entry)).length
   if (otherCount > 0) organizations.push({ value: OTHER_REPOSITORIES, name: 'Other', count: otherCount })
   const activeOrganization = organizations.some(group => group.value === organization) ? organization : null
-  const words = searchKey(query.trim()).split(/\s+/u).filter(Boolean)
-  const matches = entry => words.every(word => searchKey(entry.label).includes(word))
+  const matching = new Set(matchingChoices(entries, query, { sorted: false }).sections[0].options)
+  const matches = entry => matching.has(entry)
   // "All repositories" remains available as an explicit filter reset while
   // searching. Unattached/no-repo entries participate in search normally.
   const pinned = entries.filter(entry => entry.reset || (entry.special && matches(entry)))

@@ -2,6 +2,7 @@ import { LitElement, css, html, nothing } from 'lit'
 import { appMarkup } from '../view/markup.js'
 import { REPORT_FILE_ICONS } from '../view/report-logos.js'
 import { modelName } from '../view/scan-models.js'
+import { loadLatest } from '../view/scan-model-picker.js'
 import { ADD_ROW_ICON, REMOVE_ROW_ICON, ROW_ACTION_STYLES } from './row-actions.js'
 import '../view/bundle-selector.js'
 import '../view/repository-selector.js'
@@ -36,12 +37,13 @@ export class ReportInputs extends LitElement {
     if (['_sources', '_merge', '_link', 'mode', 'restore'].some(key => changed.has(key))) this._notify()
   }
   get _current() { return this.mode === 'merge' ? this._merge : this._link }
+  // Whether `parent`, a workspace or a repository, holds `report`.
+  _holds(parent, report) { return this._current.kind === 'workspace' ? parent.reports.includes(report.id) : report.repoIds.includes(parent.id) }
   get _parents() {
     if (this.mode === 'merge') return this._sources?.merge?.bundles ?? []
     const reports = this._sources?.link?.reports ?? []
-    return this._current.kind === 'workspace'
-      ? (this._sources?.link?.workspaces ?? []).filter(workspace => reports.some(report => workspace.reports.includes(report.id)))
-      : (this._sources?.link?.repositories ?? []).filter(repo => reports.some(report => report.repoIds.includes(repo.id)))
+    const parents = this._current.kind === 'workspace' ? this._sources?.link?.workspaces : this._sources?.link?.repositories
+    return (parents ?? []).filter(parent => reports.some(report => this._holds(parent, report)))
   }
   get _selectedParents() {
     const parents = this._parents
@@ -51,7 +53,7 @@ export class ReportInputs extends LitElement {
   get _scopeOptions() {
     const reports = this._sources?.link?.reports ?? []
     return this._parents.map(parent => {
-      const count = reports.filter(report => this._current.kind === 'workspace' ? parent.reports.includes(report.id) : report.repoIds.includes(parent.id)).length
+      const count = reports.filter(report => this._holds(parent, report)).length
       return { value: parent.id, label: parent.label, detail: `${count} ${count === 1 ? 'report' : 'reports'}` }
     })
   }
@@ -59,8 +61,7 @@ export class ReportInputs extends LitElement {
     const parents = this._selectedParents
     if (parents.length === 0) return []
     if (this.mode === 'merge') return (this._sources?.merge?.results ?? []).filter(result => result.bundleId === parents[0].id)
-    return (this._sources?.link?.reports ?? []).filter(report => this._current.kind === 'workspace'
-      ? parents[0].reports.includes(report.id) : report.repoIds.some(id => parents.some(parent => parent.id === id)))
+    return (this._sources?.link?.reports ?? []).filter(report => parents.some(parent => this._holds(parent, report)))
   }
   get selection() {
     const parents = this._selectedParents
@@ -73,16 +74,12 @@ export class ReportInputs extends LitElement {
   }
   _notify() { this.dispatchEvent(new CustomEvent('report-inputs-change', { detail: this.selection, bubbles: true, composed: true })) }
   async _load() {
-    this._controller?.abort()
-    const controller = this._controller = new AbortController()
     this._loading = true
     this._error = null
     this._notify()
-    let received = false
-    const apply = sources => {
-      if (controller.signal.aborted) return
-      const initial = !received
-      received = true
+    const loaded = () => { this._loading = false; this._notify() }
+    const load = (signal, apply) => this.loadSources ? this.loadSources(signal, apply) : { merge: { bundles: [], results: [] }, link: { repositories: [], reports: [] } }
+    await loadLatest(this, load, (sources, initial) => {
       this._sources = sources
       if (initial) {
         this._merge = emptySelection('bundle')
@@ -90,16 +87,8 @@ export class ReportInputs extends LitElement {
       }
       this._selectOnlySource()
       if (initial) this._restore()
-      this._loading = false
-      this._notify()
-    }
-    try {
-      apply(this.loadSources ? await this.loadSources(controller.signal, apply) : { merge: { bundles: [], results: [] }, link: { repositories: [], reports: [] } })
-    } catch (err) {
-      if (!controller.signal.aborted && !received) this._error = String(err?.message ?? err)
-    } finally {
-      if (!controller.signal.aborted) { this._loading = false; this._notify() }
-    }
+      loaded()
+    }, loaded)
   }
   _setCurrent(value) { if (this.mode === 'merge') this._merge = value; else this._link = value }
   // The ids of the inputs shown that `keep` keeps.
