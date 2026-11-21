@@ -9,12 +9,11 @@ import { showToast } from './toast.js'
 
 // A team's board is drawn from its reports without their findings' detail
 // (`lite`), the whole reports asked for beside them (ingest.js
-// switchToManagedTeam). Until they are in, a popup, a view mode other than
-// the board and an export wait for them (render.js, events.js); once in,
-// each finding is filled in where it is, or, where the board's copy left
-// rows out (App mode's, common/managed/finding-detail.js), the whole reports
-// are ingested in its place; and the team's finding index
-// (client/managed/workspace.js) built again from them.
+// switchToManagedTeam); a popup, another view mode and an export wait for
+// them (render.js, events.js). Once in, each finding is filled in where it
+// is, or, where the board's copy left rows out (common/managed/
+// finding-detail.js), the whole reports are ingested in its place; the
+// team's finding index (client/managed/workspace.js) is built again.
 let current = null
 
 // Whether the loaded reports are those the details are for, or are being
@@ -41,11 +40,10 @@ export function managedDetailsReady() {
   return awaited() ? current.ready : Promise.resolve(true)
 }
 
-// How the board's copy of the loaded reports left out rows App mode does not
-// show (common/managed/finding-detail.js liteWorkspace), until the whole
-// reports are in: 'rows', those beneath App rows, which a lens other than
-// App's waits for (render.js); 'app', all but those its App view shows, which
-// any other view waits for; false where it left out none.
+// The rows the board's copy left out (finding-detail.js liteWorkspace) till
+// the whole reports are in: 'rows', those beneath App rows, which another
+// lens waits for (render.js); 'app', all but its App view's, which any other
+// view waits for; false, none.
 export function managedDetailsFolded() {
   return awaited() && !current.ok && current.folded
 }
@@ -65,12 +63,10 @@ function standing(shown, signal) {
   })
 }
 
-// Fills the loaded reports' findings in from `request`'s whole reports, then
-// `loaded()`, as long as they are still loaded. Whole reports not holding the
-// same findings, as where the board's copy was `folded`, are ingested in
-// their place once the view is `shown`, by `replace(workspace)`, true once it
-// stands; ones that fail, or cannot be ingested, leave the board as it is,
-// telling so. A view left before then waits for nothing.
+// The loaded findings filled in from `request`'s whole reports, then
+// `loaded()`, while they are still loaded. Whole reports holding other
+// findings (a `folded` copy) are ingested in their place once the view is
+// `shown`, by `replace(workspace)`; one failing leaves the board, saying so.
 export function awaitManagedDetails(teamId, request, loaded, { folded = false, lens = null, shown = Promise.resolve(true), signal, replace } = {}) {
   const entry = current = { reports: store(state.reports), folded, lens, done: false, ok: false, replacing: false, ready: null }
   const loadedStill = () => current === entry && store(state.reports) === entry.reports
@@ -100,10 +96,9 @@ export function awaitManagedDetails(teamId, request, loaded, { folded = false, l
   })()
 }
 
-// Fills each ingested finding (ingest.js ingestReport) from its report's
-// entry's member at the same place, non-empty entries alone. None where a
-// loaded report or finding has no match, as when a report changed between the
-// two reads: findings are filled all together, or not at all.
+// What fills each ingested finding from its report entry's member at the
+// same place (non-empty entries alone): all together, or, where any loaded
+// report or finding has no match (it changed between the reads), none.
 function detailsFill(reports, workspace) {
   const whole = new Map(workspace.map(report => [report.id, report.data]))
   const pairs = []

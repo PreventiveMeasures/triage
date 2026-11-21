@@ -745,17 +745,10 @@ function triageMenuTemplate(group, title, context, groupSt, activeTab) {
 // A tab's comment, fix and flag, as inert marks at its end, where it has
 // them.
 function tabMarksTemplate(entry, finding) {
-  const hasComment = Boolean(entry?.comment)
-  const hasFix = Boolean(entry?.fix || automaticFixFor(finding))
-  const flagged = entry?.flagged === true
-  if (!hasComment && !hasFix && !flagged) return nothing
-  return html`<span class="tab-marks">${
-    hasComment ? html`<span class="has-comment" role="img" aria-label="Has a comment">${COMMENT_ICON}</span>` : nothing
-  }${
-    hasFix ? html`<span class="has-fix" role="img" aria-label="Has a fix link">${FIX_ICON}</span>` : nothing
-  }${
-    flagged ? html`<span class="flagged" role="img" aria-label="Flagged">${FLAG_ICON}</span>` : nothing
-  }</span>`
+  const marks = [[entry?.comment, 'has-comment', 'Has a comment', COMMENT_ICON], [entry?.fix || automaticFixFor(finding), 'has-fix', 'Has a fix link', FIX_ICON],
+    [entry?.flagged === true, 'flagged', 'Flagged', FLAG_ICON]].filter(([shown]) => shown)
+  if (marks.length === 0) return nothing
+  return html`<span class="tab-marks">${marks.map(([, cls, label, glyph]) => html`<span class=${cls} role="img" aria-label=${label}>${glyph}</span>`)}</span>`
 }
 
 function tabsTemplate(tabs, activeKey, groupSt) {

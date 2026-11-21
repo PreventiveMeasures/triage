@@ -1,11 +1,9 @@
-// Tabs of one browser share its session cookie: a sign-in in one, or a view
-// as another user begun or ended there, changes the session every other tab's
-// requests are sent as, ending none of theirs, so nothing they hold tells
-// them, a live feed staying on the session it was opened with. Each tab tells
-// the others the session it finds, as a digest alone, once it changes; one
-// told of another than its own asks for its own again (sidebar.js). In memory
-// alone (BroadcastChannel), kept nowhere; a public share's, which no cookie
-// names, tells nothing.
+// Tabs of one browser share its session cookie: a sign-in, or a view as
+// another user, in one changes every other's session without telling them
+// (a live feed stays on the one it opened with). So each tab tells the
+// others, by BroadcastChannel, a digest of the session it finds as it
+// changes; one told of another asks for its own again (sidebar.js). A public
+// share's, which no cookie names, tells nothing.
 const CHANNEL = 'deepview-managed-session'
 let channel = null
 let told = null
@@ -41,14 +39,11 @@ async function markOf(session) {
   return [...new Uint8Array(await subtle.digest('SHA-256', new TextEncoder().encode(text)))].map(byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
-// The session this tab found, told the others where it is another than the
-// one it last told. Where nothing was told since its probe was sent
-// (`since`, heardManagedSessions then), what it found is the newer: another
-// told before, its sender perhaps closed since, is told over and heard no
-// more. Otherwise another told before this tab had told its own, which went
-// unheeded (its probe then perhaps read the cookie before it changed), is
-// heeded now, once. One a later call overtook, its digest done after, tells
-// nothing.
+// The session this tab found, told where it isn't the one it last told.
+// Where nothing was told since its probe was sent (`since`), what it found
+// is the newer, and tells over another told before; else one told before
+// this tab told its own (its probe perhaps read the old cookie) is heeded
+// now, once. A call a later one overtook tells nothing.
 export async function announceManagedSession(session, since) {
   if (session?.publicShare) return
   const turn = ++announcing

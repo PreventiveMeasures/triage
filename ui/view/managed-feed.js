@@ -13,15 +13,13 @@ export function stopManagedTeamFeed() {
   active = null
 }
 // Whether the feed is connected and has told the catalog since, as each
-// connection first does: a session or role gone closes it
-// ('managed-feed-closed'), and the catalog comes as it changes, so neither
-// need be asked of the server meanwhile.
+// connection first does: the session and catalog then need no asking
+// meanwhile ('managed-feed-closed' tells of a session or role gone).
 export const managedTeamFeedLive = () => active?.live === true && active.current()
 
-// A tab hidden HIDDEN_PAUSE_MS lets its feed go: the server holds a stream
-// open, polling for it, for every tab, seen or not. Shown again, the tab
-// starts one as its view would, whose first event catches the view up with
-// what changed meanwhile, as a reconnect's does.
+// A tab hidden HIDDEN_PAUSE_MS lets its feed go (the server polls a stream
+// for every tab, seen or not); shown again, it starts one, whose first event
+// catches the view up as a reconnect's does.
 const HIDDEN_PAUSE_MS = 60_000
 let hiddenTimer = null
 let pausedHidden = false
@@ -85,14 +83,12 @@ function waitForHydration(promise, signal) {
   })
 }
 
-// The connection belongs to the account and team, not to a page. Its annotation
-// consumer still belongs to the current view, so navigation cancels stale HTTP
-// reads without reconnecting the same stream. A team stream includes the catalog,
-// so a view wanting the catalog alone keeps an open one rather than reconnect to
-// leave its team and again to come back; a public share's goes with its team.
-// A view `loading` its team's reports connects meanwhile, attaching no reads
-// until they are in; one hydrating with `annotations` its preload asked for
-// (preloadManagedTeam) reads them at once, not waiting for the feed.
+// The connection belongs to the account and team, its annotation consumer to
+// the view: navigation cancels stale reads without reconnecting. A team
+// stream carries the catalog, so a catalog-only view keeps an open one (but
+// a public share's, which goes with its team). A view `loading` its team's
+// reports connects meanwhile, attaching no reads; one hydrating with the
+// `annotations` its preload asked for (preloadManagedTeam) reads them at once.
 export function startManagedTeamFeed({ catalogOnly = false, loading = false, hydrate, annotations } = {}) {
   // Let go while hidden: the feed the view wants starts when it is shown
   // again, though a view loading meanwhile still loads.
@@ -102,10 +98,9 @@ export function startManagedTeamFeed({ catalogOnly = false, loading = false, hyd
   const contentList = ['workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies'].includes(state.currentView)
   const wanted = (contentList || loading || focused && (!catalogOnly || active?.teamId === state.currentManagedTeam && !active.signal.aborted))
     ? state.currentManagedTeam : null
-  // Kept while live and its team is still one of the reader's: one left or
-  // deleted goes once the catalog says so, before a reconnect would find it
-  // gone; one connecting, or reconnecting after a drop, tells no catalog
-  // meanwhile, so a catalog feed is opened at once instead.
+  // Kept while live and its team still the reader's (one left goes once the
+  // catalog says so); one connecting tells no catalog, so a catalog feed
+  // opens instead.
   const kept = !wanted && !hydrate && !session?.publicShare && active?.teamId && managedTeamFeedLive()
     && state.managedTeams?.some(team => team.id === active.teamId) ? active : null
   const teamId = kept ? kept.teamId : wanted
@@ -176,9 +171,9 @@ export function startManagedTeamFeed({ catalogOnly = false, loading = false, hyd
   return target.ready
 }
 
-// A team's reports loading (ingest.js switchToManagedTeam): its feed connects,
-// and its annotations are asked for, as they load rather than after, for the
-// view's hydration to take (startManagedTeamFeed `annotations`).
+// A team's reports loading (ingest.js switchToManagedTeam): its feed
+// connects, and its annotations are asked for as they load, for the view's
+// hydration (startManagedTeamFeed `annotations`).
 export function preloadManagedTeam(signal) {
   startManagedTeamFeed({ loading: true })
   const read = createManagedAnnotationRead(state.currentManagedTeam, signal)

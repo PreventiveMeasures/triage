@@ -20,28 +20,19 @@ function severityLabel(s) {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
-// Extract the GHSA id from the advisory URL. The npm registry's
-// response carries the id only as part of the URL
-// (`https://github.com/advisories/GHSA-xxxx-xxxx-xxxx`), not as a
-// dedicated field — pull it out via regex so we can render it as a
-// stable chip alongside the title. Returns null when the URL is
-// missing or doesn't follow the documented shape.
+// The GHSA id in an advisory URL (`…/advisories/GHSA-xxxx-xxxx-xxxx`), the
+// only place the npm registry gives it; null where there is none.
 function ghsaIdFrom(url) {
   if (typeof url !== 'string') return null
   const m = /\/(GHSA-[a-z0-9-]+)(?:[/?#]|$)/iu.exec(url)
   return m ? m[1] : null
 }
 
-// An external link's glyph: a bare diagonal arrow filling its 16×16 box, in
-// the text's color (muted by default, accent on hover). After a GHSA id, and
-// after the npm package link in its header (render-bundle.js).
+// An external link's diagonal arrow, in the text's color: after a GHSA id,
+// and the npm package link in its header (render-bundle.js).
 export const EXTERNAL_LINK_ICON = html`<svg class="external-link-icon" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13L13 3"/><path d="M5 3h8v8"/></svg>`
 
-// MITRE CWE link for a `CWE-1234`-shaped id — link form is
-// https://cwe.mitre.org/data/definitions/<n>.html. Anything else
-// (a non-canonical CWE label, a plain string like "n/a") renders
-// as plain text. Surfaces the numeric id only; the link is the
-// only side-channel the user gets to the upstream definition.
+// A `CWE-1234` linking to MITRE's definition; anything else as text.
 function cweTemplate(c) {
   const m = /^CWE-(\d+)$/u.exec(c)
   if (!m) return html`<span>${c}</span>`

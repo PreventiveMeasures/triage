@@ -347,7 +347,7 @@ export class RevisionSelect extends LitElement {
 
   render() {
     const choices = this.entries()
-    const label = this.kind === 'commit' ? 'Commit SHA' : this.kind === 'tag' ? 'Tag' : 'Branch'
+    const label = REVISION_TYPES.find(type => type.kind === this.kind)?.label ?? 'Branch'
     const listed = this.kind !== 'commit'
     return html`<form class=${this._keyboard ? 'revision keyboard' : 'revision'} @pointerdown=${() => { this._pointer = true; this._keyboard = false }}
       @focusin=${() => { this._keyboard = !this._pointer }}

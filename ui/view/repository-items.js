@@ -34,8 +34,8 @@ export function knowItems(repoId, items, readAt, kind = null) {
     const key = keyOf(session, repoId, item.number)
     const held = known.items.get(key)
     if (held && held.readAt > readAt) continue
-    const from = held && (held.item.state === 'open' ? 'open' : 'closed')
-    const moved = !from || from === (item.state === 'open' ? 'open' : 'closed') ? held?.moved ?? null : { from, before: held.readAt }
+    const from = held && groupOf(held.item)
+    const moved = !from || from === groupOf(item) ? held?.moved ?? null : { from, before: held.readAt }
     known.items.set(key, { item: { ...item, kind: item.kind ?? kind ?? held?.item.kind ?? null }, readAt, moved })
     changed = true
   }

@@ -107,6 +107,7 @@ export function fetchNpmTypeOnly(...args) { return call('fetchNpmTypeOnly', args
 export function fetchBundleComparison(...args) { return call('fetchBundleComparison', args) }
 export function fetchNpmComparison(...args) { return call('fetchNpmComparison', args) }
 
+// The session as it is once the module has loaded.
 export async function openManagedShareDialog(team) {
   return (await loadManagedBundle()).openManagedShareDialog(team, '', state.managedSession)
 }
@@ -143,22 +144,16 @@ export function fetchReports(...args) { return call('fetchReports', args) }
 export function fetchTeamAnnotations(...args) { return call('fetchTeamAnnotations', args) }
 
 // Those of a team default to the one shown.
-export async function fetchReportTriage(id, teamId = state.currentManagedTeam, options) {
-  return (await loadManagedBundle()).fetchReportTriage(id, teamId, options)
-}
+export function fetchReportTriage(id, teamId = state.currentManagedTeam, options) { return call('fetchReportTriage', [id, teamId, options]) }
 export function fetchFixes(...args) { return call('fetchFixes', args) }
-export async function fetchReportComments(id, teamId = state.currentManagedTeam, options) {
-  return (await loadManagedBundle()).fetchReportComments(id, teamId, options)
+export function fetchReportComments(id, teamId = state.currentManagedTeam, options) { return call('fetchReportComments', [id, teamId, options]) }
+export function saveReportComment(reportId, entry, csrfToken, teamId = state.currentManagedTeam) {
+  return call('saveReportComment', [reportId, entry, csrfToken, teamId])
 }
-export async function saveReportComment(reportId, entry, csrfToken, teamId = state.currentManagedTeam) {
-  return (await loadManagedBundle()).saveReportComment(reportId, entry, csrfToken, teamId)
+export function deleteReportComment(reportId, commentId, version, csrfToken, teamId = state.currentManagedTeam) {
+  return call('deleteReportComment', [reportId, commentId, version, csrfToken, teamId])
 }
-export async function deleteReportComment(reportId, commentId, version, csrfToken, teamId = state.currentManagedTeam) {
-  return (await loadManagedBundle()).deleteReportComment(reportId, commentId, version, csrfToken, teamId)
-}
-export async function pushReportTriage(id, entries, csrfToken, teamId = state.currentManagedTeam) {
-  return (await loadManagedBundle()).pushReportTriage(id, entries, csrfToken, teamId)
-}
+export function pushReportTriage(id, entries, csrfToken, teamId = state.currentManagedTeam) { return call('pushReportTriage', [id, entries, csrfToken, teamId]) }
 
 export async function login(loginPath) {
   if (loginPath) managedHistory?.rememberFinding()
@@ -176,8 +171,8 @@ export function fetchTeamReports(...args) { return call('fetchTeamReports', args
 export function fetchTeamTrees(...args) { return call('fetchTeamTrees', args) }
 export function watchTeamFeed(...args) { return call('watchTeamFeed', args) }
 
-export async function fetchBundleAdvisories(id, teamId = state.currentManagedTeam, reason = '', repoAdvisories = false, details = false) {
-  return (await loadManagedBundle()).fetchBundleAdvisories(id, teamId, reason, repoAdvisories, details)
+export function fetchBundleAdvisories(id, teamId = state.currentManagedTeam, reason = '', repoAdvisories = false, details = false) {
+  return call('fetchBundleAdvisories', [id, teamId, reason, repoAdvisories, details])
 }
 
 export function dependencyReviews(...args) { return call('dependencyReviews', args) }

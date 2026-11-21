@@ -32,14 +32,13 @@ watchActivitySubtabs(tab => { if (tab === 'agents') repaint() })
 // each by id, name and avatar; an artifact's those of them it names.
 function checked(answer) {
   if (!Array.isArray(answer?.pulls) || !Array.isArray(answer.commits)) throw new TypeError('The server answered with no pull requests or commits.')
-  const agents = (Array.isArray(answer.agents) ? answer.agents : []).filter(agent => typeof agent?.id === 'string' && APP_AGENT.test(agent.id)
-    && !['claude', 'codex', 'all'].includes(agent.id) && typeof agent.name === 'string' && agent.name.trim()
+  const appAgent = id => typeof id === 'string' && APP_AGENT.test(id) && !['claude', 'codex', 'all'].includes(id)
+  const agents = (Array.isArray(answer.agents) ? answer.agents : []).filter(agent => appAgent(agent?.id) && typeof agent.name === 'string' && agent.name.trim()
     && (agent.avatar === undefined || (typeof agent.avatar === 'string' && AGENT_AVATAR.test(agent.avatar))))
     .map(({ id, name, avatar }) => [id, { id, name: name.trim().slice(0, 64), avatar: avatar ?? null }])
   const signed = item => Array.isArray(item?.signals?.sessions) && Array.isArray(item.signals.tasks)
   // An artifact's app agents, by id.
-  const marked = item => ({ ...item, signals: { ...item.signals, agents: Array.isArray(item.signals.agents)
-    ? item.signals.agents.filter(agent => typeof agent === 'string' && APP_AGENT.test(agent) && !['claude', 'codex', 'all'].includes(agent)) : [] } })
+  const marked = item => ({ ...item, signals: { ...item.signals, agents: Array.isArray(item.signals.agents) ? item.signals.agents.filter(appAgent) : [] } })
   return {
     pulls: answer.pulls.filter(pull => Number.isSafeInteger(pull?.number) && typeof pull.title === 'string' && Array.isArray(pull.closes) && signed(pull)).map(marked),
     commits: answer.commits.filter(commit => typeof commit?.oid === 'string' && /^[a-f\d]{40}$/u.test(commit.oid) && signed(commit)).map(marked),

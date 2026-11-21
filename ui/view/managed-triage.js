@@ -63,11 +63,10 @@ const baseline = new Map()
 const hydratedReports = new Set()
 const scopeFor = (id, teamId = state.currentManagedTeam) => JSON.stringify([teamId, id])
 
-// The edits captured since they last landed, per report id: the report they
-// were made in (the endpoint they go to) and the wire entries (null = clear)
-// by finding id. Captured at edit time, so neither a view switch nor the next
-// report's hydrate changes what gets sent — the timer only decides WHEN. A
-// batch that fails transiently is put back here for the next flush.
+// The edits captured since they last landed, per report: the report (the
+// endpoint) and the wire entries (null a clear) by finding id. Captured at
+// edit time, so no view switch or later hydrate changes what is sent, the
+// timer deciding only when; a batch failing transiently comes back here.
 const pending = new Map()
 let pushTimer = null
 // Flushes run in order: a later batch must not overtake an earlier one on the
@@ -194,10 +193,9 @@ function flushPending() {
   }).catch((err) => { console.warn('managed: Fix cache invalidation failed', err) })
 }
 
-// The change-notifier hook: fires at the tail of every saveTriage. No-op
-// outside an open, hydrated team report; otherwise capture the edits now and
-// debounce the send, so a burst (kanban drag, comment typing) collapses into
-// one POST.
+// The change-notifier, at the tail of every saveTriage: in an open, hydrated
+// team report, the edits captured now and sent debounced, a burst (a kanban
+// drag, typing) one POST.
 function scheduleTriagePush() {
   const active = activeManagedReports()
   if (active.length === 0 || !canPushTriage() || hydratedReports.size === 0) return
@@ -223,10 +221,9 @@ function scheduleTriagePush() {
   pushTimer = setTimeout(flushPending, PUSH_DEBOUNCE_MS)
 }
 
-// Register the managed triage change-notifier. Called after the
-// session probe; skipped for roles below 'triage' (their reads still hydrate,
-// they just have nothing to fan out) and outside managed mode, where the slot
-// local notifier belongs to the e2e sync client.
+// The managed triage change-notifier registered after the session probe;
+// not below 'triage' (whose reads still hydrate), nor outside managed mode,
+// where the slot is the e2e sync client's.
 let registered = false
 export function initManagedTriagePush() {
   if (registered || !canPushTriage()) return
@@ -234,10 +231,9 @@ export function initManagedTriagePush() {
   setManagedTriageChangeNotifier(scheduleTriagePush)
 }
 
-// A managed → local transition invalidates the open server scope. Drop the
-// debounce queue and hydration baseline immediately so a timer from the old
-// report cannot write after the local surface takes over, and a later managed
-// visit starts from fresh server state.
+// A managed → local transition: the queue and baseline dropped at once, so
+// no old timer writes after the local surface takes over, and a later
+// managed visit starts afresh.
 export function resetManagedTriage() {
   clearManagedWorkspace()
   state.managedComments?.clear()
@@ -259,15 +255,10 @@ function adopt(id, wire) {
   return setEntry(state.triage, id, { ...wire, ignoredReports, scopedIgnoredReports: local?.scopedIgnoredReports })
 }
 
-// Merge the server's entries for a just-opened team report's findings into
-// `state.triage`. The trusted server wins wholesale per id it knows — a value,
-// or null for a cleared entry (its tombstone), which clears the local one —
-// except the client-local `ignoredReports`, preserved unless the server entry
-// carries a triage bucket (the triage⊻ignore mutex, mirroring
-// applyTriageEntries). Ids the server has never seen keep their local entry,
-// which the follow-up push carries up: the user's triage of those findings,
-// never uploaded. Pushes for the report wait for this to finish. Returns true
-// only when the server state was adopted and this is still the active view.
+// The server's entries for a just-opened team report's findings merged into
+// `state.triage`: each id it knows adopted (adopt), each it has never seen
+// kept, for the follow-up push to carry up. Pushes for the report wait for
+// this. True only where adopted and still the active view.
 export async function hydrateManagedReportTriage(reportId, { renderView = true, signal, readAnnotations, except } = {}) {
   const reports = state.reports, teamId = state.currentManagedTeam
   const role = state.managedSession?.role, userId = state.managedSession?.id

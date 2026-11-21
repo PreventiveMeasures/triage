@@ -1,8 +1,6 @@
-// What the code viewer's Issues, Pull requests and Agents tabs
-// (repository-issues.js, repository-agents.js) and the popup of one of their
-// tiles (dialogs/repository-item-dialog.js) draw alike: an issue's or pull
-// request's state, review and checks, by their icons, as GitHub draws them;
-// the agents' marks; and where a session opens.
+// What the Issues, Pull requests and Agents tabs and their tiles' popup
+// (dialogs/repository-item-dialog.js) draw alike: states, reviews and checks
+// by GitHub's icons, the agents' marks, and where a session opens.
 import { html, nothing, svg } from 'lit'
 import { providerIcon } from './provider-icons.js'
 
