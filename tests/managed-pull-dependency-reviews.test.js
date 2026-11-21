@@ -720,10 +720,10 @@ test('where the host names each version\'s base, a pull request into the default
   assert.deepEqual([told.review.reviewedBases, addedVersions(told).versions.map(pkg => [pkg.name, pkg.base ?? null])],
     [true, [['left-pad', bases['left-pad']], ['mine', null], ['ms', bases.ms]]], 'as the client reads them')
   assert.ok(!read.some(request => request.includes(`ref=${mergeBase}`)), 'none of its merge base\'s lockfiles read')
-  // Asked with no review, or into another branch, it is read against its merge base, kept apart.
+  // Asked with no review, as a closed one's popup asks, nor: none of its versions told, as none is told unreviewed.
   read.length = 0
-  assert.deepEqual((await ask({})).body.lockfiles[0].added.map(pkg => [pkg.name, pkg.was ?? null]), [['left-pad', null], ['ms', ['2.1.2']]])
-  assert.ok(read.some(request => request.includes(`ref=${mergeBase}`)))
+  assert.deepEqual((await ask({})).body.lockfiles[0].added, [])
+  assert.ok(!read.some(request => request.includes(`ref=${mergeBase}`)))
 })
 
 test('an open pull request into a branch other than the default is told so, where its review is asked for and on', async t => {

@@ -273,7 +273,7 @@ Once it is registered:
 
 - each version's row links its review against the version named, whole where none is, and counts its lines against it where it is of its own package;
 - a review against the version named counts, as one against a version it replaced does;
-- a pull request into the default branch, where its review is on, is read without its merge base (no lockfile read there, no Stasis build), every unreviewed version its head locks its own; the branch's own state shows on the Dependencies tab's **Default branch**.
+- a pull request into the default branch, where its review is on, is read without its merge base (no lockfile read there, no Stasis build), every unreviewed version its head locks its own, its review asked for or not (a closed one's popup then lists none); the branch's own state shows on the Dependencies tab's **Default branch**.
 
 ### `parseComments`
 

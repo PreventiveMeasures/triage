@@ -2609,11 +2609,12 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
   // Where its review is on, those of lockfiles it leaves out told to none,
   // whoever asks.
   const setting = await deps.db.repoDependencyReview(repoId)
-  // Where its review is asked for and on, whether it is into a branch other
-  // than the default (`intoOther`); and where the host names bases, one into
-  // the default branch read without its merge base (`baseless`,
-  // pull-dependencies.ts): the branch's own state is told apart.
-  const repo = review && setting?.enabled ? (await deps.db.listSelectedRepos()).find(row => row.repoId === repoId) : undefined
+  // Where its review is on, whether it is into a branch other than the
+  // default (`intoOther`, where its review is asked for); and where the host
+  // names bases, one into the default branch read without its merge base,
+  // its review asked for or not (`baseless`, pull-dependencies.ts), nor any
+  // Stasis build of it made: the branch's own state is told apart.
+  const repo = setting?.enabled ? (await deps.db.listSelectedRepos()).find(row => row.repoId === repoId) : undefined
   const defaultBranch = repo ? repo.cachedDefaultBranch ?? repo.defaultBranch : null, into = deps.reviewedDependencies?.base ? defaultBranch : null
   // With the branches they are of, where told, kept with them.
   const answered = commits ? { value: { baseRef: commits.baseRef, headRef: commits.headRef, fork: commits.fork, commits: `${commits.base}...${commits.head}` }, kept: true }
@@ -2661,7 +2662,7 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
   // The comment the host formats of the reader's reviews of its versions, for
   // its copy button, but those its comments make of theirs already.
   const formatted = await formattedPull(reviewed, deps.db, user.id, told, state, { repository: fullName, number }, commented, bases)
-  const intoOther = defaultBranch !== null && typeof answered.value.baseRef === 'string' && answered.value.baseRef !== defaultBranch
+  const intoOther = review && defaultBranch !== null && typeof answered.value.baseRef === 'string' && answered.value.baseRef !== defaultBranch
   return { value: { number: told.number, ...dependencies, ...formatted ? { formatted } : {}, ...intoOther ? { intoOther } : {} }, kept: answered.kept && held !== null && !asked.github }
 }
 

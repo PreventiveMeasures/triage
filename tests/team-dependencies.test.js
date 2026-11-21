@@ -165,10 +165,10 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
   assert.equal(cards.join('').split('is-same').length - 1, 1, 'nor any other under another')
   assert.match(text, /<div class="team-deps-bar">\s*<span class="bundles-overview-sort"/u, 'nothing said of red rows in the line above the lists, as there are none')
   assert.match(cards[0], new RegExp(String.raw`<a class="team-deps-row" href=/npm/shared@1\.0\.0/review [^>]* data-tooltip=shared@1\.0\.0 \.tooltipContent=<div class="compare-tip">\s*` +
-    String.raw`<div class="team-deps-tip-name">shared@1\.0\.0</div>\s*<div class="compare-tip-rows"><span class="compare-tip-label">Present</span><span>none, new</span>` +
+    String.raw`<div class="team-deps-tip-name">shared@1\.0\.0</div>\s*<div class="compare-tip-rows">` +
     String.raw`<span class="compare-tip-label">Review</span><span>0 reviews of 2 required</span><span class="compare-tip-label">Listed</span><span>under a#1</span></div>\s*` +
-    String.raw`<div class="compare-tip-head">Pull requests</div>\s*<div class="compare-tip-rows"><span class=>a#1</span>\s*<span>adds it, 1/2</span>` +
-    String.raw`<span class=team-deps-tip-here>b#2</span>\s*<span>adds it, 0/2</span></div>\s*` +
+    String.raw`<div class="compare-tip-head">Pull requests</div>\s*<div class="compare-tip-rows"><span class=team-deps-tip-pull>\[object Object\]a#1</span>\s*<span>adds it, 1/2</span>` +
+    String.raw`<span class=team-deps-tip-pull team-deps-tip-here>\[object Object\]b#2</span>\s*<span>adds it, 0/2</span></div>\s*` +
     String.raw`<div class="compare-tip-head">Reviewed by</div>\s*<div class="compare-tip-rows"><span>cy</span>\s*<span>requests changes</span>` +
     String.raw`<span>kay</span>\s*<span>accepts, in a#1’s comments</span></div>\s*</div>>`, 'u'),
   'its details its tooltip, formatted: its name and version whole, those present before, its review, the one listing it; the pull requests adding it, each with its review there, ' +
@@ -187,7 +187,7 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
   assert.match(cards[2], /<a class="team-deps-row" href=\/npm\/shared@1\.0\.0\/review [^]*<span class="team-deps-review is-wanted">1\/2<\/span>\s*<span class="team-deps-also">\+1<\/span>[^]*aria-expanded=false [^]*<\/svg>and 3 more<\/button>/u,
     'the one holding every review made of it lists it, as it was, whoever is shown first: how many reviews it has, whose in its tooltip')
   assert.equal(cards[2].split('aria-expanded').length - 1, 1)
-  assert.match(cards[2], /data-tooltip=shared@1\.0\.0 \.tooltipContent=[^]*<span class="compare-tip-label">Review<\/span><span>1 review of 2 required; 1 reviewer in its comments<\/span><\/div>[^]*<span class=team-deps-tip-here>a#1<\/span>[^]*<span>kay<\/span>\s*<span>accepts, in a#1’s comments<\/span>/u,
+  assert.match(cards[2], /data-tooltip=shared@1\.0\.0 \.tooltipContent=[^]*<span class="compare-tip-label">Review<\/span><span>1 review of 2 required; 1 reviewer in its comments<\/span><\/div>[^]*<span class=team-deps-tip-pull team-deps-tip-here>\[object Object\]a#1<\/span>[^]*<span>kay<\/span>\s*<span>accepts, in a#1’s comments<\/span>/u,
     'its tooltip telling neither a review it lacks nor another listing it')
 
   // Each list past those shown opened, and closed again.
@@ -213,7 +213,7 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
   assert.equal(versions.split('>shared<').length - 1, 1, 'each once')
   assert.match(versions, /shared[^]*1\/2<\/span>\s*<span class="team-deps-elsewhere">a#1<\/span>\s*<span class="team-deps-also">b#2<\/span>\s*<\/a>/u,
     'as the one listing it tells it; one reviewing it in its comments its blue pill names, the other after, not red: it holds none')
-  assert.match(versions, /data-tooltip=shared@1\.0\.0 \.tooltipContent=[^]*<span class=>a#1<\/span>\s*<span>adds it, 1\/2<\/span><span class=>b#2<\/span>\s*<span>adds it, 0\/2<\/span>[^]*<span>kay<\/span>[^]*<span>cy<\/span>/u,
+  assert.match(versions, /data-tooltip=shared@1\.0\.0 \.tooltipContent=[^]*<span class=team-deps-tip-pull>\[object Object\]a#1<\/span>\s*<span>adds it, 1\/2<\/span><span class=team-deps-tip-pull>\[object Object\]b#2<\/span>\s*<span>adds it, 0\/2<\/span>[^]*<span>kay<\/span>[^]*<span>cy<\/span>/u,
     'its tooltip naming them all, none marked')
   assert.match(versions, />big-0<[^]*>1\/2<\/span>\s*<span class="team-deps-elsewhere">a#1</u, 'the first adding it too, all its pull requests\' alike')
   assert.doesNotMatch(versions.split('<li>').find(row => row.includes('>big-0<')), /team-deps-also/u, 'nor its adders\' pill, where it names all of them')
@@ -222,7 +222,7 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
 
   view.pick('branch')
   const branch = templateText(view.render())
-  assert.match(branch, /<h2>a<\/h2>\s*<p class="team-deps-quiet">2 versions unreviewed<\/p>[^]*href=\/npm\/old@1\.0\.0\/review [^]*<span class=>a#9<\/span>\s*<span>locks it, 1\/2<\/span>[^]*class="team-deps-elsewhere">a#9</u,
+  assert.match(branch, /<h2>a<\/h2>\s*<p class="team-deps-quiet">2 versions unreviewed<\/p>[^]*href=\/npm\/old@1\.0\.0\/review [^]*<span class=team-deps-tip-pull>\[object Object\]a#9<\/span>\s*<span>locks it, 1\/2<\/span>[^]*class="team-deps-elsewhere">a#9</u,
     'one a pull request reviews in its comments, which count there alone')
   const patched = branch.split('<li>').find(row => row.includes('>pat<'))
   assert.match(patched, new RegExp(`href=/npm/pat@1\\.0\\.0/review\\?patch=${patch.hash}&repo=7&commit=${'f'.repeat(40)}&path=patches/pat%401\\.0\\.0\\.patch `, 'u'),
@@ -230,7 +230,7 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
   assert.match(patched, new RegExp(`<span class="team-deps-patched">patched</span>\\s*<npm-delta \\.name=pat \\.version=1\\.0\\.0 \\.base=\\(empty\\) \\.patch=\\[object Object\\]></npm-delta>\\s*<span class="team-deps-elsewhere">a#9</span>`, 'u'),
     'its lines counted as its patch changes it; its reviews of it as patched, those a pull request\'s comments make of the same patch told so')
   assert.match(patched, /<span class="compare-tip-label">Patched<\/span><span>patches\/pat@1\.0\.0\.patch<\/span>/u, 'its patch\'s file in its tooltip')
-  assert.match(patched, /<span class=>a#9<\/span>\s*<span>locks it, 1\/2<\/span>[^]*<span>lee<\/span>\s*<span>accepts, in a#9’s comments<\/span>/u,
+  assert.match(patched, /<span class=team-deps-tip-pull>\[object Object\]a#9<\/span>\s*<span>locks it, 1\/2<\/span>[^]*<span>lee<\/span>\s*<span>accepts, in a#9’s comments<\/span>/u,
     'and who reviews the same patch in that pull request\'s comments')
   assert.match(branch, /<h2>b<\/h2>\s*<p class="team-deps-quiet">0 versions unreviewed, 1 lockfile unread<\/p>\s*<p class="team-deps-quiet" role="alert">Unread, so what it locks isn’t checked:\s*<code>web\/bun\.lock<\/code>/u,
     'one wanting none, but whose lockfile is unread')
@@ -476,7 +476,7 @@ test('a version several pull requests add: listed under one of those reviewing i
     assert.match(text, /<p class="team-deps-quiet team-deps-key">3 versions lack reviews made elsewhere<\/p>/u, 'each counted in the line above them')
 
     // A review published to the team, counting where a pull request but locks the version and not where one adds it: not lacked there, as it is no comment's.
-    assert.match(card(14), /<ul class="team-deps-versions"><li><a class="team-deps-row" href=\/npm\/stacked@[^]*<span class=>m#15<\/span>\s*<span>locks it, 1\/3<\/span>[^]*1\/3<\/span>\s*<\/a>/u)
+    assert.match(card(14), /<ul class="team-deps-versions"><li><a class="team-deps-row" href=\/npm\/stacked@[^]*<span class=team-deps-tip-pull>\[object Object\]m#15<\/span>\s*<span>locks it, 1\/3<\/span>[^]*1\/3<\/span>\s*<\/a>/u)
     assert.doesNotMatch(card(14), /is-behind|compare-tip-label">Lacks|is-same/u)
 
     // One holding no review of it: never red, but dimmed under the one holding one, which lists it.
@@ -718,3 +718,4 @@ test('a pull request into a branch other than the default is left out where it a
     }
   } finally { dependencies['7#9'] = was }
 })
+

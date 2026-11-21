@@ -2065,6 +2065,7 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
    pull request it is listed under marked among those adding it. */
 .team-deps-tip-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
 .team-deps-tip-here { font-weight: 600; }
+.team-deps-tip-pull { display: inline-flex; align-items: center; gap: .3em; & svg { flex: none; } }
 /* The versions another pull request lists, each naming that one: dimmed,
    but for the one hovered or focused. */
 .team-deps-versions.is-same > li {
