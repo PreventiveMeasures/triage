@@ -27,6 +27,15 @@ const highlightPending = new Set()
 const managedHighlights = new WeakMap()
 const managedLoads = new Set()
 
+// What a settled load or highlight changed drawn again: the tick for
+// observer-util's readers, render() a microtask later, and the cited lines
+// revealed after it (`reveal`).
+function repaintCode(reveal = false) {
+  state.focusCodeTick++
+  queueMicrotask(render)
+  if (reveal) queueMicrotask(revealFocusCodeLines)
+}
+
 function kickHighlight(integrity, file, content, format, resolveString, cache = highlightCache, pending = highlightPending) {
   const key = `${integrity}\0${file}`
   if (cache.has(key) || pending.has(key)) return
@@ -40,8 +49,7 @@ function kickHighlight(integrity, file, content, format, resolveString, cache = 
     const html = await prismHighlight(content, lang, resolveString)
     cache.set(key, typeof html === 'string' ? controlMarkup(html) : null)
     pending.delete(key)
-    state.focusCodeTick++
-    queueMicrotask(render)
+    repaintCode()
   })()
 }
 
@@ -65,9 +73,7 @@ async function loadSources(integrity) {
   // could commit before the panel sees the cache and stay on "Loading…";
   // the tick tells observer-util's readers. The cited lines revealed on the
   // next, once painted (setFocusGid's own try found no panel yet).
-  state.focusCodeTick++
-  queueMicrotask(render)
-  queueMicrotask(revealFocusCodeLines)
+  repaintCode(true)
 }
 
 // The cited lines brought into view in the focus panel's scrolling
@@ -107,8 +113,7 @@ function loadPackageRepos(integrity) {
     if (packageRepoCache.get(integrity) !== job) return
     if (details && !details.stale) rememberPackageRepos(integrity, details)
     else packageRepoCache.set(integrity, null)
-    state.focusCodeTick++
-    queueMicrotask(render)
+    repaintCode()
   })()
   packageRepoCache.set(integrity, job)
   return job
@@ -193,9 +198,7 @@ function managedSource(reportId, file, kick) {
       managedLoads.add(reportId)
       fetchReportSources(reportId).catch(() => {}).finally(() => {
         managedLoads.delete(reportId)
-        state.focusCodeTick++
-        queueMicrotask(render)
-        queueMicrotask(revealFocusCodeLines)
+        repaintCode(true)
       })
     }
     return kick ? { loading: true } : null
