@@ -53,6 +53,12 @@ const MIN_ARC = 1.5   // px — sunburst arcs thinner than this along their oute
 // dropping one that is gone.
 const _focusPathByBundle = new Map()
 const _reasonByBundle = new Map()
+// Keep `value` for a bundle, or forget the bundle's where there is none.
+function remember(byBundle, integrity, value) {
+  if (!integrity) return
+  if (value) byBundle.set(integrity, value)
+  else byBundle.delete(integrity)
+}
 
 // The projection ('treemap' | 'sunburst') and the Code | Resources pill
 // ('' for all, 'code' or 'resources'): viewing habits, one slot each for
@@ -108,24 +114,16 @@ function squarify(nodes, rect) {
         best = wr; sum += a; mx = nMx; mn = nMn; k++
       } else break
     }
+    // The row runs down the left where the rect is wide, else across its top.
     const thick = sum / len
-    if (w >= h) {
-      let oy = y
-      for (let m = i; m < k; m++) {
-        const ih = m === k - 1 ? (y + h) - oy : (items[m].value * scale) / thick
-        out.push({ node: items[m], x, y: oy, w: thick, h: ih })
-        oy += ih
-      }
-      x += thick; w -= thick
-    } else {
-      let ox = x
-      for (let m = i; m < k; m++) {
-        const iw = m === k - 1 ? (x + w) - ox : (items[m].value * scale) / thick
-        out.push({ node: items[m], x: ox, y, w: iw, h: thick })
-        ox += iw
-      }
-      y += thick; h -= thick
+    const down = w >= h
+    const end = down ? y + h : x + w
+    for (let at = down ? y : x, m = i; m < k; m++) {
+      const span = m === k - 1 ? end - at : (items[m].value * scale) / thick
+      out.push(down ? { node: items[m], x, y: at, w: thick, h: span } : { node: items[m], x: at, y, w: span, h: thick })
+      at += span
     }
+    if (down) { x += thick; w -= thick } else { y += thick; h -= thick }
     i = k
   }
   return out
@@ -159,13 +157,12 @@ function finalize(node, parentPath, parent, byPath) {
   // group (treemap-groups.js), inherits it, so a capped block paints its
   // hue; one spanning several (`vendor/` over workspace packages) is null.
   let group, pkg
+  const shared = (held, own) => held === undefined || held === own ? own : null
   for (const c of node.children.values()) {
     value += finalize(c, node.path, node, byPath)
     count += c.count
-    if (pkg === undefined) pkg = c.pkg
-    else if (pkg !== c.pkg) pkg = null
-    if (group === undefined) group = c.group
-    else if (group !== c.group) group = null
+    pkg = shared(pkg, c.pkg)
+    group = shared(group, c.group)
   }
   node.value = value
   node.count = count
@@ -279,20 +276,12 @@ class BundleTreemap extends LitElement {
     this.details = null
     this._w = 0
     this._h = 0
-    this._root = null
     this._focus = []
     this._mode = _sharedMode
     this._reason = ''
     this._kind = _sharedKind
-    this._mixedKinds = false
-    this._reasons = { ids: [] }
-    this._dirByPath = new Map()
-    this._status = 'loading'
-    this._meta = { total: 0, prefix: '' }
-    this._ro = null
-    this._plot = null
-    this._tooltip = null
-    this._ttCell = null
+    // The tree's own fields (_root, _status, _meta...) are set by _rebuild,
+    // which the first update runs.
   }
 
   willUpdate(changed) {
@@ -349,17 +338,11 @@ class BundleTreemap extends LitElement {
     if (!tt || !this._plot) return
     tt.classList.add('show')
     const rect = this._plot.getBoundingClientRect()
-    const sx = cx - rect.left
-    const sy = cy - rect.top
-    const OFFSET = 12
-    let tx = sx + OFFSET
-    if (tx + tt.offsetWidth > rect.width - 4) tx = sx - tt.offsetWidth - OFFSET
-    if (tx < 4) tx = 4
-    let ty = sy + OFFSET
-    if (ty + tt.offsetHeight > rect.height - 4) ty = sy - tt.offsetHeight - OFFSET
-    if (ty < 4) ty = 4
-    tt.style.left = `${tx}px`
-    tt.style.top = `${ty}px`
+    const place = (at, size, room) => Math.max(4, at + 12 + size > room - 4 ? at - size - 12 : at + 12)
+    const left = place(cx - rect.left, tt.offsetWidth, rect.width)
+    const top = place(cy - rect.top, tt.offsetHeight, rect.height)
+    tt.style.left = `${left}px`
+    tt.style.top = `${top}px`
   }
 
   _hideTooltip() {
@@ -415,17 +398,12 @@ class BundleTreemap extends LitElement {
       // A directory node per segment but the last; a path that is both a
       // file and another's directory ("x" and "x/a.js") is skipped.
       let node = root
-      let blocked = false
-      for (let d = 0; d < parts.length - 1; d++) {
-        let child = node.children.get(parts[d])
-        if (child && child.isFile) { blocked = true; break }
-        if (!child) {
-          child = { name: parts[d], children: new Map(), value: 0, isFile: false }
-          node.children.set(parts[d], child)
-        }
-        node = child
+      for (let d = 0; node && d < parts.length - 1; d++) {
+        if (!node.children.has(parts[d])) node.children.set(parts[d], { name: parts[d], children: new Map(), value: 0, isFile: false })
+        const child = node.children.get(parts[d])
+        node = child.isFile ? null : child
       }
-      if (blocked) continue
+      if (!node) continue
       const base = parts.at(-1)
       let leaf = node.children.get(base)
       if (leaf && !leaf.isFile) continue
@@ -467,30 +445,22 @@ class BundleTreemap extends LitElement {
     return chain
   }
 
-  // Remember the focus for the bundle, none at the root.
-  _rememberFocus() {
-    const integrity = this.details?.integrity
-    if (!integrity) return
-    const path = this._focus.at(-1)?.path
-    if (path) _focusPathByBundle.set(integrity, path)
-    else _focusPathByBundle.delete(integrity)
+  // Focus `chain`, remembered for the bundle (none at the root).
+  _setFocus(chain) {
+    this._focus = chain
+    remember(_focusPathByBundle, this.details?.integrity, chain.at(-1)?.path)
+    this._hideTooltip()
   }
 
   // Drill into a directory. Files and empty nodes aren't navigable.
   _drillInto(node) {
-    if (!node || node.isFile || !node.children || node.children.size === 0) return
-    this._focus = this._chainTo(node)
-    this._rememberFocus()
-    this._hideTooltip()
+    if (node && !node.isFile && node.children?.size > 0) this._setFocus(this._chainTo(node))
   }
 
   // Jump to a breadcrumb, -1 the home crumb; the current one changes nothing.
   _focusTo(index) {
     const next = index < 0 ? [] : this._focus.slice(0, index + 1)
-    if (next.length === this._focus.length) return
-    this._focus = next
-    this._rememberFocus()
-    this._hideTooltip()
+    if (next.length !== this._focus.length) this._setFocus(next)
   }
 
   _toggleMode() {
@@ -508,11 +478,7 @@ class BundleTreemap extends LitElement {
 
   _changeReason(e) {
     this._reason = e.detail.value
-    const integrity = this.details?.integrity
-    if (integrity) {
-      if (this._reason) _reasonByBundle.set(integrity, this._reason)
-      else _reasonByBundle.delete(integrity)
-    }
+    remember(_reasonByBundle, this.details?.integrity, this._reason)
   }
 
   // Directory cells drill in; a file cell's click goes on to events.js.

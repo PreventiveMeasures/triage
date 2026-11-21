@@ -96,16 +96,14 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
     }
     const [details, cached] = await Promise.all([readBundleDetails(integrity, entry), cachedMetadata(integrity)])
     if (!details.error) {
-      const current = cached?.kind === details.kind && !cached.stale
-      if (current) {
-        details.fileHashes = cached.fileHashes
-        details.fileSizes = cached.fileSizes
-        details.lineCounts = cached.lineCounts
-      }
       // A stale index (an older version: bundle-metadata.js) lends nothing,
       // its sizes being what the Overview and Treemap got wrong, and is
       // rewritten, best effort, for later metadata-only opens.
-      if (!current) {
+      if (cached?.kind === details.kind && !cached.stale) {
+        details.fileHashes = cached.fileHashes
+        details.fileSizes = cached.fileSizes
+        details.lineCounts = cached.lineCounts
+      } else {
         createBundleMetadata(details).then((index) => saveBundleIndex(integrity, index)).catch(() => {})
       }
     }

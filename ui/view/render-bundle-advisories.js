@@ -261,13 +261,15 @@ function renderConsentPrompt() {
 export function renderBundleAdvisoriesTab(details, renderFn = () => {}, onScan = null) {
   const scope = details ? advisoryScope(details) : null
   const reasons = scope ? scopeOptions(scope.reasons) : []
-  const summary = renderAdvisoriesSummary(details)
+  // The lookup in the scope shown.
+  const entry = details ? advisoryCache(details).get(cacheKey(details)) : undefined
+  const summary = renderAdvisoriesSummary(details, entry)
   const actions = Boolean(details?.managedId) && !managedBundleHasNoDependencies(details)
   return html`<div class="bundle-advisories-panel">
     ${summary !== nothing || reasons.length > 0 || actions ? html`<div class="bundle-advisories-toolbar">
     ${summary}
     ${reasons.length > 0 || actions ? html`<div class="bundle-advisories-scopes">
-    ${actions ? renderRepositoryRecheck(details, renderFn) : nothing}
+    ${actions ? renderRepositoryRecheck(details, entry, renderFn) : nothing}
     ${reasons.length > 0 ? html`<bundle-scope-selector
       .reasons=${reasons} .value=${scope.selected} label="Choose advisory scope"
       @scope-change=${event => {
@@ -281,12 +283,11 @@ export function renderBundleAdvisoriesTab(details, renderFn = () => {}, onScan =
     </button>` : nothing}
     </div>` : nothing}
     </div>` : nothing}
-    ${renderAdvisoriesBody(details)}
+    ${renderAdvisoriesBody(details, entry)}
   </div>`
 }
 
-function renderRepositoryRecheck(details, renderFn) {
-  const entry = advisoryCache(details).get(cacheKey(details))
+function renderRepositoryRecheck(details, entry, renderFn) {
   const busy = Boolean(entry?.recheckingRepositories)
   return html`<button type="button" class="bundle-advisories-retry bundle-advisories-recheck"
     ?disabled=${!canRecheckRepositories(details, entry)}
@@ -295,10 +296,8 @@ function renderRepositoryRecheck(details, renderFn) {
   </button>`
 }
 
-function renderAdvisoriesSummary(details) {
-  if (!details || (!details.managedId && !hasConsent())) return nothing
-  const entry = advisoryCache(details).get(cacheKey(details))
-  if (entry?.state !== 'ok') return nothing
+function renderAdvisoriesSummary(details, entry) {
+  if (!details || (!details.managedId && !hasConsent()) || entry?.state !== 'ok') return nothing
   const totalPackagesQueried = entry.query.size
   const packagesWithAdvisories = entry.byPackage.size
   if (packagesWithAdvisories === 0) return nothing
@@ -315,13 +314,12 @@ function renderNoAdvisories(details, entry) {
   return html`No advisories for the ${count} ${entry.skipped.length > 0 ? 'audited ' : ''}${count === 1 ? 'package' : 'packages'} in ${advisoryScope(details).selected ? 'this scope' : 'this bundle'}.`
 }
 
-function renderAdvisoriesBody(details) {
+function renderAdvisoriesBody(details, entry) {
   if (!details) return html`<div class="bundle-advisories-empty">Bundle not loaded yet.</div>`
   if (details.kind !== 'stasis' || (!details.managedId && !details.bundle)) {
     return html`<div class="bundle-advisories-empty">Advisories are only available for stasis bundles.</div>`
   }
   if (!details.managedId && !hasConsent()) return renderConsentPrompt()
-  const entry = advisoryCache(details).get(cacheKey(details))
   if (!entry || entry.state === 'loading') {
     return html`<div class="bundle-advisories-empty">Loading advisories…</div>`
   }
