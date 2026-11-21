@@ -72,6 +72,17 @@ describe('build: minifying Lit templates', () => {
     assert.equal(minify(siblings), siblings)
   })
 
+  it('keeps the slash of a self-closing tag out of an unquoted binding before it', () => {
+    // ui/view/workspace-content.js: a workspace's report and bundle rows.
+    // Quoted with the slash in it, `d="${d}/"`, the path data was invalid,
+    // so the icon never drew and each row logged an error.
+    assert.equal(minify('html`<svg viewBox="0 0 1 1"><path d=${d}/></svg>`'), 'html`<svg viewBox="0 0 1 1"><path d="${d}"/></svg>`')
+    // Read as an open tag, a shape took the next as its child.
+    assert.equal(minify('html`<svg><circle r=${r}/><path d="M0 0"/></svg>`'), 'html`<svg><circle r="${r}"/><path d="M0 0"/></svg>`')
+    // A slash in a quoted value is the value's.
+    assert.equal(minify('html`<a href="${base}/">x</a>`'), 'html`<a href="${base}/">x</a>`')
+  })
+
   it('still minifies a `css` tagged template', () => {
     // These are whole component sheets (ui/managed/pages.js), and the
     // library minifies them down a different path — one the style

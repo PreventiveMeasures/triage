@@ -53,8 +53,13 @@ import { defaultShouldMinifyCSS, defaultStrategy, minifyHTMLLiterals } from 'min
 
 const SPACED_START = /^[\t ]+[^\s<]/u
 const SPACED_END = /[^\s>][\t ]+$/u
+// An unquoted binding right before a tag's `/>`, `<path d=${d}/>`: Lit reads
+// the slash as the tag's, but the minifier reads it into the value it quotes,
+// `d="${d}/"`, and so takes the tag for an open one, the next as its child.
+// A space ends the value first, as Lit's reading has it.
+const SLASH_AFTER_BINDING = /(=@TEMPLATE_EXPRESSION_*\(\);)\/>/gu
 function minifyFragment(html, options = {}) {
-  const out = defaultStrategy.minifyHTML(html, { ...options, minifyCSS: false })
+  const out = defaultStrategy.minifyHTML(html.replace(SLASH_AFTER_BINDING, '$1 />'), { ...options, minifyCSS: false })
   const start = SPACED_START.test(html) && !/^\s/u.test(out) ? ' ' : ''
   const end = SPACED_END.test(html) && !/\s$/u.test(out) ? ' ' : ''
   return `${start}${out}${end}`

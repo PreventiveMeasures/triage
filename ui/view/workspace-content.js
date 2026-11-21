@@ -142,7 +142,7 @@ export function renderWorkspaceContent(context, kind) {
             data-workspace-report=${kind === 'reports' ? item.managedId ?? item.name : nothing}
             data-workspace-bundle=${kind === 'bundles' ? item.managedId ?? item.integrity : nothing} ?disabled=${!item.available}>
             <svg class="workspace-content-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-              <path d=${kind === 'bundles' ? 'm12 3 9 5v8l-9 5-9-5V8zM3 8l9 5 9-5M12 13v8M7.5 5.5l9 5' : 'M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5'}/>
+              <path d=${kind === 'bundles' ? 'm12 3 9 5v8l-9 5-9-5V8zM3 8l9 5 9-5M12 13v8M7.5 5.5l9 5' : 'M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5'}></path>
             </svg>
             <span class="workspace-content-label"><span class="workspace-content-name">${item.name}${item.hidden ? html` <span class="workspace-content-visibility">Hidden</span>` : nothing}</span>
               ${repo ? html`<span class="workspace-content-repo">${repo}</span>` : nothing}
