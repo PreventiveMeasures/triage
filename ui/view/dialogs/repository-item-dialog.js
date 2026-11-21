@@ -209,7 +209,7 @@ class RepositoryItemDialog extends AppDialog {
           : html`<ul>${dir.added.toSorted((a, b) => Number(Boolean(a.was)) - Number(Boolean(b.was))).map(pkg => html`<li>${this.renderPackage(pkg, review, false, entry.head)}</li>`)}</ul>
             ${dir.more > 0 ? html`<p class="repo-item-quiet">and ${dir.more.toLocaleString('en-US')} more</p>` : nothing}`}
       </div>`)}
-      ${others?.count > 0 ? html`<details class="repo-item-unreviewed"><summary>${plural(others.count, 'other version')} in its lockfiles ${others.count === 1 ? 'wants' : 'want'} reviews</summary>
+      ${others?.count > 0 ? html`<details class="repo-item-unreviewed"><summary>${others.count.toLocaleString('en-US')} on the base branch</summary>
         <ul>${others.versions.map(pkg => html`<li>${this.renderPackage(pkg, review, true, entry.head)}</li>`)}</ul>
         ${others.count > others.versions.length ? html`<p class="repo-item-quiet">and ${(others.count - others.versions.length).toLocaleString('en-US')} more</p>` : nothing}
       </details>` : nothing}

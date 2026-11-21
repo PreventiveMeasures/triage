@@ -2073,7 +2073,17 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 }
 /* A version's details, its row's tooltip: its name and version whole, the
    pull request it is listed under marked among those adding it. */
-.team-deps-tip-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.team-deps-tip-name {
+  display: flex; align-items: center; gap: .35em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  & > span { min-width: 0; overflow-wrap: anywhere; }
+  & > svg { flex: none; }
+}
+/* A patched one's tag, as Review's version selector tags it (searchable-selector.js .detail.is-noted). */
+.team-deps-tip-patched {
+  flex: none; padding: 0 .35rem; border-radius: 3px; color: var(--accent); background: rgb(from var(--accent) r g b / .13);
+  font-family: var(--font-ui, system-ui); font-size: .66rem; font-weight: 600;
+}
+.team-deps-tip-hash { font-size: .7rem; overflow-wrap: anywhere; }
 .team-deps-tip-here { font-weight: 600; }
 .team-deps-tip-pull { display: inline-flex; align-items: center; gap: .3em; & svg { flex: none; } }
 /* The versions another pull request lists, each naming that one: dimmed,

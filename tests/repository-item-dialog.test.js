@@ -207,7 +207,7 @@ test('an open pull request\'s dependencies, where its repository reviews them, s
   const own = text.slice(text.indexOf('repo-item-lockfiles'))
   assert.match(own, /<span class="repo-item-row">[^]*mine[^]*is-failed" data-tooltip=From git, which isn’t reviewed>can’t review</u)
   assert.doesNotMatch(own.slice(own.indexOf('>local<'), own.indexOf('</li>', own.indexOf('>local<'))), /repo-item-review/u, 'a file of the project\'s not reviewed')
-  assert.match(text, /<details class="repo-item-unreviewed"><summary>3 other versions in its lockfiles want reviews<\/summary>[^]*href=\/npm\/other@1\.0\.0\/review [^]*and 2 more/u)
+  assert.match(text, /<details class="repo-item-unreviewed"><summary>3 on the base branch<\/summary>[^]*href=\/npm\/other@1\.0\.0\/review [^]*and 2 more/u)
   const reader = shown()
   reader.open({ number: 32, preview: { ...tile, number: 32, touchesLockfile: true } })
   templateText(reader.render())

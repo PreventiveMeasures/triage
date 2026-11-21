@@ -152,7 +152,7 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
   assert.equal(cards.length, 4, 'one adding none wanting reviews not shown')
   assert.deepEqual(widths(text), ['column', 'column', 'column', 'column'], 'every card a column wide, however many versions it lists: two, none, twelve, none')
   assert.doesNotMatch(text, />a#1[01]</u, 'nor one every version of which is reviewed, the reader\'s reviews of it to copy or not: its popup copies them')
-  assert.match(cards[3], />a#9<[^]*class="team-deps-count is-wanted">4 other versions unreviewed<[^]*aria-expanded=false [^]*<\/svg>Its own versions pass; 4 versions its lockfiles locked before want reviews<\/button>/u,
+  assert.match(cards[3], />a#9<[^]*class="team-deps-count is-wanted">4 other versions unreviewed<[^]*aria-expanded=false [^]*<\/svg>Its own versions pass; 4 on the base branch<\/button>/u,
     'one held only by the versions its lockfiles locked before it, last')
   assert.doesNotMatch(cards[3], /<li>/u, 'those not listed under it till asked for')
   assert.match(cards[0], /href=https:\/\/github\.com\/org\/b\/pull\/2 [^]*>b#2<[^]*>Pull 2<[^]*class="team-deps-count">2 deps</u, 'that adding fewest first, how many told, as more than one')
@@ -165,7 +165,7 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
   assert.equal(cards.join('').split('is-same').length - 1, 1, 'nor any other under another')
   assert.match(text, /<div class="team-deps-bar">\s*<span class="bundles-overview-sort"/u, 'nothing said of red rows in the line above the lists, as there are none')
   assert.match(cards[0], new RegExp(String.raw`<a class="team-deps-row" href=/npm/shared@1\.0\.0/review [^>]* data-tooltip=shared@1\.0\.0 \.tooltipContent=<div class="compare-tip">\s*` +
-    String.raw`<div class="team-deps-tip-name">shared@1\.0\.0</div>\s*<div class="compare-tip-rows">` +
+    String.raw`<div class="team-deps-tip-name"><svg class="bundle-code-tree-npm"[^]*?</svg><span>shared@1\.0\.0</span></div>\s*<div class="compare-tip-rows">` +
     String.raw`<span class="compare-tip-label">Review</span><span>0 reviews of 2 required</span><span class="compare-tip-label">Listed</span><span>under a#1</span></div>\s*` +
     String.raw`<div class="compare-tip-head">Pull requests</div>\s*<div class="compare-tip-rows"><span class=team-deps-tip-pull>\[object Object\]a#1</span>\s*<span>adds it, 1/2</span>` +
     String.raw`<span class=team-deps-tip-pull team-deps-tip-here>\[object Object\]b#2</span>\s*<span>adds it, 0/2</span></div>\s*` +
@@ -222,15 +222,17 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
 
   view.pick('branch')
   const branch = templateText(view.render())
-  assert.match(branch, /<h2>a<\/h2>\s*<p class="team-deps-quiet">2 versions unreviewed<\/p>[^]*href=\/npm\/old@1\.0\.0\/review [^]*<span class=team-deps-tip-pull>\[object Object\]a#9<\/span>\s*<span>locks it, 1\/2<\/span>[^]*class="team-deps-elsewhere">a#9</u,
+  assert.match(branch, /<h2>a<\/h2>\s*<p class="team-deps-quiet">2 versions unreviewed<\/p>[^]*href=\/npm\/old@1\.0\.0\/review [^]*<span class=team-deps-tip-pull>\[object Object\]a#9<\/span>\s*<span>on the base branch, 1\/2<\/span>[^]*class="team-deps-elsewhere">a#9</u,
     'one a pull request reviews in its comments, which count there alone')
   const patched = branch.split('<li>').find(row => row.includes('>pat<'))
   assert.match(patched, new RegExp(`href=/npm/pat@1\\.0\\.0/review\\?patch=${patch.hash}&repo=7&commit=${'f'.repeat(40)}&path=patches/pat%401\\.0\\.0\\.patch `, 'u'),
     'a patched one reviewed as patched, its patch read at the default branch\'s head')
   assert.match(patched, new RegExp(`<span class="team-deps-patched">patched</span>\\s*<npm-delta \\.name=pat \\.version=1\\.0\\.0 \\.base=\\(empty\\) \\.patch=\\[object Object\\]></npm-delta>\\s*<span class="team-deps-elsewhere">a#9</span>`, 'u'),
     'its lines counted as its patch changes it; its reviews of it as patched, those a pull request\'s comments make of the same patch told so')
-  assert.match(patched, /<span class="compare-tip-label">Patched<\/span><span>patches\/pat@1\.0\.0\.patch<\/span>/u, 'its patch\'s file in its tooltip')
-  assert.match(patched, /<span class=team-deps-tip-pull>\[object Object\]a#9<\/span>\s*<span>locks it, 1\/2<\/span>[^]*<span>lee<\/span>\s*<span>accepts, in a#9’s comments<\/span>/u,
+  assert.match(patched, /<div class="team-deps-tip-name">[^]*?<span>pat@1\.0\.0<\/span><span class="team-deps-tip-patched">patched<\/span><\/div>/u, 'tagged patched')
+  assert.match(patched, /<span class="compare-tip-label">Patch<\/span><span><code class="team-deps-tip-hash">a{64}<\/code><\/span><span class="compare-tip-label">Patch file<\/span><span>patches\/pat@1\.0\.0\.patch<\/span>/u,
+    'its patch\'s hash and file in its tooltip')
+  assert.match(patched, /<span class=team-deps-tip-pull>\[object Object\]a#9<\/span>\s*<span>on the base branch, 1\/2<\/span>[^]*<span>lee<\/span>\s*<span>accepts, in a#9’s comments<\/span>/u,
     'and who reviews the same patch in that pull request\'s comments')
   assert.match(branch, /<h2>b<\/h2>\s*<p class="team-deps-quiet">0 versions unreviewed, 1 lockfile unread<\/p>\s*<p class="team-deps-quiet" role="alert">Unread, so what it locks isn’t checked:\s*<code>web\/bun\.lock<\/code>/u,
     'one wanting none, but whose lockfile is unread')
@@ -476,7 +478,7 @@ test('a version several pull requests add: listed under one of those reviewing i
     assert.match(text, /<p class="team-deps-quiet team-deps-key">3 versions lack reviews made elsewhere<\/p>/u, 'each counted in the line above them')
 
     // A review published to the team, counting where a pull request but locks the version and not where one adds it: not lacked there, as it is no comment's.
-    assert.match(card(14), /<ul class="team-deps-versions"><li><a class="team-deps-row" href=\/npm\/stacked@[^]*<span class=team-deps-tip-pull>\[object Object\]m#15<\/span>\s*<span>locks it, 1\/3<\/span>[^]*1\/3<\/span>\s*<\/a>/u)
+    assert.match(card(14), /<ul class="team-deps-versions"><li><a class="team-deps-row" href=\/npm\/stacked@[^]*<span class=team-deps-tip-pull>\[object Object\]m#15<\/span>\s*<span>on the base branch, 1\/3<\/span>[^]*1\/3<\/span>\s*<\/a>/u)
     assert.doesNotMatch(card(14), /is-behind|compare-tip-label">Lacks|is-same/u)
 
     // One holding no review of it: never red, but dimmed under the one holding one, which lists it.
@@ -499,7 +501,7 @@ test('a version several pull requests add: listed under one of those reviewing i
 
     view.toggle('org/m#2:covered')
     const unfolded = apartOf(templateText(view.render()))
-    assert.match(unfolded[4], /aria-expanded=true [^]*<ul class="team-deps-versions is-same"><li><a class="team-deps-row" href=\/npm\/alike@[^]*<span class="team-deps-under">m#3<\/span>[^]*<\/svg>1 other version its lockfiles lock wants reviews<\/button>/u,
+    assert.match(unfolded[4], /aria-expanded=true [^]*<ul class="team-deps-versions is-same"><li><a class="team-deps-row" href=\/npm\/alike@[^]*<span class="team-deps-under">m#3<\/span>[^]*<\/svg>1 on the base branch<\/button>/u,
       'its versions once opened, dimmed, and those others to open under them')
     assert.doesNotMatch(unfolded.slice(0, 4).join(''), /<li>/u, 'the others as they were')
     view.toggle('covered')
@@ -745,4 +747,16 @@ test('its pull requests\' cards packed as masonry: each spanning as many of its 
   const [tall, short, gapless, gone] = [card(300), card(1), card(10, { marginBottom: '' }), card(300, { isConnected: false })]
   for (const one of [tall, short, gapless, gone]) masonrySpan(one)
   assert.deepEqual([tall, short, gapless, gone].map(one => one.style.gridRowEnd), ['span 77', 'span 3', 'span 3', undefined])
+})
+
+test('a row\'s tooltip names its ecosystem before it, and the pull requests adding it first, then those with it on their base branch, by name, none of no reviews there told so', async () => {
+  const { versionRow } = await import('../ui/view/team-dependencies.js')
+  const review = { required: 2, canReview: true }
+  const pkg = { name: 'ms', version: '2.1.3', source: 'registry', reviews: 0 }
+  const involved = [{ name: 'b#10', adds: false, pkg: { ...pkg }, review }, { name: 'c#3', adds: false, pkg: { ...pkg, reviews: 1 }, review },
+    { name: 'b#9', adds: false, pkg: { ...pkg }, review }, { name: 'a#1', adds: true, pkg: { ...pkg }, review }]
+  const text = templateText(versionRow(pkg, review, { involved, here: 'a#1' }))
+  assert.match(text, /<div class="team-deps-tip-name"><svg class="bundle-code-tree-npm"[^]*?<\/svg><span>ms@2\.1\.3<\/span><\/div>/u)
+  const rows = [...text.matchAll(/\[object Object\]([^<]+)<\/span>\s*<span>([^<]*)<\/span>/gu)].map(([, name, said]) => `${name} ${said}`)
+  assert.deepEqual(rows, ['a#1 adds it, 0/2', 'b#9 on the base branch', 'b#10 on the base branch', 'c#3 on the base branch, 1/2'])
 })
