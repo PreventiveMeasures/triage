@@ -598,9 +598,9 @@ test('a version its lockfile alone asks for, the stasis.config.json beside it re
     assert.match(text, /role="status">Stasis is still working out what some <code>stasis\.config\.json<\/code> entries reach/u)
     assert.doesNotMatch(text, /review fails/u, 'one awaiting it fails nothing')
     const marked = text.split('<li>').find(row => row.includes('data-tooltip=only-pm@'))
-    assert.match(marked, /<span class="team-deps-unreached" role="img" aria-label=Asked for by the lockfile only, not stasis\.config\.json>!<\/span>/u, 'an exclamation mark, named')
-    assert.match(marked, /<span class="compare-tip-label">Asked for<\/span><span>by the lockfile only, not stasis\.config\.json<\/span>/u, 'and said in its tooltip')
-    assert.doesNotMatch(text.split('<li>').find(row => row.includes('data-tooltip=by-both@')), /Asked for/u)
+    assert.match(marked, /<span class="team-deps-unreached" role="img" aria-label=Needed by only lockfile, not stasis\.config\.json>!<\/span>/u, 'an exclamation mark, named')
+    assert.match(marked, /<span class="compare-tip-label">Needed by<\/span><span>only lockfile, not stasis\.config\.json<\/span>/u, 'and said in its tooltip')
+    assert.doesNotMatch(text.split('<li>').find(row => row.includes('data-tooltip=by-both@')), /compare-tip-label">Needed by</u)
 
     view.pick('versions')
     assert.deepEqual(rows(templateText(view.render())), [['only-stasis', false], ['early', false], ['mixed', false], ['plain', false], ['by-both', false], ['tooling', true], ['only-pm', true]],
@@ -824,6 +824,34 @@ test('a card\'s own versions shown whole up to fifteen, more folded to ten; thos
     assert.equal(listed(card(text, 2)), 8)
     view.toggle('org/f#3:own')
     assert.equal(listed(card(templateText(view.render()), 3)), 10, 'and folded again')
+  } finally {
+    Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest' })
+    routes.length = 0
+  }
+})
+
+test('a card\'s count of versions to review tells how many Stasis reaches where its lockfile alone asks for some; one version told so only where its lockfile alone asks for it', async () => {
+  TEAM.push(18)
+  branches[18] = { cut: false, review: { ...terms, unreviewed: 0 }, lockfiles: [dir()] }
+  pulls[18] = { items: [1, 2, 3, 4].map(number => pull(number)), more: false }
+  const lone = name => wants(name, { unreached: true })
+  Object.assign(dependencies, {
+    '18#1': { cut: false, review: terms, lockfiles: [dir({ added: [lone('solo')] })] },
+    '18#2': { cut: false, review: terms, lockfiles: [dir({ added: [wants('reached')] })] },
+    // Three, one its lockfile alone asks for; and one of those passed, not counted.
+    '18#3': { cut: false, review: terms, lockfiles: [dir({ added: [wants('a'), wants('b'), lone('c'), wants('passed', { unreached: true, reviews: 2 })] })] },
+    '18#4': { cut: false, review: terms, lockfiles: [dir({ added: [wants('d'), wants('e')] })] },
+  })
+  Object.assign(state, { managedSession: { id: 'stasis-count', role: 'triage' }, teamDependenciesTab: 'pulls', teamDependenciesSort: 'newest' })
+  try {
+    const text = await read(shown([repo(18, 'org/s')]))
+    const head = number => cardsOf(text).find(one => nameOf(one) === `s#${number}`).split('</a>')[0]
+    const mark = String.raw`<img class="team-deps-stasis" src="\./stasis\.svg" alt="by Stasis">`
+    assert.match(head(3), new RegExp(String.raw`<span class="team-deps-count">3 deps <span data-tooltip=2 by Stasis, 1 only lockfile>\(2 ${mark}\)</span></span>`, 'u'))
+    assert.match(head(1), new RegExp(String.raw`<span class="team-deps-count">1 dep <span data-tooltip=0 by Stasis, 1 only lockfile>\(0 ${mark}\)</span></span>`, 'u'),
+      'one its lockfile alone asks for told so')
+    assert.doesNotMatch(head(2), /team-deps-count/u, 'one Stasis reaches not')
+    assert.match(head(4), /<span class="team-deps-count">2 deps<\/span>/u, 'nor any Stasis reaches all of')
   } finally {
     Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest' })
     routes.length = 0

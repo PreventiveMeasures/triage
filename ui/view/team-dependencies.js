@@ -359,7 +359,7 @@ const prioritized = (items, of = item => item) => items.toSorted((a, b) => rank(
 const few = (names, more = names.length - 1) => `${names[0]}${more > 0 ? ` +${more}` : ''}`
 
 // What a version its package manager alone asks for says of that.
-const UNREACHED_SAID = 'by the lockfile only, not stasis.config.json'
+const UNREACHED_SAID = 'only lockfile, not stasis.config.json'
 
 // The reader's own review of a version, as its row's tooltip and mark say
 // it: its verdict, and whether it is partial.
@@ -383,7 +383,7 @@ function versionTip(pkg, review, { under, lacks, involved, here }) {
   const facts = [pkg.source !== 'registry' && pkg.from ? ['From', pkg.from] : null,
     pkg.patch ? ['Patch', html`<code class="team-deps-tip-hash">${pkg.patch.hash}</code>`] : null,
     pkg.patch ? ['Patch file', pkg.patch.path ?? 'not known, so reviews here can’t read it'] : null,
-    pkg.unreached ? ['Asked for', UNREACHED_SAID] : null,
+    pkg.unreached ? ['Needed by', UNREACHED_SAID] : null,
     stance ? ['Review', stance.said ?? stance.label] : null, pkg.yours ? ['Your review', yoursSaid(pkg.yours)] : null, under ? ['Listed', `under ${under}`] : null,
     lacks.length > 0 ? ['Lacks', lacks.map(one => `${isReader(one) ? 'your' : `${githubUserName(one.login)}’s`} review in ${one.where.join(', ')}`).join('; ')] : null]
     .filter(Boolean)
@@ -443,7 +443,7 @@ export function versionRow(pkg, review, { others = [], adders = false, elsewhere
   const unnamed = adders ? others.filter(name => !elsewhere.includes(name) && !lacking.includes(name)) : others
   const label = html`${sourcePackageIcon(pkg.ecosystem)}<span class="team-deps-name">${pkg.name}${pkg.version ? html`<span class="team-deps-version">@${pkg.version}</span>` : nothing}</span>
     ${pkg.patch ? html`<span class="team-deps-patched">patched</span>` : nothing}
-    ${pkg.unreached ? html`<span class="team-deps-unreached" role="img" aria-label=${`Asked for ${UNREACHED_SAID}`}>!</span>` : nothing}
+    ${pkg.unreached ? html`<span class="team-deps-unreached" role="img" aria-label=${`Needed by ${UNREACHED_SAID}`}>!</span>` : nothing}
     ${npm && (!pkg.patch || patch) && reviewOf(pkg, review) === 'wanted'
       ? html`<npm-delta .name=${pkg.name} .version=${pkg.version} .base=${before?.version ?? '(empty)'} .baseName=${before?.name ?? pkg.name} .patch=${patch}></npm-delta>` : nothing}
     ${reviewBadge(pkg, review)}
@@ -455,6 +455,20 @@ export function versionRow(pkg, review, { others = [], adders = false, elsewhere
   const behind = lacks.length > 0 ? ' is-behind' : ''
   return html`<li>${href ? html`<a class="team-deps-row${behind}" href=${href} target="_blank" rel="noopener noreferrer" data-tooltip=${named} .tooltipContent=${tip}>${label}</a>`
     : html`<span class="team-deps-row${behind}" data-tooltip=${named} .tooltipContent=${tip}>${label}</span>`}</li>`
+}
+
+// How many versions a pull request wants reviewed, as its card's head tells
+// them, where more than one; and, where its package manager alone asks for
+// some (`unreached`, marked `!`), how many of them Stasis reaches, by its
+// mark, its one too.
+const STASIS_MARK = html`<img class="team-deps-stasis" src="./stasis.svg" alt="by Stasis">`
+function deps(pull) {
+  const alone = pull.wanted.filter(pkg => pkg.unreached && reviewOf(pkg, pull.entry.review) === 'wanted').length
+  if (pull.toReview < 2 && alone === 0) return nothing
+  const reached = pull.toReview - alone
+  return html`<span class="team-deps-count">${pull.toReview.toLocaleString('en-US')} ${pull.toReview === 1 ? 'dep' : 'deps'}${alone > 0
+    ? html` <span data-tooltip=${`${reached.toLocaleString('en-US')} by Stasis, ${alone.toLocaleString('en-US')} only lockfile`}>(${reached.toLocaleString('en-US')} ${STASIS_MARK})</span>`
+    : nothing}</span>`
 }
 
 // Where a pull request's versions' patches are read: its repository, at the
@@ -742,7 +756,7 @@ class TeamDependencies extends StateElement {
             <span class="team-deps-under">${few([...new Set(same.map(pkg => standing(pkg, pull).under))])}</span>`
             : pull.failed ? html`<span class="team-deps-count is-failed">review fails</span>`
             : pull.size === 0 ? html`<span class="team-deps-count is-wanted">${plural(pull.others, 'other version')} unreviewed</span>`
-            : pull.toReview > 1 ? html`<span class="team-deps-count">${pull.toReview.toLocaleString('en-US')} deps</span>` : nothing}
+            : deps(pull)}
         </a>${pull.entry.formatted ? html`<dependency-review-copy .text=${pull.entry.formatted} .label=${'Copy your dependency reviews'}></dependency-review-copy>`
           : nothing}</div>
         ${opened ? html`${this.rows(`${key}:own`, listed, row(pull))}
