@@ -1035,6 +1035,26 @@ test('the default branch\'s dependencies, read on a cold instance of what anothe
   assert.equal(globalThis.fetch.mock.callCount() - before, 1, 'its access asked before, not again after')
 })
 
+test('a team\'s Dependencies tab is told the versions whose reviews counting for its repositories were published or revoked since the time it was last told', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const users = await people(db)
+  const send = api(db, users)
+  const changed = (asOf, who = 'alice') => send(`/api/teams/one/dependency-reviews/changed${asOf === null ? '' : `?since=${asOf}`}`, { who })
+  const first = await changed(null)
+  assert.equal(first.status, 200)
+  assert.deepEqual(Object.keys(first.body), ['now'], 'none asked: the server\'s time alone, to ask since')
+  assert.ok(Number.isSafeInteger(first.body.now))
+  await publish(db, users.alice, context('ms', '2.1.3', '2.1.2'), ['one'])
+  await publish(db, users.manager, context('elsewhere', '1.0.0'), ['two'])
+  const told = (await changed(first.body.now)).body
+  assert.deepEqual(told.versions, [['ms', '2.1.3']], 'one published to a team counting for its repository, not one to a team without it')
+  assert.ok(told.now >= first.body.now)
+  assert.deepEqual((await changed(told.now + 60_000)).body.versions, [], 'none since')
+  for (const asOf of ['x', '-1', '1.5', '']) assert.equal((await changed(asOf)).status, 400, asOf)
+  assert.equal((await changed(first.body.now, 'carol')).status, 404, 'a team not hers')
+})
+
 // A team's Dependencies in one request (GET /api/teams/:id/dependencies):
 // alice's team `one` has org/repo, which reviews its dependencies, org/other,
 // which reviews none, and src of org/part, which she may read only some of;

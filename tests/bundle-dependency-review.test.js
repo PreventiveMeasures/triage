@@ -18,6 +18,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchBundleDependencyReview(id) { asked.push(id); const told = answers[id]; return told instanceof Error ? Promise.reject(told) : Promise.resolve(told) },
   fetchNpmDeltas() { return new Promise(() => {}) },
   fetchTeamDependencies() { return new Promise(() => {}) },
+  fetchTeamReviewChanges() { return new Promise(() => {}) },
   fetchPullDependencies() { return new Promise(() => {}) },
   fetchPullDependenciesOf() { return new Promise(() => {}) },
 } })

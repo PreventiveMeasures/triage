@@ -62,6 +62,10 @@ export interface RepositoryDependencyReviewStore {
   // Which of `users` publish reviews to a team counting for repository
   // `repoId`, whose reviews its pull requests' comments make count.
   listRepoReviewers(repoId: number, users: string[]): Promise<Set<string>>
+  // The npm versions whose reviews published to a team counting for any of
+  // `repoIds` were published, or revoked, at `since` or after, each once, as
+  // many as `limit`; null where there are more.
+  changedReviewVersions(repoIds: number[], since: number, limit: number): Promise<ReviewedVersionKey[] | null>
 }
 
 type SettingRow = { repoId: number; enabled: number; required: number; since: string | null; lockfiles: string | null }
@@ -147,6 +151,15 @@ export function repositoryDependencyReviewMethods(db: ManagedSql): RepositoryDep
       const rows = await db.prepare(`SELECT DISTINCT u.id FROM managed_user u JOIN managed_team t ON t.hidden = 0
         WHERE u.id IN (${users.map(() => '?').join(',')}) AND ${reviewsIn(true)} AND ${COUNTING_TEAM}`).all(...users, repoId) as { id: string }[]
       return new Set(rows.map(row => row.id))
+    },
+    async changedReviewVersions(repoIds, since, limit) {
+      if (repoIds.length === 0) return []
+      const rows = await db.prepare(`SELECT DISTINCT r.package AS name, r.version FROM managed_dependency_review r
+        WHERE r.ecosystem = 'npm' AND r.published_at IS NOT NULL AND (r.published_at >= ? OR r.revoked_at >= ?)
+          AND EXISTS (SELECT 1 FROM managed_dependency_review_team rt JOIN managed_team t ON t.id = rt.team_id JOIN managed_team_repo tr ON tr.team_id = t.id
+            WHERE rt.review_id = r.id AND t.hidden = 0 AND t.dependency_review = 1 AND tr.repo_id IN (${repoIds.map(() => '?').join(',')}))
+        LIMIT ?`).all(since, since, ...repoIds, limit + 1) as ReviewedVersionKey[]
+      return rows.length > limit ? null : rows
     },
     async repoDependencyReviewState(repoId, user, versions, read) {
       const now = read === undefined ? await readSetting(repoId) : read

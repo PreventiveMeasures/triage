@@ -2901,6 +2901,27 @@ async function handleTeamDependencies(res: ServerResponse, deps: ManagedHttpDeps
   await out.end()
 }
 
+// GET /api/teams/:id/dependency-reviews/changed?since=: the npm versions
+// whose reviews, published to a team counting for any of the team's
+// repositories, were published or revoked at `since` or after (the `now` an
+// earlier answer told, the server's time), for its Dependencies tab to ask
+// again of the pull requests listing them: `{ now, versions: [[name,
+// version], …] }`, or `{ now, all: true }` past MAX_CHANGED_REVIEWS; without
+// `since`, `{ now }` alone. The versions are of reviews its pull requests'
+// answers tell the reader of already, reviewers and all.
+const MAX_CHANGED_REVIEWS = 500
+async function handleTeamReviewChanges(res: ServerResponse, deps: ManagedHttpDeps, s: { session: ManagedSession; user: StoredUser }, teamId: string,
+  query: URLSearchParams): Promise<void> {
+  const asked = query.get('since')
+  const since = asked === null ? null : Number(asked)
+  if (since !== null && (asked === '' || !Number.isSafeInteger(since) || since < 0)) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const snapshot = await teamSnapshot(deps.db, s.session.id, teamId)
+  const now = Date.now()
+  if (since === null) { sendJson(res, 200, { now }); return }
+  const versions = await deps.db.changedReviewVersions([...new Set(snapshot.repositories.map(repo => repo.repoId))], since, MAX_CHANGED_REVIEWS)
+  sendJson(res, 200, versions === null ? { now, all: true } : { now, versions: versions.map(({ name, version }) => [name, version]) })
+}
+
 // A repository's lines of its team's Dependencies, as handleTeamDependencies
 // tells them; whether all were written, none left for its time.
 async function teamRepositoryDependencies(deps: ManagedHttpDeps, access: WholeAccess, setting: RepoDependencyReview, deadline: number,
@@ -5873,6 +5894,11 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (teamDependencies) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleTeamDependencies(res, deps, cookie, workspaceSession!, teamDependencies[1]!, url.searchParams); return
+    }
+    const teamReviewChanges = /^\/api\/teams\/([^/]+)\/dependency-reviews\/changed$/u.exec(path)
+    if (teamReviewChanges) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleTeamReviewChanges(res, deps, workspaceSession!, teamReviewChanges[1]!, url.searchParams); return
     }
     const teamFixes = /^\/api\/teams\/([^/]+)\/fixes$/u.exec(path)
     if (teamFixes) {
