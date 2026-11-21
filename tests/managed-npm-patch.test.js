@@ -240,7 +240,8 @@ async function setup(t, pkg, held) {
         res.on('data', chunk => chunks.push(chunk))
         res.on('end', () => {
           const bytes = Buffer.concat(chunks)
-          resolve({ status: res.statusCode, json: () => JSON.parse((res.headers['content-encoding'] === 'br' ? brotliDecompressSync(bytes) : bytes).toString()) })
+          const text = () => (res.headers['content-encoding'] === 'br' ? brotliDecompressSync(bytes) : bytes).toString()
+          resolve({ status: res.statusCode, json: () => JSON.parse(text()), lines: () => text().split('\n').filter(Boolean).map(line => JSON.parse(line)) })
         })
       })
       req.on('error', reject)
@@ -276,6 +277,15 @@ test('a version as a patch changes it is read, compared and reviewed by one who 
     [['added.js', 'added\r\nlast\r'], ['image.bin', null], ['index.js', 'one\nTWO\r\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\r\n'], ['new name.js', 'new\r\n'],
       ['package.json', '{}\n']], 'one committed with CRLFs, its hash as pnpm hashes it, applied as pnpm applies it, the lines it adds with their CRs')
 
+  // Its lines counted as its patch changes them, against itself unpatched: the patch's alone; to one who reads its repository alone.
+  const deltas = (asked, who) => h.send(`/api/npm/deltas?${new URLSearchParams({ versions: JSON.stringify(asked) })}`, who)
+  const located = { hash, repoId: 1, commit, path }
+  const [delta] = (await deltas([['patched-lib', '1.0.0', '1.0.0', located]])).lines()
+  assert.deepEqual([delta.patchHash, delta.additions, delta.deletions], [hash, 5, 3], 'TWO and eleven, added.js\'s two and new name.js\'s one; two, gone, old')
+  assert.equal((await deltas([['patched-lib', '1.0.0', '(empty)', located]])).lines()[0].additions, 15, 'whole, as patched')
+  assert.deepEqual((await deltas([['patched-lib', '1.0.0', '1.0.0', located]], 'outsider')).lines()[0], { name: 'patched-lib', version: '1.0.0', otherVersion: '1.0.0', patchHash: hash,
+    error: 'no-repository', status: 404 })
+  assert.equal((await deltas([['patched-lib', '1.0.0', '1.0.0', { hash: 'nope' }]])).status, 400)
   const compared = (await h.send(`/api/npm/comparison?${query({ otherVersion: '(empty)', ...patch })}`)).json()
   assert.deepEqual(compared.files.onlyOther.map(row => row.path).toSorted(), ['added.js', 'image.bin', 'index.js', 'new name.js', 'package.json'], 'compared as patched')
   assert.deepEqual((await h.send(`/api/npm/comparison?${query({ otherVersion: '(empty)' })}`)).json().files.onlyOther.map(row => row.path).toSorted(),

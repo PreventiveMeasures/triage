@@ -142,3 +142,17 @@ test('a delta read draws again its own rows alone, those near the viewport, each
   await setImmediate()
   for (const element of [one, other, far]) element._unwatch()
 })
+
+test('a patched version\'s lines are asked with where its patch is, held apart from its own by its patch\'s hash', async () => {
+  asked.length = 0
+  pending.length = 0
+  const patch = { hash: 'a'.repeat(64), repoId: 7, commit: 'b'.repeat(40), path: 'patches/pat.patch' }
+  npmDelta('pat', '1.0.0', '1.0.0', patch)
+  npmDelta('pat', '1.0.0', '1.0.0')
+  await frame()
+  assert.deepEqual(asked, [[['pat', '1.0.0', '1.0.0', patch], ['pat', '1.0.0', '1.0.0']]])
+  pending[0].tell({ name: 'pat', version: '1.0.0', otherVersion: '1.0.0', patchHash: patch.hash, additions: 3, deletions: 1, typeless: null })
+  pending[0].tell({ name: 'pat', version: '1.0.0', otherVersion: '1.0.0', additions: 0, deletions: 0, typeless: null })
+  assert.deepEqual([npmDelta('pat', '1.0.0', '1.0.0', patch).additions, npmDelta('pat', '1.0.0', '1.0.0').additions], [3, 0])
+  pending[0].resolve()
+})

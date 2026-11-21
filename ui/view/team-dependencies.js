@@ -32,7 +32,7 @@ import { html, nothing, svg } from 'lit'
 import { StateElement } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 import { fetchTeamDependencies } from './client-managed.js'
-import { UNSUPPORTED_WHY, addedVersions, checked, heldPullDependencies, pullDependencies, readsDependencies, reviewFailures, reviewOf, seedPullDependencies,
+import { UNSUPPORTED_WHY, addedVersions, checked, heldPullDependencies, passedByComments, pullDependencies, readsDependencies, reviewFailures, reviewOf, seedPullDependencies,
   subscribePullDependencies, unreviewedVersions, versionKey } from './pull-dependencies.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { icon } from './repository-tiles.js'
@@ -40,6 +40,9 @@ import { sourcePackageIcon } from './source-file-icon.js'
 import { dialogTabs } from './header-tabs.js'
 import { withCompare } from './compare-load.js'
 import { reviewBase, seedNpmDeltas } from './npm-delta.js'
+import { githubUser, githubUserName, knowGithubUsers } from './github-users.js'
+import { GITHUB_ICON_SVG } from './icons.js'
+import { appMarkup } from './markup.js'
 import './dependency-review-copy.js'
 import { managedHistory } from './managed-history.js'
 import { managedRouteForIds, managedRoutePath } from '../../common/managed/routes.js'
@@ -198,6 +201,7 @@ function readTeam(team, asked, repoIds, resumes) {
 // fewer. Each with the lines its versions change, seeded first
 // (seedNpmDeltas), lest their rows ask for them.
 function toldLine(line, entry, hold) {
+  knowGithubUsers(line)
   if (Array.isArray(line.deltas)) seedNpmDeltas(line.deltas)
   if (typeof line.error === 'string') hold({ status: 'error', until: Date.now() + RETRY_MS, error: line.error })
   else if (line.branch === null) hold({ status: 'ready', until: Date.now() + KEEP_MS, branch: null })
@@ -254,7 +258,10 @@ function reviewState(pkg, review) {
   if (pkg.rejected) return { label: 'rejected', tint: 'is-failed', said: 'A reviewer rejects it: it wants their newer accepting review' }
   if (shown === 'wanted') {
     return { label: `${pkg.reviews}/${review.required}`, tint: 'is-wanted',
-      said: `${plural(pkg.reviews, 'review')} of ${review.required} required${pkg.commented ? `; ${plural(pkg.commented, 'reviewer')} in its comments, which count here alone` : ''}` }
+      said: `${plural(pkg.reviews, 'review')} of ${review.required} required${pkg.commented ? `; ${plural(pkg.commented, 'reviewer')} in its comments` : ''}` }
+  }
+  if (passedByComments(pkg, review)) {
+    return { label: `${pkg.reviews}/${review.required}`, tint: 'is-commented', said: `${plural(pkg.reviews, 'review')} of ${review.required} required, in its comments, not yet in the reviewed dependencies` }
   }
   return null
 }
@@ -351,8 +358,7 @@ const few = (names, more = names.length - 1) => `${names[0]}${more > 0 ? ` +${mo
 const UNREACHED_SAID = 'by its lockfile alone: the stasis.config.json beside it reaches it by no entry'
 
 // A version's details, its row's tooltip, formatted: its name and version
-// whole, as its row may cut them short; the versions of it present before,
-// where it is one a pull request adds (`added`); where it is from, other
+// whole, as its row may cut them short; where it is from, other
 // than npm's registry; its patch's file, where it is patched, or that it
 // is told none, which reviews here then read none of; its review; the
 // pull request listing it, where another does (`under`); the reviews it
@@ -362,13 +368,13 @@ const UNREACHED_SAID = 'by its lockfile alone: the stasis.config.json beside it 
 // under (`here`) marked; and who reviews it, each once where its teams'
 // reviews count, and by the pull request in whose comments they review it,
 // which count there alone.
-function versionTip(pkg, review, { added, under, lacks, involved, here }) {
+function versionTip(pkg, review, { under, lacks, involved, here }) {
   const stance = reviewState(pkg, review)
-  const facts = [added ? ['Present', pkg.was?.join(', ') || 'none, new'] : null, pkg.source !== 'registry' && pkg.from ? ['From', pkg.from] : null,
+  const facts = [pkg.source !== 'registry' && pkg.from ? ['From', pkg.from] : null,
     pkg.patch ? ['Patched', pkg.patch.path ?? 'by a patch whose file isn’t known, which reviews here can’t read'] : null,
     pkg.unreached ? ['Asked for', UNREACHED_SAID] : null,
     stance ? ['Review', stance.said ?? stance.label] : null, under ? ['Listed', `under ${under}`] : null,
-    lacks.length > 0 ? ['Lacks', lacks.map(one => `${isReader(one) ? 'your' : `${one.login}’s`} review in ${one.where.join(', ')}`).join('; ')] : null]
+    lacks.length > 0 ? ['Lacks', lacks.map(one => `${isReader(one) ? 'your' : `${githubUserName(one.login)}’s`} review in ${one.where.join(', ')}`).join('; ')] : null]
     .filter(Boolean)
   const reviewers = new Map()
   for (const { name, pkg: theirs } of [{ name: here, pkg }, ...involved]) {
@@ -382,10 +388,11 @@ function versionTip(pkg, review, { added, under, lacks, involved, here }) {
     <div class="team-deps-tip-name">${pkg.name}${pkg.version ? `@${pkg.version}` : ''}${pkg.patch ? ' (patched)' : ''}</div>
     ${facts.length > 0 ? html`<div class="compare-tip-rows">${facts.map(([label, value]) => html`<span class="compare-tip-label">${label}</span><span>${value}</span>`)}</div>` : nothing}
     ${involved.length > 0 ? html`<div class="compare-tip-head">Pull requests</div>
-      <div class="compare-tip-rows">${involved.map(({ name, adds, pkg: theirs, review: theirReview }) => html`<span class=${name === here ? 'team-deps-tip-here' : nothing}>${name}</span>
+      <div class="compare-tip-rows">${involved.map(({ name, adds, pkg: theirs, review: theirReview }) => html`<span class=${`team-deps-tip-pull${name === here ? ' team-deps-tip-here' : ''}`}>${
+        GITHUB_ICON}${name}</span>
         <span>${[adds ? 'adds it' : 'locks it', reviewedThere(theirs, theirReview)].filter(Boolean).join(', ')}</span>`)}</div>` : nothing}
     ${reviewers.size > 0 ? html`<div class="compare-tip-head">Reviewed by</div>
-      <div class="compare-tip-rows">${[...reviewers.values()].map(one => html`<span>${one.login}</span>
+      <div class="compare-tip-rows">${[...reviewers.values()].map(one => html`<span>${githubUser(one.login)}</span>
         <span>${VERDICT_SAID[one.status]}${ACCEPTING.has(one.status) && !one.passes ? ', not counted' : ''}${one.where ? `, in ${one.where}’s comments` : ''}</span>`)}</div>`
       : nothing}
   </div>`
@@ -399,7 +406,8 @@ function versionTip(pkg, review, { added, under, lacks, involved, here }) {
 // read at, where it is told its file, else its page; a mark (`!`) where
 // its package manager alone asks for it (`unreached`); its review;
 // the lines it changes against the version it was, or whole, where it
-// wants reviews and isn't patched, as they are npm's (npm-delta.js); the
+// wants reviews, a patched one's as its patch changes them, where its file
+// is told (npm-delta.js); the
 // reviews it lacks that others hold (`lacks`, standings), its row red,
 // its tooltip telling them; the pull requests reviewing it in their comments
 // (`elsewhere`), which count for them alone; the pull request listing it
@@ -407,7 +415,7 @@ function versionTip(pkg, review, { added, under, lacks, involved, here }) {
 // those adding it, those lacking reviews (`lacking`) red, those reviewing
 // it in their comments named by that alone. A bundle's Overview lists its
 // versions so too (bundle-dependency-review.js).
-export function versionRow(pkg, review, { others = [], adders = false, elsewhere = [], under = null, lacks = [], lacking = [], added = false, involved = [], here = null,
+export function versionRow(pkg, review, { others = [], adders = false, elsewhere = [], under = null, lacks = [], lacking = [], involved = [], here = null,
   repoId = null, head = null } = {}) {
   const npm = pkg.source === 'registry' && pkg.version
   const before = reviewBase(pkg, review)
@@ -416,14 +424,14 @@ export function versionRow(pkg, review, { others = [], adders = false, elsewhere
   const href = npm ? managedRoutePath({ view: 'npm', packageName: pkg.name, packageSpec: pkg.version,
     ...reviewing ? { bundleTab: 'review', ...before ? { reviewPackage: before.name, reviewSpec: before.version } : {}, ...patch ? { patch } : {} } : {} }) : null
   const named = `${pkg.name}${pkg.version ? `@${pkg.version}` : ''}${pkg.patch ? ' (patched)' : ''}`
-  const tip = versionTip(pkg, review, { added, under, lacks, involved, here })
+  const tip = versionTip(pkg, review, { under, lacks, involved, here })
   const inReview = elsewhere.filter(name => !lacking.includes(name))
   const unnamed = adders ? others.filter(name => !elsewhere.includes(name) && !lacking.includes(name)) : others
   const label = html`${sourcePackageIcon(pkg.ecosystem)}<span class="team-deps-name">${pkg.name}${pkg.version ? html`<span class="team-deps-version">@${pkg.version}</span>` : nothing}</span>
     ${pkg.patch ? html`<span class="team-deps-patched">patched</span>` : nothing}
     ${pkg.unreached ? html`<span class="team-deps-unreached" role="img" aria-label=${`Asked for ${UNREACHED_SAID}`}>!</span>` : nothing}
-    ${npm && !pkg.patch && reviewOf(pkg, review) === 'wanted' && (!before || before.name === pkg.name)
-      ? html`<npm-delta .name=${pkg.name} .version=${pkg.version} .base=${before?.version ?? '(empty)'}></npm-delta>` : nothing}
+    ${npm && (!pkg.patch || patch) && reviewOf(pkg, review) === 'wanted' && (!before || before.name === pkg.name)
+      ? html`<npm-delta .name=${pkg.name} .version=${pkg.version} .base=${before?.version ?? '(empty)'} .patch=${patch}></npm-delta>` : nothing}
     ${reviewBadge(pkg, review)}
     ${under ? html`<span class="team-deps-under">${under}</span>` : nothing}
     ${lacking.length > 0 ? html`<span class="team-deps-lacks">${few(lacking)}</span>` : nothing}
@@ -440,6 +448,8 @@ const readAt = pull => ({ repoId: pull.repo.repoId, head: pull.entry.head ?? nul
 
 // A list's toggle: its chevron turned while it is open.
 const CHEVRON = icon(svg`<path d="m6 4 4 4-4 4"/>`)
+// GitHub's mark, before each pull request a tooltip names.
+const GITHUB_ICON = appMarkup(GITHUB_ICON_SVG)
 
 class TeamDependencies extends StateElement {
   static properties = { repositories: { attribute: false }, team: { attribute: false }, _open: { state: true } }
@@ -503,7 +513,7 @@ class TeamDependencies extends StateElement {
     if (items.length === 0) return nothing
     const open = this._open.has(key)
     return html`<ul class="team-deps-versions${same ? ' is-same' : ''}">${(open ? items : items.slice(0, shown)).map(row)}</ul>
-      ${items.length > shown ? html`<button type="button" class="team-deps-more" aria-expanded=${String(open)} @click=${() => this.toggle(key)}>${CHEVRON}${open
+      ${items.length > shown ? html`<button type="button" class="team-deps-more is-list" aria-expanded=${String(open)} @click=${() => this.toggle(key)}>${CHEVRON}${open
         ? 'Show fewer' : `and ${(items.length - shown).toLocaleString('en-US')} more`}</button>` : nothing}`
   }
 
@@ -537,17 +547,18 @@ class TeamDependencies extends StateElement {
     // it is kept; how many reviews they still want between them (`left`),
     // one rejected at least one, those past them as many as it requires; and
     // the other versions its lockfiles lock that want them (`others`), the
-    // default branch's mostly, which hold it too; those adding fewest first,
-    // as Versions takes them, then as picked.
+    // default branch's mostly, which hold it too, one into another branch
+    // left out where it adds none and its comments review none (`intoOther`);
+    // those adding fewest first, as Versions takes them, then as picked.
     const wanting = pulls.filter(({ entry }) => entry.status === 'ready' && entry.review).map(pull => {
       const { review } = pull.entry
-      const wanted = addedVersions(pull.entry).versions.filter(pkg => ['wanted', 'unsupported'].includes(reviewOf(pkg, review)))
+      const wanted = addedVersions(pull.entry).versions.filter(pkg => ['wanted', 'unsupported'].includes(reviewOf(pkg, review)) || passedByComments(pkg, review))
       const told = wanted.filter(pkg => reviewOf(pkg, review) === 'wanted')
       const toReview = Math.max(review.toReview ?? told.length, told.length)
       const past = toReview - told.length
       return { ...pull, wanted, failed: reviewFailures(pull.entry), toReview, untold: past, size: wanted.length + past,
         left: told.reduce((sum, pkg) => sum + Math.max(1, review.required - pkg.reviews), past * review.required), others: unreviewedVersions(pull.entry).count }
-    }).filter(pull => pull.size > 0 || pull.others > 0 || pull.failed).toSorted(fewest)
+    }).filter(pull => pull.size > 0 || ((pull.others > 0 || pull.failed) && !(pull.entry.intoOther && !pull.entry.review.commentReviews))).toSorted(fewest)
     const sort = Object.hasOwn(SORTS, state.teamDependenciesSort) ? state.teamDependenciesSort : 'newest'
     const sorted = sort === 'fewest' ? wanting : wanting.toSorted(SORTS[sort][1])
     // The repositories whose open pull requests are more than are read, and
@@ -676,7 +687,7 @@ class TeamDependencies extends StateElement {
     const row = pull => pkg => {
       const { under, lacks } = standing(pkg, pull)
       return versionRow(pkg, pull.entry.review, { others: (adding.get(versionKey(pkg))?.pulls ?? []).map(named).filter(name => name !== named(pull) && name !== under),
-        under, lacks, added: true, involved: among(pkg), here: named(pull), ...readAt(pull) })
+        under, lacks, involved: among(pkg), here: named(pull), ...readAt(pull) })
     }
     const card = ({ pull, listed, same, covered }) => {
       const key = pullName(pull)
@@ -726,7 +737,7 @@ class TeamDependencies extends StateElement {
     })
     return html`<section class="team-deps-section" aria-label="Versions to review">
       ${this.rows('versions', prioritized(versions, one => one.pkg), ({ pulls, stands, at, patched, pkg }) => versionRow(pkg, pulls[at].entry.review, { others: pulls.map(named), adders: true,
-        elsewhere: elsewhere(pkg), lacking: pulls.filter((_, other) => stands[other].lacks.length > 0).map(named), added: true, involved: among(pkg),
+        elsewhere: elsewhere(pkg), lacking: pulls.filter((_, other) => stands[other].lacks.length > 0).map(named), involved: among(pkg),
         ...readAt(patched?.pull ?? pulls[at]) }), Number.POSITIVE_INFINITY)}
     </section>`
   }

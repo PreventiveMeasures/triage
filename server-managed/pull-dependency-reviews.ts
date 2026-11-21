@@ -182,7 +182,8 @@ function judge(pkg: LockedPackage, bases: string[] | 'any', { state, reviews, ba
 // that can't be reviewed (as many of each as MAX_UNREVIEWED, how many more,
 // once `capped`); and how many it locks past those read (`moreLocked`), which
 // aren't checked; without `review`, what it adds alone. Read without its
-// base (`baseless`), it tells only those it adds that pass none.
+// base (`baseless`), it tells only those it adds that pass none, or pass by
+// its comments alone, which the host doesn't take in till it is merged.
 function reviewedDirectory(dir: DirectoryDependencies, review: Judge | null, baseless = false) {
   if ('error' in dir) return dir
   const { locked, moreLocked, added, ...told } = dir
@@ -199,7 +200,7 @@ function reviewedDirectory(dir: DirectoryDependencies, review: Judge | null, bas
   })
   const others = locked.filter(pkg => !adds.has(lockedAs(pkg))).map(pkg => ({ pkg, judged: review(pkg, 'any') }))
   const unsupported = locked.flatMap(pkg => { const as = reviewedAs(pkg); return as === 'version' || as === 'skip' ? [] : [{ ...shown(pkg), unsupported: as }] })
-  const listed = baseless ? own.filter(({ judged }) => judged.wants || 'unsupported' in judged.review) : own
+  const listed = baseless ? own.filter(({ judged }) => judged.wants || 'unsupported' in judged.review || 'commented' in judged.review) : own
   // Each row against the base of the way it is locked that it is told by.
   const row = ({ pkg, judged }: (typeof own)[number]) => {
     const { base: _base, ...rest } = shown(pkg as AddedPackage), { base } = judged.variant as AddedPackage

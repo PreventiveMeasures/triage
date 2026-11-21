@@ -2034,6 +2034,8 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   font-size: .66rem; line-height: 1.4; font-variant-numeric: tabular-nums;
   &.is-failed { color: var(--critical); }
   &.is-wanted { padding: 0; border: 0; color: var(--accent); font-size: .7rem; }
+  /* Passed by its pull request's comments alone, not yet taken in by the host. */
+  &.is-commented { padding: 0; border: 0; color: var(--green); font-size: .7rem; }
 }
 /* Reviewed in another pull request's comments, which count there alone,
    blue; the pull request a version is listed under, muted; and the pull
@@ -2065,6 +2067,7 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
    pull request it is listed under marked among those adding it. */
 .team-deps-tip-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
 .team-deps-tip-here { font-weight: 600; }
+.team-deps-tip-pull { display: inline-flex; align-items: center; gap: .3em; & svg { flex: none; } }
 /* The versions another pull request lists, each naming that one: dimmed,
    but for the one hovered or focused. */
 .team-deps-versions.is-same > li {
@@ -2112,6 +2115,8 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   & svg { flex: none; width: 10px; height: 10px; fill: none; stroke: currentcolor; stroke-width: 1.75; transition: transform .12s; }
   &[aria-expanded='true'] svg { transform: rotate(90deg); }
+  /* A list's "Show fewer", under the rows it would fold, points up at them. */
+  &.is-list[aria-expanded='true'] svg { transform: rotate(-90deg); }
 }
 .team-deps-disclosed { display: flex; flex-direction: column; align-items: flex-start; & > .team-deps-versions { align-self: stretch; } }
 /* The lines a version wanting reviews changes (npm-delta.js), beside its

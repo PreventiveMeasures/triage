@@ -269,8 +269,9 @@ class RepositoryItemDialog extends AppDialog {
   // file, against the one the host names in place of those it was
   // (npm-delta.js reviewBase); its review; whether only devDependencies need it, whether
   // it is patched; and where one not of npm's registry is from; and, one of
-  // npm's registry wanting reviews, unpatched, the lines it changes against
-  // the version it was, or whole (npm-delta.js). Another its lockfiles lock
+  // npm's registry wanting reviews, the lines it changes against the version
+  // it is reviewed against, or whole, a patched one's as its patch changes
+  // them (npm-delta.js). Another its lockfiles lock
   // (`other`), wanting reviews or failing them, by its version alone,
   // reviewed whole.
   renderPackage(pkg, review = null, other = false, head = null) {
@@ -286,7 +287,8 @@ class RepositoryItemDialog extends AppDialog {
       ${other ? nothing : was ? html`<span class="repo-item-was" data-tooltip-truncated data-tooltip=${`Was ${was.join(', ')}`}>from ${was.join(', ')}</span>`
         : html`<span class="repo-item-tag is-new" data-tooltip="Its lockfiles locked no version of it before">new</span>`}
       ${this.renderReview(pkg, review)}
-      ${source === 'registry' && version && !pkg.patch && reviewOf(pkg, review) === 'wanted' && (!base || before) ? html`<npm-delta .name=${name} .version=${version} .base=${before ?? '(empty)'}></npm-delta>` : nothing}
+      ${source === 'registry' && version && (!pkg.patch || patch) && reviewOf(pkg, review) === 'wanted' && (!base || base.name === name)
+        ? html`<npm-delta .name=${name} .version=${version} .base=${base?.version ?? '(empty)'} .patch=${patch}></npm-delta>` : nothing}
       ${dev ? html`<span class="repo-item-tag" data-tooltip="Only devDependencies need it">dev</span>` : nothing}
       ${pkg.patch ? html`<span class="repo-item-tag" data-tooltip=${pkg.patch.path ? `pnpm patches it as it installs it, by ${pkg.patch.path}, which its reviews are of`
         : 'pnpm patches it as it installs it, by a patch whose file isn’t known, which reviews here can’t read'}>patched</span>` : nothing}

@@ -201,7 +201,7 @@ test('an open pull request\'s dependencies, where its repository reviews them, s
   assert.match(text, /href=\/npm\/ms@2\.1\.3\/review\/ms@2\.1\.2 [^]*class=repo-item-review is-passed data-tooltip=2 full, accepting reviews of 2 required><svg[^]*<\/svg>2\/2</u,
     'an update reviewed against the version it was, passed')
   assert.match(text, /href=\/npm\/tool@1\.0\.0\/review [^]*class=repo-item-review is-wanted data-tooltip=1 full, accepting review of 2 required>1\/2</u, 'a new one reviewed whole, wanting one more')
-  assert.match(text, />1\/2<\/span>\s*<npm-delta \.name=tool \.version=1\.0\.0 \.base=\(empty\)><\/npm-delta>/u, 'the lines it changes, whole')
+  assert.match(text, />1\/2<\/span>\s*<npm-delta \.name=tool \.version=1\.0\.0 \.base=\(empty\) \.patch=><\/npm-delta>/u, 'the lines it changes, whole')
   assert.equal(text.split('<npm-delta').length - 1, 2, 'of those wanting reviews alone: tool, and another its lockfiles lock')
   assert.match(text, /left-pad<span class="repo-item-version">@1\.3\.0[^]*>baseline</u)
   const own = text.slice(text.indexOf('repo-item-lockfiles'))

@@ -2609,11 +2609,13 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
   // Where its review is on, those of lockfiles it leaves out told to none,
   // whoever asks.
   const setting = await deps.db.repoDependencyReview(repoId)
-  // Where the host names bases and its review is asked for and on, one into
-  // the default branch is read without its merge base (`baseless`,
-  // pull-dependencies.ts): the branch's own state is told apart.
-  const repo = review && deps.reviewedDependencies?.base && setting?.enabled ? (await deps.db.listSelectedRepos()).find(row => row.repoId === repoId) : undefined
-  const into = repo ? repo.cachedDefaultBranch ?? repo.defaultBranch : null
+  // Where its review is on, whether it is into a branch other than the
+  // default (`intoOther`, where its review is asked for); and where the host
+  // names bases, one into the default branch read without its merge base,
+  // its review asked for or not (`baseless`, pull-dependencies.ts), nor any
+  // Stasis build of it made: the branch's own state is told apart.
+  const repo = setting?.enabled ? (await deps.db.listSelectedRepos()).find(row => row.repoId === repoId) : undefined
+  const defaultBranch = repo ? repo.cachedDefaultBranch ?? repo.defaultBranch : null, into = deps.reviewedDependencies?.base ? defaultBranch : null
   // With the branches they are of, where told, kept with them.
   const answered = commits ? { value: { baseRef: commits.baseRef, headRef: commits.headRef, fork: commits.fork, commits: `${commits.base}...${commits.head}` }, kept: true }
     : await keptAnswer(deps, `${repoId}\0pull-commits\0${PULL_DEPENDENCIES_READ}\0${number}`, async () => {
@@ -2660,7 +2662,8 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
   // The comment the host formats of the reader's reviews of its versions, for
   // its copy button, but those its comments make of theirs already.
   const formatted = await formattedPull(reviewed, deps.db, user.id, told, state, { repository: fullName, number }, commented, bases)
-  return { value: { number: told.number, ...dependencies, ...formatted ? { formatted } : {} }, kept: answered.kept && held !== null && !asked.github }
+  const intoOther = review && defaultBranch !== null && typeof answered.value.baseRef === 'string' && answered.value.baseRef !== defaultBranch
+  return { value: { number: told.number, ...dependencies, ...formatted ? { formatted } : {}, ...intoOther ? { intoOther } : {} }, kept: answered.kept && held !== null && !asked.github }
 }
 
 // What the stasis.config.json files repository `repoId`'s review holds to
@@ -2823,7 +2826,8 @@ async function handleTeamDependencies(res: ServerResponse, deps: ManagedHttpDeps
     if (now?.user.id !== s.user.id || !roleAtLeast(now.user.role, 'view')) stopped = true
     const telling = lines.filter(line => line.repoId !== undefined && (line['branch'] || line['dependencies'])).map(line => line.repoId!)
     if (!stopped && telling.length > 0 && !await stillReads(now!.user, telling)) stopped = true
-    for (const line of lines) if (stopped || !await out.write(line)) stopped = true
+    // With the app's users its reviewers are, as a repository's activity is told.
+    for (const line of lines) if (stopped || !await out.write(line['branch'] || line['dependencies'] ? await withAppUsers(deps.db, line) : line)) stopped = true
     if (stopped) out.cut()
     return !stopped
   }
@@ -3687,7 +3691,7 @@ async function handleBundleDependencyReview(res: ServerResponse, deps: ManagedHt
   const read = await readWholeRepositoryOf(deps, access, (fullName, token, user) => bundleDependencyAnswer(deps, fullName, token, user, repoId, setting,
     { commit: commit!, directory: record.repoDirectory, bundled }), () => wholeRepositoryAccess(deps, cookie, repoId))
   if ('error' in read) { sendRefusal(res, read); return }
-  await tellOfBundle(res, deps, session, id, record, read.value)
+  await tellOfBundle(res, deps, session, id, record, await withAppUsers(deps.db, read.value))
 }
 
 // A bundle's answer, as GET /api/bundles/:id/dependency-review gives it, and
@@ -5092,11 +5096,13 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
   } finally { res.off('close', onClose) }
 }
 
-// GET /api/npm/deltas?versions=[[name, version, otherVersion], …]: the lines
+// GET /api/npm/deltas?versions=[[name, version, otherVersion, patch?], …]: the lines
 // each of up to MAX_ASKED_DELTAS versions changes against another, or
-// `(empty)`, as GET delta counts them, as lines of JSON as each is counted
-// (`{ name, version, otherVersion, …delta }`, or `{ name, version,
-// otherVersion, error, status }`), as a list's rows near the viewport ask
+// `(empty)`, as GET delta counts them, a patched one's as its pnpm patch
+// changes it (`patch`, `{ hash, repoId, commit, path? }`, read as Review
+// reads it, npmPatchOf), as lines of JSON as each is counted
+// (`{ name, version, otherVersion, patchHash?, …delta }`, or `{ name, version,
+// otherVersion, patchHash?, error, status }`), as a list's rows near the viewport ask
 // for them together (npm-delta.js), DELTAS_AT_ONCE at a time. Each read as
 // GET delta reads it, with the reader's access to its package, which is
 // checked again once it is counted: a private one's told only to a reader
@@ -5113,9 +5119,14 @@ async function handleNpmDeltas(req: IncomingMessage, res: ServerResponse, deps: 
   if (req.method !== 'GET') { send405(res, 'GET'); return }
   let asked: unknown = null
   try { asked = JSON.parse(params.get('versions') ?? '') } catch {}
-  if (!Array.isArray(asked) || asked.length === 0 || asked.length > MAX_ASKED_DELTAS || !asked.every(item => Array.isArray(item) && item.length === 3
-    && isNpmPackageName(item[0]) && isNpmPackageSpec(item[1]) && (item[2] === '(empty)' || isNpmPackageSpec(item[2])))) { sendJson(res, 400, { error: 'bad-package' }); return }
-  const versions = asked as [string, string, string][]
+  const patchOf = (item: unknown[]) => item.length === 3 ? null : plainObject(item[3]) ? requestedPatch(item[3] as { hash: unknown }) : 'invalid'
+  if (!Array.isArray(asked) || asked.length === 0 || asked.length > MAX_ASKED_DELTAS || !asked.every(item => Array.isArray(item) && (item.length === 3 || item.length === 4)
+    && isNpmPackageName(item[0]) && isNpmPackageSpec(item[1]) && (item[2] === '(empty)' || isNpmPackageSpec(item[2])) && patchOf(item) !== 'invalid')) {
+    sendJson(res, 400, { error: 'bad-package' }); return
+  }
+  const versions = (asked as unknown[][]).map(item => [...item.slice(0, 3), patchOf(item)] as [string, string, string, RequestedPatch | null])
+  // Each patch read once, by its hash.
+  const patches = new Map<string, Promise<ReadPatch | Refusal>>()
   const reader = await npmReader(deps, cookie, [...new Set(versions.map(([name]) => name))], { handed: true })
   if (reader == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   const controller = new AbortController()
@@ -5124,9 +5135,9 @@ async function handleNpmDeltas(req: IncomingMessage, res: ServerResponse, deps: 
   const kept = npmDeltaStore<NpmDelta>(deps.db, deps.config.debug), keptVersions = npmVersionStore(deps.db, deps.config.debug)
   const out = openLines(res)
   let stopped = false
-  await eachOf(versions, DELTAS_AT_ONCE, async ([name, version, otherVersion]) => {
+  await eachOf(versions, DELTAS_AT_ONCE, async ([name, version, otherVersion, patch]) => {
     if (stopped || controller.signal.aborted) return
-    const asOne = { name, version, otherVersion }
+    const asOne = { name, version, otherVersion, ...patch ? { patchHash: patch.hash } : {} }
     let isPrivate = false, line: Record<string, unknown>
     try {
       const privileged = canReadPrivateNpm(reader, name)
@@ -5134,7 +5145,10 @@ async function handleNpmDeltas(req: IncomingMessage, res: ServerResponse, deps: 
       const [doc, old] = await Promise.all([readNpmVersion(name, version, privileged, controller.signal, together).then(found),
         otherVersion === '(empty)' ? null : readNpmVersion(name, otherVersion, privileged, controller.signal, together).then(found)])
       isPrivate = doc.private || old?.private === true
-      line = { ...asOne, ...await npmDelta(old ? deltaSide(old) : null, deltaSide(doc), kept) }
+      const patched = patch && await (patches.get(patch.hash) ?? patches.set(patch.hash, npmPatchOf(deps, cookie, patch)).get(patch.hash)!)
+      const side = deltaSide(doc)
+      line = patched && 'error' in patched ? { ...asOne, error: patched.error, status: patched.status } : { ...asOne, ...await npmDelta(old ? deltaSide(old) : null,
+        patched ? { integrity: `${side.integrity} patch:${patch.hash}`, files: async () => patchedFiles(await side.files(), patched.files) } : side, kept) }
     } catch (err) {
       if (controller.signal.aborted) return
       if (!(err instanceof NpmPackageError)) console.warn('managed: a package delta failed:', err)
