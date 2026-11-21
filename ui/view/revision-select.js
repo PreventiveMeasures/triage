@@ -1,7 +1,7 @@
 // A revision of a repository: a branch, a tag or a commit, its kind switched
 // by the buttons before it, its name typed or picked among the repository's
 // (`refs`: `{ defaultBranch, branches, tags }`). Shared by Create a bundle
-// (ui/managed/repository-browser.js) and the code viewer's header
+// (ui/managed/create-bundle.js) and the code viewer's header
 // (repository-code.js). The host owns `kind` and `name`: each change is a
 // `revision-change` event, `detail.how` saying what made it: `kind` (a kind
 // picked, `name` the default branch for a branch, else ''), `input` (typed),
