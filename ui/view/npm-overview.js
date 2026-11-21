@@ -722,14 +722,18 @@ function listBadge(classes, label, rows, said, value = null, open = null, labell
     </div>`
   const inner = html`${labelled ? html`<span>${label}</span>` : html`<span class="sr-only">${label}</span>`}${value !== null || rows.length > 1
     ? html`<span class="npm-extension-count">${value ?? rows.length.toLocaleString('en')}</span>` : nothing}`
-  return open
-    ? html`<li><button type="button" class=${`npm-extension is-open ${classes}`}
-      data-tooltip=${tooltip}
-      .tooltipContent=${content} @click=${open}>${inner}</button></li>`
-    : html`<li><span class=${`npm-extension ${classes}`}
-      data-tooltip=${tooltip}
-      .tooltipContent=${content}>${inner}</span></li>`
+  return tipChip(open ? `is-open ${classes}` : classes, tooltip, content, inner, open)
 }
+
+// A chip with a styled tooltip (`tip`, `tooltip` its text): a button where
+// `click` opens what it says (`popup` the kind it opens), else a span.
+const tipChip = (classes, tooltip, tip, content, click = null, popup = nothing) => click
+  ? html`<li><button type="button" class=${`npm-extension ${classes}`} aria-haspopup=${popup}
+    data-tooltip=${tooltip}
+    .tooltipContent=${tip} @click=${click}>${content}</button></li>`
+  : html`<li><span class=${`npm-extension ${classes}`}
+    data-tooltip=${tooltip}
+    .tooltipContent=${tip}>${content}</span></li>`
 
 // What risk tells of an unimported dependency's package
 // (risk/npm/new-dependency.js): new since the version compared with and how
@@ -755,20 +759,19 @@ function dependencyBadges(sides, found) {
   const chips = []
   if (fetched.length > 0) {
     const was = fetched.filter(row => row.added).map(row => `${row.name} was ${row.was ?? 'none'}`)
-    chips.push(html`<li><span class="npm-extension is-warn npm-compare-registry"
-      data-tooltip=${`From elsewhere than npm's registry: ${fetched.map(row => `${row.name} ${row.now}`).join(', ')}${anew(fetched)}`}
-      .tooltipContent=${compareTip('From elsewhere than npm\'s registry', [sides.at(-1)], [tipLines(fetched.map(row => [row.name, row.now, row.added]))],
-        was.length > 0 ? `New since ${sides[0].version}: ${was.join(', ')}` : null)}>
-      <span>Non-registry deps</span><span class="npm-extension-count">${fetched.length.toLocaleString('en')}</span></span></li>`)
+    chips.push(tipChip('is-warn npm-compare-registry', `From elsewhere than npm's registry: ${fetched.map(row => `${row.name} ${row.now}`).join(', ')}${anew(fetched)}`,
+      compareTip('From elsewhere than npm\'s registry', [sides.at(-1)], [tipLines(fetched.map(row => [row.name, row.now, row.added]))],
+        was.length > 0 ? `New since ${sides[0].version}: ${was.join(', ')}` : null), html`
+      <span>Non-registry deps</span><span class="npm-extension-count">${fetched.length.toLocaleString('en')}</span>`))
   }
   if (unimported.length > 0) {
     const [it, its] = unimported.length === 1 ? ['it', 'its'] : ['them', 'their']
     const named = row => row.kind ? `${row.name} (${row.kind})` : row.name
-    chips.push(html`<li><span class=${`npm-extension ${unused.severity === 'notice' ? 'is-notice' : SEVERITY_CHIPS[unused.severity] ?? 'is-warn'} npm-compare-unimported`}
-      data-tooltip=${`Imported by nothing of ${version}: ${unimported.map(row => `${row.name} ${row.range}${unusedSaid(sides, row) ? ` (${unusedSaid(sides, row)})` : ''}`).join(', ')}${anew(unimported)}`}
-      .tooltipContent=${compareTip(`Nothing imports ${it}`, [sides.at(-1)], [tipLines(unimported.map(row => [[named(row), unusedSaid(sides, row)].filter(Boolean).join(', '), row.range, row.added]))],
-        `No code file of ${version} names ${it} as an import would, nor does an install script; npm installs ${it} all the same, running ${its} install scripts`)}>
-      <span>Unused deps</span><span class="npm-extension-count">${unimported.length.toLocaleString('en')}</span></span></li>`)
+    chips.push(tipChip(`${unused.severity === 'notice' ? 'is-notice' : SEVERITY_CHIPS[unused.severity] ?? 'is-warn'} npm-compare-unimported`,
+      `Imported by nothing of ${version}: ${unimported.map(row => `${row.name} ${row.range}${unusedSaid(sides, row) ? ` (${unusedSaid(sides, row)})` : ''}`).join(', ')}${anew(unimported)}`,
+      compareTip(`Nothing imports ${it}`, [sides.at(-1)], [tipLines(unimported.map(row => [[named(row), unusedSaid(sides, row)].filter(Boolean).join(', '), row.range, row.added]))],
+        `No code file of ${version} names ${it} as an import would, nor does an install script; npm installs ${it} all the same, running ${its} install scripts`), html`
+      <span>Unused deps</span><span class="npm-extension-count">${unimported.length.toLocaleString('en')}</span>`))
   }
   return chips
 }
@@ -795,9 +798,7 @@ function advisoriesBadge(sides, affecting) {
   sides.length > 1 ? `${brought} new · ${fixed} fixed` : null)
   const text = `Advisories affecting ${sides.map(({ version }, i) => `${version}: ${affecting[i].length}`).join(', ')}`
   const content = html`<span>Advisories</span><span class="npm-extension-count">${fromTo(was.length, now.length)}</span>`
-  return sides.length > 1 ? html`<li><button type="button" class=${`npm-extension npm-compare-advisories ${tint}`} aria-haspopup="dialog"
-    data-tooltip=${text} .tooltipContent=${tooltip} @click=${() => openCompareAdvisories(sides, affecting)}>${content}</button></li>`
-    : html`<li><span class=${`npm-extension npm-compare-advisories ${tint}`} data-tooltip=${text} .tooltipContent=${tooltip}>${content}</span></li>`
+  return tipChip(`npm-compare-advisories ${tint}`, text, tooltip, content, sides.length > 1 ? () => openCompareAdvisories(sides, affecting) : null, 'dialog')
 }
 
 // A tooltip's `[name, value, flagged]` lines, `name: value`, bold where flagged, muted where none.
