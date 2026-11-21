@@ -18,8 +18,7 @@ import { activityPicker, activitySubtab, pickActivitySubtab, watchActivitySubtab
 import { githubUser, githubUserName } from './github-users.js'
 import { reviewLine } from './pull-reviews.js'
 import { groupAt, groupOf, knowItems, knownItem, knownItems, readAtOf } from './repository-items.js'
-import { heldRead } from './held-read.js'
-import { KEEP_MS, RETRY_MS, failedRead, moreButton, number, readMore, readingBody, sessionKept, shownElements } from './activity-reads.js'
+import { filtered, modeButtons, moreButton, number, pagedRead, readingBody, sessionKept, shownElements, withNew } from './activity-reads.js'
 
 export { issueState }
 
@@ -53,7 +52,7 @@ function checked(answer) {
 // in the other than they counted it in (`counted`): as recorded when they
 // were adopted, unless GitHub closed one now closed, or updated one now open,
 // no later than they were read (`countsAt`), which counted it as it is.
-export function listedNow(repoId, kind, listState, entry) {
+function listedNow(repoId, kind, listState, entry) {
   const belongs = item => (item.state === 'open') === (listState === 'open')
   const latest = entry.items.map(item => knownItem(repoId, item.number) ?? { item, readAt: entry.readAt })
   const items = latest.map(({ item }) => item)
@@ -91,54 +90,13 @@ function rebase(repoId, kind, entry) {
   const counted = new Map(knownItems(repoId, kind).map(held => [held.item.number, groupAt(held, entry.countsAt)]))
   for (const item of entry.items) if (!counted.has(item.number)) counted.set(item.number, groupOf(item))
   entry.counted = counted
-}
-
-// The list `key` names, as held, else read (held-read.js): 'loading', then
-// 'ready' with its `items`, `counts` and the cursor reading on (`after`), or
-// 'error'. `adopt` records what its counts counted.
-function listRead(key, ask, adopt) {
-  return heldRead(sessionLists(), key, () => ask(null), {
-    ready: answer => {
-      const entry = { status: 'ready', until: Date.now() + KEEP_MS, ...answer, countsAt: answer.readAt, loadingMore: false, moreError: null }
-      adopt(entry)
-      return entry
-    },
-    failed: err => failedRead(err, 'The list could not be read.'),
-    retryMs: RETRY_MS, repaint,
-  })
-}
-
-// The next page of a list, its counts the latest read: a page the server
-// kept from before the one they came with leaves them.
-function readOn(key, entry, ask, adopt) {
-  readMore(entry, {
-    held: () => sessionLists().get(key) === entry,
-    ask: () => ask(entry.after),
-    merge: answer => {
-      const held = new Set(entry.items.map(item => item.number))
-      entry.items = [...entry.items, ...answer.items.filter(item => !held.has(item.number))]
-      if (answer.readAt >= entry.countsAt) {
-        entry.counts = answer.counts
-        entry.countsAt = answer.readAt
-        adopt(entry)
-      }
-      entry.more = answer.more
-      entry.after = answer.after
-    },
-    error: 'More could not be read.', repaint,
-  })
+  return entry
 }
 
 // Those of `items` matching every word of `filter`: in its number, title,
 // author (its login, or its user's name), labels or branch.
-export function filterIssues(items, filter) {
-  const words = filter.trim().toLowerCase().split(/\s+/u).filter(Boolean)
-  if (words.length === 0) return items
-  return items.filter(item => {
-    const text = [`#${item.number}`, item.title, item.author ?? '', githubUserName(item.author) ?? '', item.head ?? '', ...item.labels.map(label => label.name)].join('\n').toLowerCase()
-    return words.every(word => text.includes(word))
-  })
-}
+export const filterIssues = (items, filter) => filtered(items, filter, item => [`#${item.number}`, item.title, item.author ?? '', githubUserName(item.author) ?? '',
+  item.head ?? '', ...item.labels.map(label => label.name)])
 
 const compactThousands = new Intl.NumberFormat('en-US', { notation: 'compact', maximumSignificantDigits: 2 })
 
@@ -212,14 +170,10 @@ function dependencyLine(entry) {
 // repositoryFullName, once known): its issues, or its pull requests (`kind`
 // 'pulls').
 class RepositoryIssues extends Shown {
-  static properties = { repository: { attribute: false }, repo: { attribute: false }, kind: {}, _filter: { state: true } }
-
-  createRenderRoot() { return this }
+  static properties = { kind: {}, _filter: { state: true } }
 
   constructor() {
     super()
-    this.repository = null
-    this.repo = null
     this.kind = 'issues'
     this._filter = ''
   }
@@ -230,17 +184,27 @@ class RepositoryIssues extends Shown {
     this.watchMore(() => !this._filter.trim())
   }
 
+  // Those open or closed (`listState`), as held, else read (pagedRead):
+  // 'loading', then 'ready' with its `items` and `counts`, or 'error'; on
+  // its next page its counts the latest read, a page the server kept from
+  // before the one they came with leaving them.
   list(listState) {
     const { repoId } = this.repository
     const kind = this.kind
-    const key = `${repoId}\0${kind}\0${listState}`
     const ask = after => fetchRepositoryIssues(repoId, kind, { state: listState, after }).then(checked).then(answer => {
       knowItems(repoId, answer.items, answer.readAt, kind)
       return answer
     })
-    const adopt = held => rebase(repoId, kind, held)
-    const entry = listRead(key, ask, adopt)
-    return { key, entry, more: () => readOn(key, entry, ask, adopt) }
+    return pagedRead(sessionLists, `${repoId}\0${kind}\0${listState}`, { first: () => ask(null), next: ask, message: 'The list could not be read.', repaint,
+      ready: entry => rebase(repoId, kind, { ...entry, countsAt: entry.readAt }),
+      merge: (entry, answer) => {
+        entry.items = withNew(entry.items, answer.items, item => item.number)
+        if (answer.readAt >= entry.countsAt) {
+          entry.counts = answer.counts
+          entry.countsAt = answer.readAt
+          rebase(repoId, kind, entry)
+        }
+      } })
   }
 
   pick(listState) {
@@ -265,10 +229,8 @@ class RepositoryIssues extends Shown {
     const shown = now ? filterIssues(now.items, this._filter) : []
     return html`<div class="history-bar issues-bar">
         ${activityPicker(this.kind)}
-        <div class="history-modes" role="group" aria-label=${this.kind === 'pulls' ? 'Pull requests' : 'Issues'}>
-          <button type="button" aria-pressed=${String(listState === 'open')} @click=${() => this.pick('open')}>Open${counted('open')}</button>
-          <button type="button" aria-pressed=${String(listState === 'closed')} @click=${() => this.pick('closed')}>Closed${counted('closed')}</button>
-        </div>
+        ${modeButtons(this.kind === 'pulls' ? 'Pull requests' : 'Issues', [['open', html`Open${counted('open')}`], ['closed', html`Closed${counted('closed')}`]], listState,
+          picked => () => this.pick(picked))}
         <input class="issues-filter" type="search" placeholder="Filter" aria-label=${`Filter the ${noun} read`} .value=${this._filter}
           @input=${event => { this._filter = event.target.value }}>
         ${now && this._filter.trim() ? html`<span class="history-summary">${shown.length} of ${now.items.length} read</span>` : nothing}

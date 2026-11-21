@@ -15,8 +15,7 @@ import { PULL_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { navigateToRepositoryCode, shownRevision } from './repository-code.js'
 import { activityPicker } from './repository-activity.js'
 import { commitAuthors } from './github-users.js'
-import { heldRead } from './held-read.js'
-import { KEEP_MS, RETRY_MS, failedRead, moreButton, readMore, readingBody, sessionKept, shownElements } from './activity-reads.js'
+import { KEEP_MS, failedRead, keptRead, modeButtons, moreButton, readMore, readingBody, sessionKept, shownElements, withNew } from './activity-reads.js'
 
 // The graph's geometry, in pixels: a lane's width, a line's height, and the
 // margin before the first lane and after the last.
@@ -58,9 +57,8 @@ function readEntry(answer, settle, sought = new Set()) {
 // The pull requests squashed into `pulls`' commits added to those `entry`
 // holds, each once.
 function addPulls(entry, pulls) {
-  const merges = new Set(entry.pulls.map(pull => pull.merge))
-  const added = pulls.filter(pull => !merges.has(pull.merge))
-  if (added.length > 0) entry.pulls = [...entry.pulls, ...added]
+  const added = withNew(entry.pulls, pulls, pull => pull.merge)
+  if (added.length > entry.pulls.length) entry.pulls = added
 }
 
 // A page whose squashed pull requests GitHub was still looking up
@@ -78,17 +76,17 @@ function askPulls(key, entry, ask, page, held, tries = 1) {
   }, PULLS_MS)
 }
 
-// The history `key` names, as held, else read (held-read.js): 'loading',
-// then 'ready' (readEntry), or 'error' with its `error` and `code`.
+// The history `key` names, as held, else read (keptRead): 'loading', then
+// 'ready' (readEntry), or 'error' with its `error` and `code`.
 function historyRead(key, ask, settle) {
-  return heldRead(sessionHistories(), key, () => ask(1), {
+  return keptRead(sessionHistories(), key, () => ask(1), {
     ready: answer => readEntry(answer, settle),
     settled: entry => { if (entry.pullsPending) askPulls(key, entry, ask, 1, null) },
     failed: err => {
       const failed = failedRead(err, 'The history could not be read.')
       return failed && { ...failed, code: err?.code ?? null }
     },
-    retryMs: RETRY_MS, repaint,
+    repaint,
   })
 }
 
@@ -146,8 +144,7 @@ function readOn(key, entry, ask, settle) {
     held: () => sessionHistories().get(key) === entry,
     ask: () => ask(entry.page + 1, from),
     merge: answer => {
-      const held = new Set(entry.commits.map(commit => commit.sha))
-      entry.commits = [...entry.commits, ...answer.commits.filter(commit => !held.has(commit.sha))]
+      entry.commits = withNew(entry.commits, answer.commits, commit => commit.sha)
       addPulls(entry, answer.pulls)
       entry.page += 1
       entry.more = answer.more === true
@@ -159,18 +156,18 @@ function readOn(key, entry, ask, settle) {
 }
 
 // A server's answer, its commits and unread branches those naming an id.
-const SHA = /^[a-f\d]{40}$/u
-const isCommit = commit => typeof commit?.sha === 'string' && SHA.test(commit.sha) && Array.isArray(commit.parents)
+const isSha = value => typeof value === 'string' && /^[a-f\d]{40}$/u.test(value)
+const isCommit = commit => isSha(commit?.sha) && Array.isArray(commit.parents)
 function checked(answer) {
   if (!Array.isArray(answer?.commits)) throw new TypeError('The server answered with no history.')
   const commits = answer.commits.filter(isCommit)
-  const unread = Array.isArray(answer.unread) ? answer.unread.filter(head => typeof head?.name === 'string' && typeof head.sha === 'string' && SHA.test(head.sha)) : []
+  const unread = Array.isArray(answer.unread) ? answer.unread.filter(head => typeof head?.name === 'string' && isSha(head.sha)) : []
   // The pull requests squashed into its commits, each with its own commits,
   // and the open ones' heads.
-  const pulls = Array.isArray(answer.pulls) ? answer.pulls.filter(pull => typeof pull?.merge === 'string' && SHA.test(pull.merge) && Number.isSafeInteger(pull.number)
-    && typeof pull.head === 'string' && SHA.test(pull.head) && Array.isArray(pull.commits)).map(pull => ({ ...pull, commits: pull.commits.filter(isCommit) })) : []
+  const pulls = Array.isArray(answer.pulls) ? answer.pulls.filter(pull => isSha(pull?.merge) && Number.isSafeInteger(pull.number) && isSha(pull.head)
+    && Array.isArray(pull.commits)).map(pull => ({ ...pull, commits: pull.commits.filter(isCommit) })) : []
   const openPulls = Array.isArray(answer.openPulls)
-    ? answer.openPulls.filter(pull => Number.isSafeInteger(pull?.number) && typeof pull.sha === 'string' && SHA.test(pull.sha)) : []
+    ? answer.openPulls.filter(pull => Number.isSafeInteger(pull?.number) && isSha(pull.sha)) : []
   return { ...answer, commits, unread, pulls, openPulls }
 }
 
@@ -267,6 +264,7 @@ export function subjectLinks(subject, github) {
 
 const laneX = lane => EDGE + lane * LANE
 const rowY = row => row * ROW + ROW / 2
+const graphWidth = layout => EDGE * 2 + (layout.width - 1) * LANE
 
 // A line from a lane at a row to a lane at the next: straight down, or
 // curving across between them.
@@ -286,14 +284,15 @@ const stubPath = ({ row, col, straight }) => straight
 // commit to mark: the lines of each color as one path, then the nodes over
 // them.
 function historyGraph(layout, shown) {
-  const lines = Array.from({ length: LANE_COLORS }, () => [])
-  for (const segment of layout.segments) lines[segment.color].push(segmentPath(segment))
-  const stubs = Array.from({ length: LANE_COLORS }, () => [])
-  for (const stub of layout.stubs) stubs[stub.color].push(stubPath(stub))
-  const width = EDGE * 2 + (layout.width - 1) * LANE
-  return html`<svg class="history-graph" width=${width} height=${layout.rows.length * ROW} aria-hidden="true">
-    ${lines.map((parts, color) => parts.length > 0 ? svg`<path class=${`lane-${color}`} d=${parts.join('')}/>` : nothing)}
-    ${stubs.map((parts, color) => parts.length > 0 ? svg`<path class=${`history-stub lane-${color}`} d=${parts.join('')}/>` : nothing)}
+  // Each color's `lines` (each drawn by `path`) as one path, of `kind`.
+  const paths = (lines, path, kind = '') => {
+    const parts = Array.from({ length: LANE_COLORS }, () => [])
+    for (const line of lines) parts[line.color].push(path(line))
+    return parts.map((ds, color) => ds.length > 0 ? svg`<path class=${`${kind}lane-${color}`} d=${ds.join('')}/>` : nothing)
+  }
+  return html`<svg class="history-graph" width=${graphWidth(layout)} height=${layout.rows.length * ROW} aria-hidden="true">
+    ${paths(layout.segments, segmentPath)}
+    ${paths(layout.stubs, stubPath, 'history-stub ')}
     ${layout.rows.map(({ commit, col, color }, row) => svg`<circle class=${`lane-${color}${commit.sha === shown ? ' is-shown' : ''}`} cx=${laneX(col)} cy=${rowY(row)}
       r=${commit.sha === shown ? 4.5 : commit.parents.length > 1 ? 3 : 3.5}/>`)}
   </svg>`
@@ -358,14 +357,10 @@ export function rereadHistory(key) {
 // repository's full name (`repo`, repository-code.js repositoryFullName,
 // once known) and branches and tags (`refs`, repositoryRefs).
 class RepositoryHistory extends Shown {
-  static properties = { repository: { attribute: false }, repo: { attribute: false }, refs: { attribute: false } }
-
-  createRenderRoot() { return this }
+  static properties = { refs: { attribute: false } }
 
   constructor() {
     super()
-    this.repository = null
-    this.repo = null
     this.refs = null
     this._drawn = null
     this._mode = null
@@ -456,10 +451,7 @@ class RepositoryHistory extends Shown {
         ${activityPicker('commits')}
         ${mode === 'path' ? html`<span class="history-scope">Commits touching <code>${this.repository.path}</code></span>`
           : refused ? html`<span class="history-scope">Every branch needs your GitHub sign-in.</span>`
-          : html`<div class="history-modes" role="group" aria-label="Branches">
-            <button type="button" aria-pressed=${String(mode === 'all')} @click=${() => this.pick('all')}>All branches</button>
-            <button type="button" aria-pressed=${String(mode === 'unmerged')} @click=${() => this.pick('unmerged')}>Unmerged</button>
-          </div>`}
+          : modeButtons('Branches', [['all', 'All branches'], ['unmerged', 'Unmerged']], mode, picked => () => this.pick(picked))}
         ${ready ? html`<span class="history-summary">${count}${branches > 0 ? ` on ${branches} branch${branches === 1 ? '' : 'es'}` : ''}</span>` : nothing}
       </div>
       ${ready ? this.renderCommits(mode, entry, more, layout, defaultBranch) : readingBody(entry, 'Reading the history…', () => rereadHistory(key))}`
@@ -473,14 +465,13 @@ class RepositoryHistory extends Shown {
     const revision = shownRevision(this.repository, this.refs)
     const named = historyRefs(entry, defaultBranch)
     const focused = Math.max(0, layout.rows.findIndex(row => row.commit.sha === shown))
-    const graphWidth = EDGE * 2 + (layout.width - 1) * LANE
     // A line's links on GitHub reached by keys along it (keydown); the rest
     // of it, its button, named by its subject, opening its code.
     const github = githubOf(this.repo ?? this.repository.repo)
     return html`<div class="history-scroll">
       ${mode === 'all' && !entry.refreshing && !(entry.retryAt > Date.now()) && !layout.rows.some(row => row.commit.sha === shown) ? html`<p class="history-note">
         <code>${shown.slice(0, 7)}</code> isn’t among these commits.</p>` : nothing}
-      <div class="history-lines" style=${styleMap({ '--history-graph': `${graphWidth}px` })}>
+      <div class="history-lines" style=${styleMap({ '--history-graph': `${graphWidth(layout)}px` })}>
         ${historyGraph(layout, shown)}
         <ol class="history-list" aria-label="Commits" @keydown=${this.keydown}>${layout.rows.map(({ commit, color }, row) => {
           const refs = named.get(commit.sha)

@@ -13,8 +13,7 @@ import { compactTime } from './repository-history.js'
 import { BRANCH_ICON, COMMIT_ICON, PULL_ICON, agentIcon, agentName, knowAgents, sessionLink } from './repository-tiles.js'
 import { activityPicker, activitySubtab, pickActivitySubtab, watchActivitySubtabs } from './repository-activity.js'
 import { commitAgent, githubUser, githubUserName } from './github-users.js'
-import { heldRead } from './held-read.js'
-import { KEEP_MS, RETRY_MS, failedRead, moreButton, number, readMore, readingBody, sessionKept, shownElements } from './activity-reads.js'
+import { filtered, modeButtons, moreButton, number, pagedRead, readingBody, sessionKept, shownElements, withNew } from './activity-reads.js'
 
 export { sessionLink }
 
@@ -56,53 +55,13 @@ const reconstructed = entry => Object.assign(entry, { sessions: agentSessions(en
   branchesSince: entry.after?.pulls ? Math.min(...entry.pulls.map(pull => pull.updatedAt ?? Number.POSITIVE_INFINITY)) : null,
 }) })
 
-// What the repository `key` names showed, as held, else read (held-read.js):
-// 'loading', then 'ready' with the artifacts read, the `sessions` they make
-// and the cursors reading on (`after`), or 'error'.
-function listRead(key, ask) {
-  return heldRead(sessionLists(), key, () => ask(null).then(answer => { knowAgents(answer.agents); return answer }), {
-    ready: answer => reconstructed({ status: 'ready', until: Date.now() + KEEP_MS, ...answer, loadingMore: false, moreError: null }),
-    failed: err => failedRead(err, 'The agents\' work could not be read.'),
-    retryMs: RETRY_MS, repaint,
-  })
-}
-
-// The next page: its pull requests and commits, each once. One adding no
-// session leaves the next to a click (`stalled`): most may be no agent's,
-// and its button, still near, would read the whole history on its own.
-function readOn(key, entry, ask) {
-  readMore(entry, {
-    held: () => sessionLists().get(key) === entry,
-    ask: () => ask(entry.after),
-    merge: answer => {
-      const pulls = new Set(entry.pulls.map(pull => pull.number))
-      const commits = new Set(entry.commits.map(commit => commit.oid))
-      entry.pulls = [...entry.pulls, ...answer.pulls.filter(pull => !pulls.has(pull.number))]
-      entry.commits = [...entry.commits, ...answer.commits.filter(commit => !commits.has(commit.oid))]
-      entry.more = answer.more
-      entry.after = answer.after
-      const shown = entry.sessions.length
-      reconstructed(entry)
-      entry.stalled = entry.sessions.length <= shown
-    },
-    error: 'More could not be read.', repaint,
-  })
-}
-
 // Those of `sessions` of `agent` ('all' for every one's), and matching every
 // word of `filter`: in a title, author (a login, or its user's name),
 // branch, pull request, commit, issue or session id.
-export function filterSessions(sessions, agent, filter) {
-  const words = filter.trim().toLowerCase().split(/\s+/u).filter(Boolean)
-  return sessions.filter(session => {
-    if (agent !== 'all' && !session.agents.includes(agent)) return false
-    if (words.length === 0) return true
-    const text = [session.title, ...session.authors, ...session.authors.map(githubUserName), ...session.branches, ...session.sessions, ...session.tasks,
-      ...session.pulls.flatMap(pull => [`#${pull.number}`, pull.title]), ...session.commits.flatMap(commit => [commit.oid.slice(0, 7), commit.title]),
-      ...session.issues.flatMap(issue => [`#${issue.number}`, issue.title])].join('\n').toLowerCase()
-    return words.every(word => text.includes(word))
-  })
-}
+export const filterSessions = (sessions, agent, filter) => filtered(sessions.filter(session => agent === 'all' || session.agents.includes(agent)), filter, session => [
+  session.title, ...session.authors, ...session.authors.map(githubUserName), ...session.branches, ...session.sessions, ...session.tasks,
+  ...session.pulls.flatMap(pull => [`#${pull.number}`, pull.title]), ...session.commits.flatMap(commit => [commit.oid.slice(0, 7), commit.title]),
+  ...session.issues.flatMap(issue => [`#${issue.number}`, issue.title])])
 
 const TILE_STATES = { open: 'open', merged: 'merged', closed: 'closed', branch: 'draft' }
 // The agents an entry's sessions are picked among, Claude and Codex first,
@@ -155,14 +114,10 @@ export function agentStats(sessions, agent) {
 // entry's) is in, by its full name (`repo`, repository-code.js
 // repositoryFullName, once known).
 class RepositoryAgents extends Shown {
-  static properties = { repository: { attribute: false }, repo: { attribute: false }, _filter: { state: true } }
-
-  createRenderRoot() { return this }
+  static properties = { _filter: { state: true } }
 
   constructor() {
     super()
-    this.repository = null
-    this.repo = null
     this._filter = ''
   }
 
@@ -172,12 +127,24 @@ class RepositoryAgents extends Shown {
     this.watchMore(() => !this._filter.trim() && !this.list().entry.stalled)
   }
 
+  // What the repository showed, as held, else read (pagedRead): 'loading',
+  // then 'ready' with the artifacts read, the `sessions` they make and the
+  // cursors reading on (`after`), or 'error'. Its next page's pull requests
+  // and commits each once; one adding no session leaves the next to a click
+  // (`stalled`): most may be no agent's, and its button, still near, would
+  // read the whole history on its own.
   list() {
     const { repoId } = this.repository
-    const key = `${repoId}`
     const ask = after => fetchRepositoryAgents(repoId, after ?? {}).then(checked)
-    const entry = listRead(key, ask)
-    return { key, entry, more: () => readOn(key, entry, ask) }
+    return pagedRead(sessionLists, `${repoId}`, { first: () => ask(null).then(answer => { knowAgents(answer.agents); return answer }), next: ask,
+      message: 'The agents\' work could not be read.', repaint, ready: reconstructed,
+      merge: (entry, answer) => {
+        entry.pulls = withNew(entry.pulls, answer.pulls, pull => pull.number)
+        entry.commits = withNew(entry.commits, answer.commits, commit => commit.oid)
+        const shown = entry.sessions.length
+        reconstructed(entry)
+        entry.stalled = entry.sessions.length <= shown
+      } })
   }
 
   pick(agent) {
@@ -198,11 +165,8 @@ class RepositoryAgents extends Shown {
     const shown = filterSessions(sessions, picked, this._filter)
     return html`<div class="history-bar issues-bar">
         ${activityPicker('agents')}
-        <div class="history-modes" role="group" aria-label="Agents">
-          <button type="button" aria-pressed=${String(picked === 'all')} @click=${() => this.pick('all')}>All${counted('all')}</button>
-          ${agentsOf(entry).map(agent => html`<button type="button" class=${`agent-pick is-${agent}`} aria-pressed=${String(picked === agent)}
-            @click=${() => this.pick(agent)}>${agentIcon(agent)}${agentName(agent)}${counted(agent)}</button>`)}
-        </div>
+        ${modeButtons('Agents', [['all', html`All${counted('all')}`], ...agentsOf(entry).map(agent => [agent, html`${agentIcon(agent)}${agentName(agent)}${counted(agent)}`])],
+          picked, agent => () => this.pick(agent), agent => agent === 'all' ? nothing : `agent-pick is-${agent}`)}
         <input class="issues-filter" type="search" placeholder="Filter" aria-label="Filter the sessions read" .value=${this._filter}
           @input=${event => { this._filter = event.target.value }}>
         ${ready ? this.renderStats(entry) : nothing}

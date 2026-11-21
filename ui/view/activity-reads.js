@@ -4,6 +4,7 @@
 // while a read is pending or failed.
 import { html, nothing } from 'lit'
 import { state } from '#client/index.js'
+import { heldRead } from './held-read.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 
@@ -34,15 +35,64 @@ export function sessionKept(...collections) {
 export const failedRead = (err, message) => err?.name === 'AbortError' ? null
   : { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || message }
 
+// What `key` names in `data`, as held, else read by `ask` (held-read.js):
+// `ready`'s entry of its answer, kept KEEP_MS; a failure as `failed` holds
+// it, failedRead's by `message` but where given, read again RETRY_MS after.
+export const keptRead = (data, key, ask, { ready, message, failed = err => failedRead(err, message), settled, repaint }) => heldRead(data, key, ask, {
+  ready: answer => ({ status: 'ready', until: Date.now() + KEEP_MS, ...ready(answer) }), failed, settled, retryMs: RETRY_MS, repaint,
+})
+
+// A list the session keeps in `kept()`, read a page at a time (keptRead):
+// its first by `first`, `ready`'s entry of it; the next (`more`) by
+// `next(entry.after)`, its cursor and whether more follow taken and the
+// rest added by `merge` while it is still the one held (readMore).
+export function pagedRead(kept, key, { first, next, ready, merge, message, repaint }) {
+  const entry = keptRead(kept(), key, first, { ready: answer => ready({ ...answer, loadingMore: false, moreError: null }), message, repaint })
+  return { key, entry, more: () => readMore(entry, { held: () => kept().get(key) === entry, ask: () => next(entry.after), error: 'More could not be read.', repaint,
+    merge: answer => {
+      entry.more = answer.more
+      entry.after = answer.after
+      merge(entry, answer)
+    } }) }
+}
+
+// `list` and those of `more` it lacks, by `key`.
+export function withNew(list, more, key) {
+  const held = new Set(list.map(key))
+  return [...list, ...more.filter(item => !held.has(key(item)))]
+}
+
+// Those of `items` whose words (`words`) hold every one of `filter`'s, in any case.
+export function filtered(items, filter, words) {
+  const wanted = filter.trim().toLowerCase().split(/\s+/u).filter(Boolean)
+  return wanted.length === 0 ? items : items.filter(item => {
+    const text = words(item).join('\n').toLowerCase()
+    return wanted.every(word => text.includes(word))
+  })
+}
+
 // A click to open a tile's popup: the main button's, none held with it, which
 // would open its link in a new tab or window instead.
 const plainClick = event => event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
 
-// A subclass of `Base` whose connected elements are `shown`, all drawn again by `repaint`.
+// A subclass of `Base` whose connected elements are `shown`, all drawn again
+// by `repaint`: each a view, drawn in itself, of the directory shown
+// (`repository`, an entry's) in the repository it names, by its full name
+// (`repo`, repository-code.js repositoryFullName, once known).
 export function shownElements(Base) {
   const shown = new Set()
   const repaint = () => { for (const element of shown) element.requestUpdate() }
   class Shown extends Base {
+    static properties = { repository: { attribute: false }, repo: { attribute: false } }
+
+    createRenderRoot() { return this }
+
+    constructor() {
+      super()
+      this.repository = null
+      this.repo = null
+    }
+
     connectedCallback() {
       super.connectedCallback()
       shown.add(this)
@@ -105,6 +155,12 @@ export function readMore(entry, { held, ask, merge, error, repaint }) {
     repaint()
   })
 }
+
+// A group of buttons (`label`) picking one of `options` (each its value and
+// content), `picked`'s pressed; `click(value)` a button's click, `kindOf(value)`
+// its class.
+export const modeButtons = (label, options, picked, click, kindOf = () => nothing) => html`<div class="history-modes" role="group" aria-label=${label}>${options.map(([value,
+  content]) => html`<button type="button" class=${kindOf(value)} aria-pressed=${String(value === picked)} @click=${click(value)}>${content}</button>`)}</div>`
 
 // A list's button reading its next page (`more`), and why the last failed.
 export const moreButton = (entry, more, label, kind = 'history-more') => entry.more || entry.moreError ? html`<div class=${kind}>
