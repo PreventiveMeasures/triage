@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { MappingsError, decodeMappings, encodeMappings } from '../common/sourcemap-mappings.js'
+import { MappingsError, decodeMappings, encodeDeltas, encodeMappings, mappingsDeltas } from '../common/sourcemap-mappings.js'
 
 // Random lines of segments, the same each run, every value within the
 // sources and names counts given.
@@ -71,4 +71,13 @@ test('a value written in more digits than it needs decodes, but encodes otherwis
   assert.deepEqual(decodeMappings('gAAAA', 1, 0), [[[0, 0, 0, 0]]])
   assert.equal(encodeMappings(decodeMappings('gAAAA', 1, 0)), 'AAAA')
   assert.equal(encodeMappings(decodeMappings('BAAA', 1, 0)), 'AAAA', 'a negative zero, as one')
+})
+
+test('segments read as each value from the one before, as the format writes them, and written back of those', () => {
+  const lines = [[[0, 0, 0, 0], [2, 0, 0, 2]], [[0, 0, 1, 2], [4, 0, 1, 6, 0]], [], [[3]]]
+  assert.deepEqual(mappingsDeltas(lines), [[[0, 0, 0, 0], [2, 0, 0, 2]], [[0, 0, 1, 0], [4, 0, 0, 4, 0]], [], [[3]]],
+    'a column from the one before on its line, a source, line, column and name from the segment before, whatever its line')
+  assert.equal(encodeDeltas(mappingsDeltas(lines)), 'AAAA,EAAE;AACA,IAAIA;;G')
+  const many = randomLines(2000, 7, 30)
+  assert.equal(encodeDeltas(mappingsDeltas(many)), encodeMappings(many))
 })

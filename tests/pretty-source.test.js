@@ -283,11 +283,10 @@ test('a comparison\'s JSON is pretty-printed here, in any comparison, once the t
   assert.equal(changeRequests.length, 0)
 })
 
-// A source map and the file it is of, which names it, as a build writes them.
-const mapFiles = value => ({ 'lib/index.js': `function f() { return ${value} }\n//# sourceMappingURL=index.js.map\n`,
-  'lib/index.js.map': JSON.stringify({ version: 3, file: 'index.js', sources: ['../src/index.ts'], sourcesContent: [`export function f() { return ${value} }\n`], names: [], mappings: 'AAAA' }) })
+// A source map, its source's text holding `value`.
+const mapFiles = value => ({ 'lib/index.js.map': JSON.stringify({ version: 3, file: 'index.js', sources: ['../src/index.ts'], sourcesContent: [`export function f() { return ${value} }\n`], names: [], mappings: 'AAAA' }) })
 
-test('a source map is listed here, in any bundle, once the toggle is on, glossed with the file beside it that names it, nothing asked of the server', () => {
+test('a source map is listed here, in any bundle, once the toggle is on, nothing asked of the server', () => {
   const files = { ...mapFiles(1), 'lib/spaced.js.map': JSON.stringify(JSON.parse(mapFiles(1)['lib/index.js.map']), null, 2), 'lib/data.map': '{"a":1}' }
   const details = bundleOf(files), map = files['lib/index.js.map']
   assert.equal(prettyPrintable(details, {}, 'lib/index.js.map', map), true, 'a local bundle\'s too')
@@ -298,8 +297,7 @@ test('a source map is listed here, in any bundle, once the toggle is on, glossed
   state.bundleSourcePretty = 'indented'
   const copy = prettyCopy(details, {}, 'lib/index.js.map', map)
   assert.equal(copy.status, 'ready')
-  assert.match(copy.text, /^# Generated: lib\/index\.js$/mu)
-  assert.match(copy.text, /^@ function f\(\) \{ return 1 \}$/mu)
+  assert.match(copy.text, /^ {2}│ export function f\(\) \{ return 1 \}$/mu)
   assert.equal(prettyCopy(details, {}, 'lib/index.js.map', map), copy, 'kept')
   const spaced = prettyCopy(details, {}, 'lib/spaced.js.map', files['lib/spaced.js.map'])
   assert.equal(spaced.status, 'error')
@@ -308,7 +306,7 @@ test('a source map is listed here, in any bundle, once the toggle is on, glossed
   assert.equal(renders.length, 0)
 })
 
-test('a comparison\'s source map is listed here once the toggle is on, each side glossed with its own file, its diff held to reading back to the new map', () => {
+test('a comparison\'s source map is listed here once the toggle is on, its diff held to reading back to the new map', () => {
   const [baseFiles, otherFiles] = [mapFiles(1), mapFiles(2)]
   const base = { ...bundleOf(baseFiles), managedId: 'bundle-1' }, other = { ...bundleOf(otherFiles), managedId: 'bundle-2' }
   const copy = (side, content) => comparedCopy(base, other, side, 'lib/index.js.map', content, () => {})
@@ -316,8 +314,8 @@ test('a comparison\'s source map is listed here once the toggle is on, each side
   assert.equal(comparedPrintable(base, other, 'other', 'lib/index.js.map', otherFiles['lib/index.js.map']), true, 'in any comparison')
   state.bundleSourcePretty = 'indented'
   const [a, b] = [copy('base', baseFiles['lib/index.js.map']), copy('other', otherFiles['lib/index.js.map'])]
-  assert.match(a.text, /^@ function f\(\) \{ return 1 \}$/mu)
-  assert.match(b.text, /^@ function f\(\) \{ return 2 \}$/mu, 'the other side glossed with its own file')
+  assert.match(a.text, /^ {2}│ export function f\(\) \{ return 1 \}$/mu)
+  assert.match(b.text, /^ {2}│ export function f\(\) \{ return 2 \}$/mu)
   const contents = { before: baseFiles['lib/index.js.map'], after: otherFiles['lib/index.js.map'] }
   const drawn = { a: textLines(a.text), b: textLines(b.text), blocks: changeBlocks(a.text, b.text) }
   assert.equal(comparedListingRefusal(base, other, 'lib/index.js.map', 'lib/index.js.map', contents, drawn), null)
