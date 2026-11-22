@@ -165,6 +165,10 @@ function showsAtConfidence(g, min, kindOf) {
 // every finding; 0 lets the filter no-op instead, and the toolbar
 // hides the control anyway (see toolbarHtml in render.js).
 //
+// The base never sits above the best-scored row: a set scored 5 at most
+// has countAtMin(6) = 0 ≤ 25 too, and opening it at 6 would show an
+// empty list. Step down to the highest step some row clears first.
+//
 // After picking the base, walk DOWN while each lower step surfaces no
 // new groups — i.e. there's a "gap" in the confidence distribution
 // below the chosen floor. Lowering for free puts the slider at the
@@ -189,6 +193,7 @@ export function defaultConfidenceFloor(groups, tabs) {
   if (countAtMin(6) <= 25) base = 6
   else if (countAtMin(7) <= 25) base = 7
   else base = 8
+  while (base > 0 && countAtMin(base) === 0) base--
   while (base > 0 && countAtMin(base - 1) === countAtMin(base)) base--
   return base
 }
@@ -267,10 +272,13 @@ export function confirmedCoverage(groups, tabs, kindOf) {
   return covered
 }
 
+// Whether a set opens on Confirmed: Confirmed reaches something on screen,
+// and hides no finding the opening range `confMin` would show. A range
+// that shows nothing (its ruled-out rows read as 0) hides nothing Confirmed
+// would, so it doesn't hold the view on an empty list.
 export function confirmedIsDefault(visible, confMin, covered, kindOf) {
   const floor = effectiveFloor(visible, confMin)
   const shown = visible.filter((g) => showsAtConfidence(g, floor, kindOf))
-  if (shown.length === 0) return false
   const kinds = new Set(activeRevalidateKinds('confirmed', ''))
   if (!visible.some((g) => g.some((f) => kinds.has(kindOf(f))))) return false
   return shown.every((g) => g.every((f) => covered.has(tabKey(f))))

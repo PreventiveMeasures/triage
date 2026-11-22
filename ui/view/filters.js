@@ -198,9 +198,9 @@ export function matchesConfirmed(group) {
 // FINDINGS, not rows: every finding visible under the default range (a row
 // shows whole, unscored members too) must be visible in some row under
 // Confirmed (finding-filters.js confirmedIsDefault, through
-// filterRevalidateKind for the shown side). Something must be on screen,
-// and Confirmed must be reachable by the pass's own, real values — a set
-// of nothing but imports has no dropdown to clear the filter with.
+// filterRevalidateKind for the shown side). Confirmed must reach something
+// by the pass's own, real values — a set of nothing but imports has no
+// dropdown to clear the filter with. A range showing nothing hides nothing.
 export function defaultRevalidateFilter(groups, confMin) {
   const visible = groups.map(drawnTabs).filter((g) => g.length > 0)
   return confirmedIsDefault(visible, confMin, confirmedCoverage(groups, drawnTabs, revalidateKind), revalidateKind) ? 'confirmed' : ''
