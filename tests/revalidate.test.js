@@ -410,7 +410,8 @@ describe('fixed Confirmed in basic App view', () => {
   it('still requires Confirmed to be available and the opening default', () => {
     assert.equal(shouldLockConfirmed([]), false)
     assert.equal(shouldLockConfirmed([[makeFinding('plain', { confidence: 9 })]]), false)
-    const groups = [[confirmed('low', { confidence: 2 })], [makeFinding('lower', { confidence: 1 })]]
+    // The opening range shows both 2s, and Confirmed would hide one.
+    const groups = [[confirmed('low', { confidence: 2 })], [makeFinding('lower', { confidence: 2 })]]
     assert.equal(defaultRevalidateFilter(groups, defaultConfidenceFloor(groups)), '')
     assert.equal(shouldLockConfirmed(groups), false)
   })
@@ -844,9 +845,10 @@ describe('revalidate filter — the toolbar dropdown', () => {
       assert.equal(defaultRevalidateFilter([[...reached, makeFinding('2')]], 8), 'confirmed')
     })
 
-    it('stays off when the floor leaves nothing on screen', () => {
+    it('stays off only when there is nothing to show', () => {
       assert.equal(defaultRevalidateFilter([], 0), '')
-      assert.equal(defaultRevalidateFilter([[stamped('A', { confidence: 2 })]], 8), '')
+      // A floor that hides the lot is no reason to: Confirmed shows A.
+      assert.equal(defaultRevalidateFilter([[stamped('A', { confidence: 2 })]], 8), 'confirmed')
     })
 
     // The floor's own reading of what's on screen, which is not just
@@ -871,6 +873,38 @@ describe('revalidate filter — the toolbar dropdown', () => {
         [makeFinding('B', { confidence: 10, revalidate: 'refuted' })],
       ]
       assert.equal(defaultRevalidateFilter(knocked, 8), 'confirmed')
+    })
+
+    // A set scored 5 at most fits the ~25 budget at 6 as well, and used
+    // to open there on an empty list — over which Confirmed found nothing
+    // on screen to answer for, so the range led. The reported case: one
+    // dependency finding, the pass's own row, at confidence 5.
+    it('opens a set scored below 6 on its rows, and on Confirmed', () => {
+      const one = [[pass('A', { confidence: 5 })]]
+      assert.equal(defaultConfidenceFloor(one), 0)
+      assert.equal(defaultRevalidateFilter(one, defaultConfidenceFloor(one)), 'confirmed')
+      // The gap below the best score is still walked: the 3 stays off.
+      const low = [[stamped('A', { confidence: 5 })], [pass('B', { confidence: 5 })], [makeFinding('C', { confidence: 3 })]]
+      assert.equal(defaultConfidenceFloor(low), 4)
+      assert.equal(defaultRevalidateFilter(low, defaultConfidenceFloor(low)), 'confirmed')
+      // Without a pass the range leads, and shows the best of the set.
+      const plain = [[makeFinding('A', { confidence: 4.5 })], [makeFinding('B', { confidence: 2 })]]
+      applyOpeningFilters(plain)
+      assert.equal(state.filterRevalidate, '')
+      assert.deepEqual(applyFilters(plain).map((g) => g[0].id), ['A'])
+    })
+
+    // A range showing nothing — its one high row knocked down, so it
+    // reads as 0 — hides nothing Confirmed would, and must not hold the
+    // view on an empty list while the pass's row is there to show.
+    it('does not hold an empty range in front of Confirmed', () => {
+      const groups = [[makeFinding('A', { confidence: 9, revalidate: 'refuted' })], [pass('B', { confidence: 2 })]]
+      const floor = defaultConfidenceFloor(groups)
+      state.filterConfMin = floor
+      assert.deepEqual(applyFilters(groups), [], 'the opening range shows nothing')
+      assert.equal(defaultRevalidateFilter(groups, floor), 'confirmed')
+      state.filterRevalidate = 'confirmed'
+      assert.deepEqual(applyFilters(groups).map((g) => g[0].id), ['B'])
     })
   })
 
