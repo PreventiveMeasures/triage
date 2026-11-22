@@ -476,10 +476,10 @@ class BundleTreemap extends LitElement {
     this._hideTooltip()
   }
 
-  // From all, a press narrows to its kind; any press while narrowed returns
-  // to all.
+  // A press narrows to its kind, the other one's included; pressing the
+  // kind already shown returns to all.
   _toggleKind(kind) {
-    this._kind = this._kind ? '' : kind
+    this._kind = this._kind === kind ? '' : kind
     _sharedKind = this._kind
   }
 
