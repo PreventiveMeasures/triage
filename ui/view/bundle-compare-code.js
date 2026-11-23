@@ -15,7 +15,7 @@ import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from './style-map.js'
 import { appMarkup } from './markup.js'
-import { hidesMixedWhitespace, layoutDir, renameParts, rootLabel, wordRanges } from '@preventive/compare/view.js'
+import { layoutDir, renameParts, rootLabel, wordRanges } from '@preventive/compare/view.js'
 import { comparisonEntries, fileContents, resolutionChange } from './bundle-compare-files.js'
 import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
@@ -25,7 +25,7 @@ import { fileIconFormat, isNotTextFormat, sourceFileIcon, sourcePackageIcon } fr
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
-import { EXPAND_STEP, alignedBlock, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, markedCounts, textLines, typeFolds, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
+import { EXPAND_STEP, alignedBlock, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, markedCounts, textLines, typeFolds, whitespaceHidden, whitespaceInsensitive, whitespaceKept } from './bundle-compare-code-model.js'
 import { changeBlocks } from '../../common/line-diff.js'
 import { buildSearchMatcher } from './bundle-search-scan.js'
 import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
@@ -108,7 +108,11 @@ const setAside = ({ pretty, spacesHidden, hiding, typesHidden, typesFolded }) =>
   (typesHidden || typesFolded) && HIDE_TYPES].filter(Boolean)
 // A model's lines added and removed, and what the settings set aside of them.
 const drawnCounts = (model, drawn) => ({ additions: model.additions, deletions: model.deletions, renamed: model.renamed, aside: setAside(drawn) })
-const MIXED_KEPT = 'Whitespace changes are shown: hiding them would hide blanks of more than one kind changing.'
+// Why whitespace changes show while they are to be hidden (whitespaceKept).
+const WHITESPACE_KEPT = {
+  mixed: 'Whitespace changes are shown: hiding them would hide blanks of more than one kind changing.',
+  literal: 'Whitespace changes are shown: hiding them would hide blanks changing within a string, a template or a regular expression, whose value they are part of.',
+}
 // The format a stasis bundle records for a file (its own spelling of the
 // file's language); undefined for another bundle, or a file it records none for.
 const stasisFormat = (details, path) => (details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined)
@@ -663,10 +667,11 @@ export class BundleCompareCode extends LitElement {
         return null
       }
       // As _fileState diffs it: whitespace changes hidden where the setting and
-      // the file's language hide them, but for blanks of more than one kind.
+      // the file's language hide them, but for blanks of more than one kind or
+      // within a literal (whitespaceKept).
       const hide = prefs.ignoreWhitespace && !this._unlisted(path, this._entries.get(path), { before, after })
       let blocks = changeBlocks(before, after, hide)
-      if (hide && hidesMixedWhitespace(before, after, blocks)) blocks = changeBlocks(before, after)
+      if (hide && whitespaceKept(path, before, after, blocks)) blocks = changeBlocks(before, after)
       this._blocks.set(kept, blocks)
       return blocks
     }
@@ -1046,11 +1051,12 @@ export class BundleCompareCode extends LitElement {
       return { key, changes, warned, renamed, hiding, shown, model, ignoreWhitespace }
     }
     // Whitespace changes hidden as diff -b, only where it means nothing on both
-    // sides, and not where blanks of more than one kind change (hidesMixedWhitespace).
+    // sides, and not where blanks of more than one kind change, or blanks within
+    // a literal (whitespaceKept: `mixed`, `literal`, kept on the model, `false` for none).
     const unlisted = this._unlisted(path, entry, contents)
     let found = diffed(prefs.ignoreWhitespace && !unlisted)
-    const mixed = prefs.ignoreWhitespace && !unlisted && !!found.model && (found.model.mixed ??= hidesMixedWhitespace(found.shown, after, found.model.blocks))
-    if (mixed) found = diffed(false)
+    const kept = prefs.ignoreWhitespace && !unlisted && !!found.model ? (found.model.kept ??= whitespaceKept(path, found.shown, after, found.model.blocks) ?? false) || null : null
+    if (kept) found = diffed(false)
     const { key, changes, warned, renamed, hiding, shown, model } = found
     // A source map's listings are drawn only where their diff reads back to
     // the new map (comparedListingRefusal, kept on the model): else as published.
@@ -1071,12 +1077,12 @@ export class BundleCompareCode extends LitElement {
       this._aligned.set(model.blocks, model)
     }
     // Whether hiding whitespace hides a change here (`hideable`), or would but
-    // may not as blanks of more than one kind change (`mixed`); else not offered.
-    const off = model && !unlisted && !prefs.ignoreWhitespace ? this._whitespaceHidden(`${path}\0${pretty?.status === 'ready'}\0${hiding}`, shown, after) : null
+    // may not as blanks of more than one kind change, or within a literal
+    // (`mixed`, `literal`); else not offered.
+    const off = model && !unlisted && !prefs.ignoreWhitespace ? this._whitespaceHidden(`${path}\0${pretty?.status === 'ready'}\0${hiding}`, shown, after, path) : null
     const whitespace = model === null || unlisted ? null
-      : mixed ? 'mixed'
-      : prefs.ignoreWhitespace ? (hidesAnyWhitespace(model, shown, after) ? 'hideable' : null)
-      : off.hides && !off.mixed ? 'hideable' : null
+      : kept ?? (prefs.ignoreWhitespace ? (hidesAnyWhitespace(model, shown, after) ? 'hideable' : null)
+        : off.hides && !off.mixed && !off.literal ? 'hideable' : null)
     // A hit sought here waits while its printed copies, or the renamed names
     // to hide, are coming or failed (_scrollSought).
     if (this._sought?.path === path) this._soughtSettling = pretty?.status === 'loading' || (prefs.ignoreRenames && (changes?.status === 'loading' || changes?.status === 'error'))
@@ -1090,9 +1096,10 @@ export class BundleCompareCode extends LitElement {
       || !whitespaceInsensitive(basePath, before, stasisFormat(this.base, basePath))
   }
 
-  // What diff -b would hide between the texts a file shows, kept as models are.
-  _whitespaceHidden(key, before, after) {
-    return remembered(this._spaced, key, [before, after], () => whitespaceHidden(before, after), this._modelCap)
+  // What diff -b would hide between the texts a file shows, kept as models
+  // are; `path`, how the file's literals read.
+  _whitespaceHidden(key, before, after, path = '') {
+    return remembered(this._spaced, key, [before, after], () => whitespaceHidden(before, after, path), this._modelCap)
   }
 
   // Whether both sides are minified and the server can diff them: renamed
@@ -1574,7 +1581,7 @@ export class BundleCompareCode extends LitElement {
     const lines = folds?.lines ?? { a: model.a.length, b: model.b.length }
     const digits = String(Math.max(lines.a, lines.b, 1)).length
     return html`${prefs.ignoreRenames && changes?.reason ? html`<p class="bundle-compare-code-note">Renamed names are shown: ${RENAME_REASONS[changes.reason] ?? changes.reason}.</p>` : nothing}
-      ${whitespace === 'mixed' ? html`<p class="bundle-compare-code-note">${MIXED_KEPT}</p>` : nothing}
+      ${WHITESPACE_KEPT[whitespace] ? html`<p class="bundle-compare-code-note">${WHITESPACE_KEPT[whitespace]}</p>` : nothing}
       ${warned.length > 0 ? html`<p class="bundle-compare-code-note">${readsSaid(warned)} <button type="button" @click=${() => this._setRenames(false)}>Show them marked</button></p>` : nothing}
       <div class=${classMap({ 'bundle-compare-diff-table': true, split, unified: !split })} data-path=${path}
         style=${styleMap({ '--diff-num-width': `${digits + 1}ch` })} role="table" aria-label="Diff">
