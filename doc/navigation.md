@@ -96,6 +96,9 @@ Build the UI with `pnpm build` before starting a managed or combined server.
 | `/my/{profile,reviews}` | Profile and linked GitHub accounts, My reviews |
 
 On bundle, repository and npm version pages, `…/code/:file` opens Code at a file, and `…/compare[/:other[/code]]` opens Compare with another bundle, commit or version.
+A review's URL also says how its diff is drawn: `?hide=whitespace`, `?hide=type-only` or `?hide=whitespace,type-only` hides those changes, and `?pretty=on` pretty-prints, or `?pretty=folded` for JSON's folded layout.
+Pressing a toggle replaces the URL, the review's own pickers and the Review tab keep the settings, and a review URL without them opens with them off.
+A value the page doesn't know is left out rather than refusing the link.
 Older names still open: `/diff` opens Code, `history` opens Commits, `/manage/code/` links open the `/repo/` page, and `/manage/risk` and `/manage/repositories/risk` open `/manage/risk/team`.
 
 Teams, reports and bundles have persistent, server-assigned slugs: the last UUID component when it is unique, and otherwise the full ID.

@@ -5,7 +5,9 @@ import { resolutionRows } from './bundle-compare-files.js'
 
 // This is the only place that wires a comparison source into a file viewer.
 // New source features belong here and reach both pages and both display modes.
-export function renderComparisonViewer({ base, other, diff, source, path, seek, baseName, otherName, select, extensions = null, mode }) {
+// `viewChanged`, where given, hears that a view setting changed (whitespace or
+// type-only changes hidden, pretty-printing), for a page whose URL names them.
+export function renderComparisonViewer({ base, other, diff, source, path, seek, baseName, otherName, select, extensions = null, mode, viewChanged = null }) {
   // Review has already chosen from source size. Compare counts rendered rows
   // once, retaining those diff models for the viewer.
   const resolutions = resolutionRows(diff.resolutions)
@@ -17,5 +19,6 @@ export function renderComparisonViewer({ base, other, diff, source, path, seek, 
     .newHosts=${source?.files?.newHosts?.(base, other) ?? null} .newHostTag=${source?.files?.newHostTag ?? null}
     .dependencies=${source?.dependencies?.(base, other) ?? null} .openDependency=${source?.openDependency ?? null} .dependencyTags=${source?.dependencyTags ?? null}
     .models=${combined?.models ?? null} .path=${path} .seek=${seek} .extensions=${extensions} baseName=${baseName} otherName=${otherName}
-    @compare-code-select=${event => { event.stopPropagation(); select(event.detail.path) }}></${tag}>`
+    @compare-code-select=${event => { event.stopPropagation(); select(event.detail.path) }}
+    @compare-view-change=${event => { event.stopPropagation(); viewChanged?.() }}></${tag}>`
 }

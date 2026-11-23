@@ -1,6 +1,7 @@
 import { bundleSourceOrder, bundleSourcesAsMap } from '../../common/bundle-sources.js'
 import { compareModeField, managedRouteForIds } from '../../common/managed/routes.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
+import { reviewView } from './bundle-compare-prefs.js'
 
 export function managedBundleEntry(bundle) {
   return { managedId: bundle.id, slug: bundle.slug, integrity: bundle.integrity,
@@ -66,8 +67,16 @@ export function managedCompareLocation(state, tab = state.bundleDetailsTab) {
   return { compareId: target.managedId, ...compareModeField(compare.mode) }
 }
 
-// The open bundle's tab location, whichever tab names one (Code, Compare).
+// The open bundle's tab location, whichever tab names one (Code, Compare,
+// Review), Review's with how its diff is drawn (reviewView).
 export function managedTabLocation(state, tab = state.bundleDetailsTab) {
+  const location = tabLocation(state, tab)
+  return tab === 'review' ? { ...location, ...reviewView(state) } : location
+}
+
+// What a tab's location names of what it shows: Review's, the review asked
+// for (`state.npmReview`), which keeps none of how its diff is drawn.
+function tabLocation(state, tab) {
   const npm = state.bundles?.find(entry => entry.integrity === state.selectedBundle)?.npm
   const review = state.npmReview?.bundle === state.selectedBundle ? state.npmReview : null
   const compare = state.bundleCompare?.bundle === state.selectedBundle ? state.bundleCompare : null
@@ -93,7 +102,7 @@ export function managedTabLocation(state, tab = state.bundleDetailsTab) {
 export function prepareNpmReviewTab(state, tab, picked = () => null) {
   const npm = state.bundles?.find(entry => entry.integrity === state.selectedBundle)?.npm
   if (!npm || tab === state.bundleDetailsTab) return
-  const location = managedTabLocation(state, tab)
+  const location = tabLocation(state, tab)
   if (tab === 'review') {
     const kept = state.npmReview?.bundle === state.selectedBundle && state.npmReview.started && state.npmReview.user === state.managedSession?.id
     state.npmReview = { ...(kept ? state.npmReview : { bundle: state.selectedBundle, ...location }), resume: true }

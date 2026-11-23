@@ -30,7 +30,7 @@ import { changeBlocks } from '../../common/line-diff.js'
 import { buildSearchMatcher } from './bundle-search-scan.js'
 import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
 import { railHitText } from './search-marks.js'
-import { PRETTY_ICON, comparedCopy, comparedListingRefusal, comparedPrintable, prettyFolded, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
+import { PRETTY_ICON, comparedCopy, comparedListingRefusal, comparedPrintable, prettyFolded, prettySettled, prettyTooltip, setPrettySource, togglePrettySource } from './pretty-source.js'
 import { jsonPrinted } from '../../common/pretty-json.js'
 import { sourcemapPrinted } from '../../common/pretty-sourcemap.js'
 import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmFileReadabilityRead, npmReadabilityFlags, npmTaggedCategory, npmTextKindTag } from './file-readability.js'
@@ -47,6 +47,7 @@ import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
 import './bundle-code-splitter.js'
 import { CODE_MODE_ICON, COLLAPSE_DIRS_ICON, COPY_ICON, FILES_MODE_ICON, NEXT_ICON, PREV_ICON } from './lit-icons.js'
 import { readKept, trimKept } from './kept-entries.js'
+import { prefs } from './bundle-compare-prefs.js'
 
 const KINDS = [
   { kind: 'changed', label: 'Modified', letter: 'M' },
@@ -94,9 +95,6 @@ const UNSIGNED = {
 // A search hit's sign as its row is classed and read.
 const SIGNS = { '+': { name: 'add', label: 'Added' }, '−': { name: 'del', label: 'Removed' }, ' ': { name: 'ctx', label: 'Unchanged' } }
 
-// View preferences shared by every comparison and the Diff view
-// (bundle-compare-all.js), reset on page reload like the rail's width.
-export const prefs = { layout: 'unified', ignoreWhitespace: false, ignoreRenames: false, ignoreTypes: false }
 // The settings whether a diff of printed copies has rows depends on (_noteRowless).
 const rowlessSettings = () => `${prefs.ignoreWhitespace}\0${prefs.ignoreRenames}`
 // Hiding whitespace is diff -b, and only in code whose whitespace means nothing
@@ -1158,7 +1156,7 @@ export class BundleCompareCode extends LitElement {
     const told = reformatted ? 'No actual code changes in this file.' : hidden.length > 0 ? `Only ${hidden.join(' and ')} changed in this file.` : null
     return message('told', told ? withRecorded(told) : same,
       warned.length > 0 ? html`<p>${readsSaid(warned)}</p>` : nothing,
-      reformatted ? action('Show as published', () => { state.bundleSourcePretty = false; this.requestUpdate() }) : nothing,
+      reformatted ? action('Show as published', () => { setPrettySource(false); this._viewChanged() }) : nothing,
       typesFolded ? showTypes : nothing,
       spaced ? action('Show whitespace changes', () => this._setWhitespace(false)) : nothing,
       renamed ? showRenames : nothing)
@@ -1360,7 +1358,7 @@ export class BundleCompareCode extends LitElement {
           'is-folded': prettyFolded(pretty.json) })}
           aria-pressed=${String(!!state.bundleSourcePretty)} aria-busy=${pretty.status === 'loading' ? 'true' : nothing} aria-label="Pretty-print"
           data-tooltip=${`${prettyTooltip(pretty, pretty.json)}${affectedFiles(pretty.affects)}`}
-          @click=${() => { togglePrettySource(pretty.json); this.requestUpdate() }}>${PRETTY_ICON}</button>` : nothing}
+          @click=${() => { togglePrettySource(pretty.json); this._viewChanged() }}>${PRETTY_ICON}</button>` : nothing}
         ${diffable ? html`<span class="bundles-overview-sort bundle-compare-code-layout" role="group" aria-label="Diff layout">
           ${[['unified', 'Unified'], ['split', 'Split']].map(([value, label]) => html`<button type="button" aria-pressed=${String(prefs.layout === value)} @click=${() => { prefs.layout = value; this.requestUpdate() }}>${label}</button>`)}
         </span>` : nothing}`
@@ -1508,18 +1506,25 @@ export class BundleCompareCode extends LitElement {
 
   _setWhitespace(value) {
     prefs.ignoreWhitespace = value
-    this.requestUpdate()
+    this._viewChanged()
   }
 
   _setTypes(value) {
     prefs.ignoreTypes = value
-    this.requestUpdate()
+    this._viewChanged()
   }
 
   _setRenames(value) {
     prefs.ignoreRenames = value
     if (value) retryRenameDiffs()
+    this._viewChanged()
+  }
+
+  // A view setting changed here (prefs, pretty-printing): drawn anew, and
+  // told with `compare-view-change`, for a page whose URL names it (Review's).
+  _viewChanged() {
     this.requestUpdate()
+    this.dispatchEvent(new CustomEvent('compare-view-change', { bubbles: true, composed: true }))
   }
 
   _renderDiff(path, entry, { after, before, key, model, pretty, changes, hiding, warned = [], whitespace = null }) {

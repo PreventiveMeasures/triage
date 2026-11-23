@@ -372,12 +372,19 @@ export function comparedListingRefusal(base, other, basePath, path, { before, af
 }
 
 // The toggle pressed: on, then off, or on a JSON file's (`json`) on indented,
-// then folded, then off. Turned back on, it asks again for copies that failed
-// for a reason that may have passed: an npm version's, or a comparison's, all
-// again, once its request ended.
+// then folded, then off.
 export function togglePrettySource(json = false) {
-  state.bundleSourcePretty = state.bundleSourcePretty ? json && state.bundleSourcePretty === 'indented' && 'folded' : 'indented'
-  if (state.bundleSourcePretty !== 'indented') return
+  setPrettySource(state.bundleSourcePretty ? json && state.bundleSourcePretty === 'indented' && 'folded' : 'indented')
+}
+
+// Pretty-printing set: off (false), `indented` or `folded`, as the toggle or
+// a review's URL sets it. Turned on from off, it asks again for copies that
+// failed for a reason that may have passed: an npm version's, or a
+// comparison's, all again, once its request ended.
+export function setPrettySource(value) {
+  const was = state.bundleSourcePretty
+  state.bundleSourcePretty = value
+  if (!value || was) return
   const failed = copy => copy.status === 'error' && copy.retry
   for (const [key, copy] of copies) if (failed(copy)) copies.delete(key)
   for (const [key, version] of versions) if (version.rest && (failed(version.rest) || [...version.copies.values()].some(failed))) versions.delete(key)

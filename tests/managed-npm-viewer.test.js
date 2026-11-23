@@ -30,6 +30,9 @@ mock.module('../ui/view/client-managed.js', { exports: {
     return riskHeld ? new Promise((resolve, reject) => { signal?.addEventListener('abort', () => reject(signal.reason)) }) : Promise.resolve(riskAnswer(name, version, otherVersion))
   },
   fetchBundleContents() {}, fetchBundleMetadata() {},
+  // What pretty-source.js and rename-diff.js ask of it, as npm-package.js opens a review drawn as its URL names.
+  fetchPrettyBundleChanges() {}, fetchPrettyBundleFile() {}, fetchPrettyNpmChanges() {}, fetchPrettyNpmFile() {}, fetchPrettyNpmFiles() {},
+  fetchBundleRenameDiff() {}, fetchBundleRenameDiffs() {}, fetchNpmRenameDiff() {}, fetchNpmRenameDiffs() {},
 } })
 const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependenciesColumn, npmDeprecation, npmOverviewExtras, npmPackageData, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmOverviewMeta, npmAge, npmPackageRoute, npmPublished, npmPublishedOn, npmRangeVersion, npmRecentRelease, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
 const { npmEntryFile } = await import('../ui/view/npm-entries.js')
@@ -249,6 +252,23 @@ test('a Compare link opens the version with the one it compares with', async () 
   answer = () => Promise.resolve({ ...data, version: '2.0.0', integrity: 'sha512-other' })
   await openNpmRoute({ view: 'npm', packageName: '@scope/pkg', packageSpec: '2.0.0' }, () => true, () => {})
   assert.equal(state.bundleCompare, null, 'not by another version')
+})
+
+test('a review link draws its diff as its URL names, what it doesn\'t name off, and ends on a route naming it alike; another tab\'s link changes none', async t => {
+  const { prefs } = await import('../ui/view/bundle-compare-prefs.js')
+  t.after(() => { Object.assign(prefs, { ignoreWhitespace: false, ignoreTypes: false }); state.bundleSourcePretty = false })
+  const review = { view: 'npm', packageName: '@scope/pkg', packageSpec: '1.2.3', bundleTab: 'review', reviewPackage: '@scope/pkg', reviewSpec: '1.0.0' }
+  const opened = await openNpmRoute({ ...review, hideWhitespace: true, pretty: 'folded' }, () => true, () => {})
+  assert.deepEqual([prefs.ignoreWhitespace, prefs.ignoreTypes, state.bundleSourcePretty], [true, false, 'folded'])
+  assert.equal(managedRoutePath(opened), '/npm/@scope/pkg@1.2.3/review/@scope/pkg@1.0.0?hide=whitespace&pretty=folded')
+  assert.deepEqual(state.npmReview, { bundle: 'sha512-pkg', reviewPackage: '@scope/pkg', reviewSpec: '1.0.0' }, 'the review asked for keeps none of it')
+  prefs.ignoreTypes = true
+  const plain = await openNpmRoute(review, () => true, () => {})
+  assert.deepEqual([prefs.ignoreWhitespace, prefs.ignoreTypes, state.bundleSourcePretty], [false, false, false], 'a link naming none, all off')
+  assert.equal(managedRoutePath(plain), '/npm/@scope/pkg@1.2.3/review/@scope/pkg@1.0.0')
+  Object.assign(prefs, { ignoreWhitespace: true }); state.bundleSourcePretty = 'indented'
+  await openNpmRoute({ ...review, bundleTab: 'compare', compareSpec: '1.0.0' }, () => true, () => {})
+  assert.deepEqual([prefs.ignoreWhitespace, state.bundleSourcePretty], [true, 'indented'])
 })
 
 test('Code opens on what main names, resolved as require would', () => {

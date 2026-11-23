@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import { BUNDLE_TABS } from '../common/bundle-tabs.js'
 import { managedRouteForIds, managedRoutePath, parseManagedRoute, resolveManagedRoute } from '../common/managed/routes.js'
 import { managedBundleEntry, managedBundleRoute, managedCodeLocation, managedCompareLocation, managedTabLocation, managedTeamBundleEntries, prepareNpmReviewTab, shownManagedBundleId } from '../ui/view/managed-bundle-navigation.js'
+import { prefs } from '../ui/view/bundle-compare-prefs.js'
 import { bundleComparisonCandidates } from '../ui/view/bundle-comparison-candidates.js'
 import { createManagedHistory } from '../ui/view/managed-history.js'
 import { browserAt } from './_managed-browser.js'
@@ -246,6 +247,20 @@ test('Compare and Review keep the selected base until a review has started on an
   prepareNpmReviewTab(state, 'review')
   assert.deepEqual(state.npmReview, { bundle: 'npm', resume: true }, 'Review clicks from any tab look up the saved review')
   assert.deepEqual(managedTabLocation(state, 'review'), {}, 'the resume hint never leaks into the URL')
+})
+
+test('the Review tab\'s URL keeps how its diff is drawn, as Compare drew it or as it does, apart from the review it names', t => {
+  t.after(() => { prefs.ignoreWhitespace = false; prefs.ignoreTypes = false })
+  const state = { selectedBundle: 'npm', bundleDetailsTab: 'compare', managedSession: { id: 'alice' }, bundleSourcePretty: 'indented',
+    bundles: [{ integrity: 'npm', npm: { name: '@scope/pkg', version: '3.0.0' } }], bundleCompare: { bundle: 'npm', target: '1.0.0', mode: 'code' } }
+  prefs.ignoreWhitespace = true
+  assert.deepEqual(managedTabLocation(state, 'review'), { reviewPackage: '@scope/pkg', reviewSpec: '1.0.0', hideWhitespace: true, pretty: 'indented' }, 'from Compare')
+  prepareNpmReviewTab(state, 'review')
+  state.bundleDetailsTab = 'review'
+  assert.deepEqual(state.npmReview, { bundle: 'npm', reviewPackage: '@scope/pkg', reviewSpec: '1.0.0', resume: true }, 'the review asked for names none')
+  Object.assign(prefs, { ignoreWhitespace: false, ignoreTypes: true }); state.bundleSourcePretty = false
+  assert.deepEqual(managedTabLocation(state), { reviewPackage: '@scope/pkg', reviewSpec: '1.0.0', hideTypes: true }, 'as it is drawn now')
+  assert.deepEqual(managedTabLocation(state, 'compare'), { compareSpec: '1.0.0', compareMode: 'code' }, 'Compare\'s URL names none')
 })
 
 test('a Compare click starts from the version Compare or Review chose, else the one risk picked where it picked one; a Review click never from that', () => {

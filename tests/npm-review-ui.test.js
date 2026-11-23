@@ -16,7 +16,7 @@ const latestRequests = [], loadedBases = []
 let discardConfirmation = { confirmed: false }
 const confirmations = []
 const loadingToasts = []
-const navigations = []
+const navigations = [], replaced = []
 mock.module('../ui/view/toast.js', { namedExports: { showToast: (message, options) => {
   const toast = { message, options, dismissed: false }; loadingToasts.push(toast)
   return () => { toast.dismissed = true }
@@ -57,7 +57,7 @@ mock.module('../ui/view/npm-package.js', { namedExports: {
   parseNpmPackageInput: input => ({ name: input.slice(0, input.lastIndexOf('@')), spec: input.slice(input.lastIndexOf('@') + 1) }),
 } })
 mock.module('../ui/view/managed-history.js', { namedExports: { managedHistory: {
-  navigate: route => { navigations.push(route) }, replaceRoute: () => {},
+  navigate: route => { navigations.push(route) }, replaceRoute: route => { replaced.push(route) },
 } } })
 mock.module('../ui/view/bundle-compare.js', { namedExports: {} })
 mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
@@ -68,6 +68,7 @@ const { renderReview, renderReviewEditor, renderReviewConfirmation, renderReview
 const { DependencyReviewList, dependencyReviewRoute } = await import('../ui/view/dependency-review-list.js')
 const { DependencyReviewCopy } = await import('../ui/view/dependency-review-copy.js')
 const { BundleCompareCode } = await import('../ui/view/bundle-compare-code.js')
+const { prefs } = await import('../ui/view/bundle-compare-prefs.js')
 const { reviewFileStates, reviewNote, reviewTitle, selectReviewOnOpen } = await import('../ui/view/npm-review-presentation.js')
 
 function text(value) {
@@ -264,6 +265,55 @@ test('review URLs round trip scoped dependencies and version-only shorthand, ign
   assert.equal(parseManagedRoute(new URL('https://test/npm/lib@2/review/@bad')), null)
   assert.equal(parseManagedRoute(new URL('https://test/npm/lib@2/review/lib@%3Cscript%3E')), null)
   assert.deepEqual(reviewContext(entry, {}), { ...context, basePackage: null, baseVersion: null, baseIntegrity: null })
+})
+
+test('a review\'s URL names how its diff is drawn: whitespace and type-only changes hidden, pretty-printing, what it doesn\'t know left out', () => {
+  const route = { view: 'npm', packageName: '@scope/lib', packageSpec: '2.0.0', bundleTab: 'review', reviewPackage: '@scope/lib', reviewSpec: '1.0.0' }
+  const at = path => parseManagedRoute(new URL(path, 'https://test'))
+  const viewed = [[{ hideWhitespace: true }, '?hide=whitespace'], [{ hideTypes: true }, '?hide=type-only'], [{ pretty: 'indented' }, '?pretty=on'],
+    [{ hideWhitespace: true, hideTypes: true, pretty: 'folded' }, '?hide=whitespace,type-only&pretty=folded'],
+    [{ basePatch: 'e'.repeat(64), hideTypes: true }, `?basePatch=${'e'.repeat(64)}&hide=type-only`]]
+  for (const [view, query] of viewed) {
+    const path = `/npm/@scope/lib@2.0.0/review/@scope/lib@1.0.0${query}`
+    assert.equal(managedRoutePath({ ...route, ...view }), path)
+    assert.deepEqual(at(path), { ...route, ...view }, 'its route read back')
+  }
+  assert.deepEqual(at('/npm/lib@2.0.0/review?pretty=on'), { view: 'npm', packageName: 'lib', packageSpec: '2.0.0', bundleTab: 'review', pretty: 'indented' }, 'with no base')
+  assert.equal(managedRoutePath({ ...route, hideWhitespace: false, hideTypes: false, pretty: false }), '/npm/@scope/lib@2.0.0/review/@scope/lib@1.0.0', 'none where off')
+  const lenient = at('/npm/@scope/lib@2.0.0/review/@scope/lib@1.0.0?hide=type-only&hide=renames,whitespace&pretty=sideways')
+  assert.deepEqual(lenient, { ...route, hideWhitespace: true, hideTypes: true }, 'each `hide` read, what it doesn\'t know left out, not the link refused')
+  assert.equal(managedRoutePath(lenient), '/npm/@scope/lib@2.0.0/review/@scope/lib@1.0.0?hide=whitespace,type-only', 'written in its own order')
+  assert.equal(managedRoutePath({ ...route, bundleTab: 'compare', compareSpec: '1.0.0', hideWhitespace: true, pretty: 'indented' }), '/npm/@scope/lib@2.0.0/compare/1.0.0', 'Review\'s alone')
+})
+
+test('a review\'s diff view, changed, rewrites its URL, and its own links carry it, each to the base as loaded', async t => {
+  t.after(() => { Object.assign(prefs, { ignoreWhitespace: false, ignoreTypes: false }); state.bundleSourcePretty = false })
+  Object.assign(state, { bundleDetailsTab: 'review', selectedBundle: entry.integrity, bundleSourcePretty: false })
+  const page = component()
+  page.details = { kind: 'sourcemap', npm: entry.npm, integrity: entry.integrity, json: { version: 3, sources: ['index.js'], sourcesContent: ['new\n'] } }
+  page.request = { bundle: entry.integrity, reviewPackage: '@scope/lib', reviewSpec: 'latest' }
+  page._key = null
+  answer = { reviews: [], teams: TEAMS }
+  replaced.length = 0; navigations.length = 0
+  page.render()
+  for (let turn = 0; turn < 6; turn++) await Promise.resolve()
+  const shown = { view: 'npm', packageName: '@scope/lib', packageSpec: '2.0.0', bundleTab: 'review', reviewPackage: '@scope/lib', reviewSpec: '1.0.0' }
+  assert.deepEqual(replaced, [shown], 'opened, its exact base, drawn as published')
+  prefs.ignoreWhitespace = true; state.bundleSourcePretty = 'folded'
+  const viewer = templates(renderReview(page)).find(one => one.strings.some(part => part.includes('@compare-view-change')))
+  viewer.values[viewer.strings.findIndex(part => part.includes('@compare-view-change'))]({ stopPropagation() {} })
+  assert.deepEqual(replaced.at(-1), { ...shown, hideWhitespace: true, pretty: 'folded' }, 'a setting changed in its viewer, its URL replaced')
+  prefs.ignoreTypes = true; state.bundleSourcePretty = false
+  page._viewChanged()
+  assert.deepEqual(replaced.at(-1), { ...shown, hideWhitespace: true, hideTypes: true })
+  await page._navigate('(empty)')
+  assert.deepEqual(navigations.at(-1), { view: 'npm', packageName: '@scope/lib', packageSpec: '2.0.0', bundleTab: 'review', hideWhitespace: true, hideTypes: true }, 'its base cleared, drawn alike')
+  await page._navigateTo({ view: 'reviews' })
+  assert.deepEqual(navigations.at(-1), { view: 'reviews' }, 'My reviews names none')
+  const count = replaced.length
+  state.bundleDetailsTab = 'code'
+  page._viewChanged()
+  assert.equal(replaced.length, count, 'no URL of another tab replaced')
 })
 
 test('My reviews lists each frozen set and its final verdict, with copy restricted to eligible sets', async () => {
