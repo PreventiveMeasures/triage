@@ -17,6 +17,7 @@ import { resolve } from 'node:path'
 import { ArchiveError, type Entry, unpack } from '@preventive/archive/tar.js'
 import { isExactVersion } from '@preventive/upstream/semver.js'
 import { isNpmPackageName, isNpmPackageSpec, npmPackageScope } from '../common/managed/npm-packages.js'
+import { npmTarLayout } from '../risk/index.js'
 import type { Role } from '../common/managed/roles.ts'
 import { npmManifest, npmVersionFields, plainObject, stringRecord } from './npm-manifest.ts'
 import { keepJson, readKeptJson, upstreamCachePath } from './upstream-cache.ts'
@@ -389,15 +390,18 @@ export const pathOrder = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0
 // it, and the entries, files and bytes it may hold, a package's unless given.
 export interface TarReading { symlinksAbove?: number; maxEntries?: number; maxFiles?: number; maxBytes?: number }
 
-// The regular files of a tar stream, by package path: npm drops the first
-// component (`package/`, or whatever the archive used), and a file at the top
-// is not extracted. The stream is read by @preventive/archive, which refuses
-// one malformed, a name or a symlink that would climb out of it -- a symlink
-// past `symlinksAbove` levels above it, none unless given -- and a name
-// repeated as another entry, and gives up past `maxEntries` before reading
-// on; a file under another top directory at the same path replaces an
-// earlier one, as extraction would. Directories, links and devices hold no
-// file content and are skipped.
+// The regular files of a tar stream, by package path, as npm and pnpm install
+// them (risk's npmTarLayout): each name as stored past its first component,
+// whatever the archive used (`package/`, a release's own directory, `.`), and
+// a file under no directory at its name, as pnpm installs it. The stream is
+// read by @preventive/archive, which refuses one malformed, a name or a
+// symlink that would climb out of it -- a symlink past `symlinksAbove` levels
+// above it, none unless given -- and a name repeated as another entry, and
+// gives up past `maxEntries` before reading on. Where installers would
+// install other than these files, or one of several (two that differ at one
+// path, as under two top directories, a file within another, a hard link),
+// it is refused as `tarball-conflict`, never read as one installer does.
+// Directories, symlinks and devices hold no file content and are skipped.
 export function readNpmTar(tar: Uint8Array, { symlinksAbove = 0, maxEntries = MAX_NPM_TAR_ENTRIES, maxFiles = MAX_NPM_PACKAGE_FILES,
   maxBytes = MAX_NPM_PACKAGE_BYTES }: TarReading = {}): NpmPackageFile[] {
   let entries: Entry[]
@@ -406,16 +410,7 @@ export function readNpmTar(tar: Uint8Array, { symlinksAbove = 0, maxEntries = MA
     if (err instanceof ArchiveError) throw err.limited ? new NpmPackageError(413, 'package-too-large') : new NpmPackageError(422, 'bad-tarball')
     throw err
   }
-  const files = new Map<string, Uint8Array>()
-  let total = 0
-  for (const { name, type, data } of entries) {
-    const slash = name.indexOf('/')
-    if ((type !== 'file' && type !== 'contiguous-file') || slash === -1) continue
-    const path = name.slice(slash + 1)
-    total += data.length - (files.get(path)?.length ?? 0)
-    files.set(path, data)
-    if (files.size > maxFiles || total > maxBytes) throw new NpmPackageError(413, 'package-too-large')
-  }
+  const files = npmTarLayout(entries, { maxFiles, maxBytes }, (code) => { throw new NpmPackageError(code === 'package-too-large' ? 413 : 422, code) })
   return [...files].map(([path, bytes]) => ({ path, bytes })).toSorted((a, b) => pathOrder(a.path, b.path))
 }
 

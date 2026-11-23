@@ -169,5 +169,8 @@ A package is refused before download when the registry's declared unpacked size 
 | Package loads, registry reads or risk assessments at once | Server capacity | 429 `npm-busy` |
 | Compare's line counts waiting | Server capacity | 429 `delta-busy`, or 504 `delta-timeout` after a minute |
 | A malformed tarball, one with a path or symlink leaving it, or one naming a path twice | | 422 `bad-tarball` |
+| A tarball installers would install other than one set of files from: two different files at one path (under two top directories, or one at the top), a file within another, or a hard link | | 422 `tarball-conflict` |
 
-Directories and links in a tarball are never extracted.
+A tarball's files are laid out as npm and pnpm install them: each name past its first component, whatever that is (`package/`, a release's own `ejs-v3.1.10/`, or `.` for one packed from within), and a file under no directory at the package's top, as pnpm installs it (npm leaves it out).
+The same file twice at one path is read once.
+Directories and symlinks in a tarball are never extracted, as no installer extracts them.

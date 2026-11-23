@@ -1,5 +1,6 @@
 // Hand-written against index.js; a change to either belongs with the other.
 import type { CacheStore } from '@preventive/upstream/npm.js'
+import type { Entry } from '@preventive/archive/tar.js'
 
 // How severe a stamp or a finding is, the most first: `critical` red, `high`
 // a warning's orange, `moderate` yellow, `low`, and a `notice`.
@@ -13,11 +14,12 @@ export const DEFAULT_MINIMUM_RELEASE_AGE: number
 
 // npm has no such package or version (`package-not-found`,
 // `version-not-found`), a tarball unpacks past risk's bounds
-// (`package-too-large`), npm asked to be asked later (`upstream-busy`, a 429,
-// for a caller to wait on and ask again), or npm couldn't be asked
-// (`upstream-unavailable`), answered past them (`upstream-too-large`) or
-// answered what can't be read (`upstream-invalid`). `message` tells which
-// request and why.
+// (`package-too-large`) or would install other than one set of files
+// (`tarball-conflict`, npmTarLayout), npm asked to be asked later
+// (`upstream-busy`, a 429, for a caller to wait on and ask again), or npm
+// couldn't be asked (`upstream-unavailable`), answered past them
+// (`upstream-too-large`) or answered what can't be read (`upstream-invalid`).
+// `message` tells which request and why.
 export class NpmRiskError extends Error {
   code: string
 }
@@ -184,6 +186,16 @@ export function npmReadyDownload(name: string, options: { cache: CacheStore; sig
 export function npmMalwareAdvisory(advisory: { id?: string | undefined; aliases?: readonly string[] | undefined; cwe?: readonly string[] | undefined; title?: string | undefined }): boolean
 
 export function npmFileRisk(path: string, text: string | null, bytes?: number, script?: boolean): unknown
+
+// The files a tar archive's entries install, by package path, as npm and pnpm
+// lay them out (npm/tarball.js): each entry's name as stored past its first
+// component, whatever that is, and a file under no directory at its name, as
+// pnpm installs it. `refuse` is called, and throws, with `tarball-conflict`
+// where installers would install other than these files, or one of several
+// (two at one path that differ, a file within another, a hard link), and with
+// `package-too-large` past `maxFiles` files or `maxBytes` bytes.
+export function npmTarLayout(entries: Iterable<Pick<Entry, 'storedName' | 'type' | 'data'>>, bounds: { maxFiles: number; maxBytes: number },
+  refuse: (code: 'tarball-conflict' | 'package-too-large') => never): Map<string, Uint8Array>
 
 // GitHub Actions (actions/), a workflow GitHub can't run thrown as
 // @preventive/lockfile's YamlError. A finding of a workflow's, its `line` from 1; of a reference's own code,

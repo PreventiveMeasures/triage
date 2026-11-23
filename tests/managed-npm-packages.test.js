@@ -105,7 +105,7 @@ test('private access: admins and managers, or a member of a team listing the sco
   assert.equal(canReadPrivateNpm({ role: 'triage', scopes: new Set(['@x']) }, 'x'), false, 'scopes cover scoped names alone')
 })
 
-test('tarballs unpack to package paths, as extraction leaves them', () => {
+test('tarballs unpack to package paths, as installers lay them out', () => {
   const files = readNpmTar(tar([
     { name: 'package/', type: '5' },
     { name: 'package/index.js', data: 'module.exports = 1\n' },
@@ -119,13 +119,13 @@ test('tarballs unpack to package paths, as extraction leaves them', () => {
     { name: 'package/short-utf8', data: 'utf8' },
     { name: '././@LongLink', type: 'L', data: 'package/from-gnu.js\0' },
     { name: 'package/trunc', data: 'gnu' },
-    { name: 'top.js', data: 'not extracted' },
-    { name: 'other-root/index.js', data: 'replaced' },
+    { name: 'top.js', data: 'at the top' },
+    { name: 'other-root/index.js', data: 'module.exports = 1\n' },
     { name: 'other-root/bin.dat', data: Buffer.from([0, 1, 2]) },
   ]))
   assert.deepEqual(files.map(file => [file.path, Buffer.from(file.bytes).toString()]), [
-    ['a/b.js', 'b'], ['bin.dat', '\0\u0001\u0002'], ['from-gnu.js', 'gnu'], ['from-pax.js', 'pax'], ['index.js', 'replaced'], ['very/long/deep/name.js', 'prefixed'],
-    ['文档/说明.md', 'utf8'],
+    ['a/b.js', 'b'], ['bin.dat', '\0\u0001\u0002'], ['from-gnu.js', 'gnu'], ['from-pax.js', 'pax'], ['index.js', 'module.exports = 1\n'], ['top.js', 'at the top'],
+    ['very/long/deep/name.js', 'prefixed'], ['文档/说明.md', 'utf8'],
   ], 'pax lengths count bytes, not characters')
   assert.equal(npmFileText(files[1].bytes), null, 'binary has no text')
   assert.equal(npmFileText(Buffer.from([0xff, 0xfe])), null)
@@ -147,6 +147,37 @@ test('tarballs unpack to package paths, as extraction leaves them', () => {
   const above = tar([{ name: 'package/LICENSE', type: '2', linkname: '../../LICENSE' }])
   assert.throws(() => readNpmTar(above), refused)
   assert.deepEqual(readNpmTar(above, { symlinksAbove: 1 }), [])
+})
+
+// npm and pnpm each drop the first component of a name as stored, whatever it is, and pnpm installs a file under no
+// directory at its name, which npm leaves out: ejs's, jake's, filelist's and ftp's tarballs have their own top
+// directory (`ejs-v3.1.10/`), and a package packed from within itself has `.`.
+test('tarballs read as npm and pnpm lay them out, whatever their top directory', () => {
+  const read = entries => readNpmTar(tar(entries)).map(file => [file.path, Buffer.from(file.bytes).toString()])
+  assert.deepEqual(read([{ name: 'ejs-v3.1.10/package.json', data: '{}' }, { name: 'ejs-v3.1.10/lib/ejs.js', data: 'ejs' }]),
+    [['lib/ejs.js', 'ejs'], ['package.json', '{}']], "a release's own top directory")
+  assert.deepEqual(read([{ name: './', type: '5' }, { name: './package.json', data: '{}' }, { name: './lib/a.js', data: 'a' }]),
+    [['lib/a.js', 'a'], ['package.json', '{}']], 'packed from within, under `.`')
+  assert.deepEqual(read([{ name: './package/package.json', data: '{}' }]), [['package/package.json', '{}']], '`.` its first component, so `package/` is a directory in it')
+  assert.deepEqual(read([{ name: 'package.json', data: '{}' }, { name: 'index.js', data: '1' }, { name: 'lib/a.js', data: 'a' }]),
+    [['a.js', 'a'], ['index.js', '1'], ['package.json', '{}']], 'under no top directory, as pnpm installs it: files at the top at their names, the rest past their first component')
+  assert.deepEqual(read([{ name: 'package/index.js', data: '1' }, { name: 'index.js', data: '1' }, { name: 'other/index.js', data: '1' }, { name: 'other/b.js', data: 'b' }]),
+    [['b.js', 'b'], ['index.js', '1']], 'the same file at one path again, at the top or under another top directory, read once beside that one\'s own')
+})
+
+test('a tarball installers would install other than one set of files from is refused, never read as one of them does', () => {
+  const conflict = (err) => err instanceof NpmPackageError && err.status === 422 && err.message === 'tarball-conflict'
+  for (const [entries, why] of [
+    [[{ name: 'package/index.js', data: '1' }, { name: 'index.js', data: 'other' }], 'a file at the top after the one it replaces under pnpm, which npm leaves out'],
+    [[{ name: 'index.js', data: 'other' }, { name: 'package/index.js', data: '1' }], 'a file at the top before one at its path'],
+    [[{ name: 'package/index.js', data: '1' }, { name: 'other/index.js', data: 'other' }], 'two top directories with files that differ at one path, the last of which installers install'],
+    [[{ name: 'package/lib', data: 'file' }, { name: 'other/lib/a.js', data: 'a' }], 'a file within another, which npm keeps and pnpm makes a directory'],
+    [[{ name: 'other/lib/a.js', data: 'a' }, { name: 'package/lib', data: 'file' }], 'a file where another lies within it'],
+    [[{ name: 'package/.', data: 'file' }], "a file at the package's own place"],
+    [[{ name: 'package/real.js', data: 'real' }, { name: 'package/index.js', type: '1', linkname: 'package/real.js' }], 'a hard link, an empty file under pnpm 10 and 11, none under npm'],
+  ]) assert.throws(() => readNpmTar(tar(entries)), conflict, why)
+  assert.deepEqual(readNpmTar(tar([{ name: 'package/', type: '5' }, { name: 'link', type: '2', linkname: 'package/index.js' }, { name: 'package/index.js', data: '' },
+    { name: 'other/index.js', type: '2', linkname: '../package/index.js' }])).map(file => file.path), ['index.js'], 'a directory or a symlink skipped, as every installer skips it')
 })
 
 test('the viewer reads an exact public version\'s document from the database once npm answered it; a dist-tag from npm each time', async t => {
