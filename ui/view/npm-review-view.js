@@ -26,7 +26,9 @@ function reviewActions(page) {
     : !frozen || !page._writable ? null
     : page._activeReview || page._ownPublished.length === 0 ? { label: 'Resume your review', run: () => page._resume() }
     : review.user === page.session?.id ? { label: 'Revise review', run: () => page._change({ action: 'continue', reviewId: review.id, revision: review.revision }) } : null
-  return html`<div class="npm-review-summary-actions">${frozen || page._draftStarted ? reviewBadge(review ?? { publishedAt: null, revokedAt: null }) : nothing}<div class="npm-review-progress-block"><span>${page._unsaved && (page._saveBlocked || page._error)
+  // One's own published review, its comment to copy left of its badge where the server's host formats one (dependency-review-copy.js).
+  const copy = frozen && review.revokedAt === null && review.user === page.session?.id ? html`<dependency-review-copy .text=${review.formatted}></dependency-review-copy>` : nothing
+  return html`<div class="npm-review-summary-actions">${frozen || page._draftStarted ? html`<span class="npm-review-status">${copy}${reviewBadge(review ?? { publishedAt: null, revokedAt: null })}</span>` : nothing}<div class="npm-review-progress-block"><span>${page._unsaved && (page._saveBlocked || page._error)
     ? html`<button type="button" class="npm-review-button npm-review-text-button" @click=${() => page._openPanel('unsaved')}>Unsaved changes</button>`
     : html`<strong>${summary.checkedFiles} of ${summary.totalFiles}</strong> files checked`}</span>
     ${reviewProgress(summary.checkedFiles, summary.totalFiles)}</div>

@@ -171,6 +171,7 @@ The review keeps both versions' shasums as checked, and a review written before 
 
 Publication freezes the review, its changed paths, final verdict and comment included, and the shasums it was published with.
 Its author can publish it to more eligible teams, or **Revoke** it for good, and a revoked review stays visible, labeled revoked.
+Its page's toolbar shows its author **Copy dependency review** left of its **Published** label, where [`formatDependencyReviews`](#formatdependencyreviews) formats it a comment.
 **Continue in a new review** copies it into a new private review, and never edits the original.
 Each author has one unpublished review per comparison.
 **My reviews** (`/my/reviews`) lists one's unpublished, published and revoked reviews, and discards an unpublished one after a confirmation.

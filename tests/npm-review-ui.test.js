@@ -458,6 +458,25 @@ test('the toolbar labels changed drafts, leaves untouched revisions unmarked and
   assert.equal(draftBadge(), true, 'only the final comment changed')
 })
 
+test('the toolbar copies one\'s own published review left of its badge, where the server\'s host formats it', () => {
+  const page = component(), published = { ...review, publishedAt: 200, status: 'accept', coverage: 'full', formatted: 'Reviewed: @scope/lib' }
+  page.details = { ...entry, kind: 'sourcemap', json: { sources: ['index.js'], sourcesContent: ['new\n'] } }
+  page._base = base; page._files = ['index.js']; page._path = 'index.js'
+  page._diff = computeBundleDiff(bundleCompareFiles(page._base), bundleCompareFiles(page.details), () => '.')
+  const status = () => /<span class="npm-review-status">([^]*?)<\/span><div class="npm-review-progress-block">/u.exec(text(renderReview(page)))?.[1] ?? ''
+  page._reviews = [published]
+  assert.match(status(), /^<dependency-review-copy \.text=Reviewed: @scope\/lib><\/dependency-review-copy><span class=npm-review-badge published>Published<\/span>$/u)
+  page._reviews = [{ ...published, formatted: undefined }]
+  assert.match(status(), /<dependency-review-copy \.text=>/u, 'none to copy where it formats none, the button rendering nothing')
+  page._reviews = [{ ...published, user: 'someone-else' }]
+  assert.doesNotMatch(status(), /dependency-review-copy/u, 'another\'s never')
+  page._reviews = [{ ...published, revokedAt: 300 }]
+  assert.doesNotMatch(status(), /dependency-review-copy/u, 'nor a revoked one')
+  assert.match(status(), />Revoked</u)
+  page._reviews = [{ ...review, formatted: 'Reviewed' }]
+  assert.doesNotMatch(status(), /dependency-review-copy/u, 'nor a draft')
+})
+
 test('only a sole eligible team is selected initially; Publish requires at least one and saved changes', async () => {
   const page = component()
   answer = { reviews: [review], teams: [{ id: 'one', name: 'One' }, { id: 'two', name: 'Two' }] }
