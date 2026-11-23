@@ -46,7 +46,7 @@ test('a comparison of text is one diff as diff -ruN prints it, each file under i
 
 test('a file whose contents read the same writes nothing, and an empty one added or removed its headers alone', () => {
   const rows = [{ path: 'same.js', kind: 'changed', modified: false, before: 'x\n', after: 'x\n' },
-    { path: 'routed.js', kind: 'repointed', before: '‮', after: '‮' }]
+    { path: 'routed.js', kind: 'repointed', before: '\u202E', after: '\u202E' }]
   assert.deepEqual(unifiedSections(rows), [], 'nothing to copy, and what is not in it not asked of')
   assert.equal(unifiedDiff(unifiedSections([{ path: 'empty.js', kind: 'added', before: '', after: '' }, { path: 'blank.js', kind: 'removed', before: '', after: '' }])),
     '--- /dev/null\n+++ b/empty.js\n--- a/blank.js\n+++ /dev/null\n')
@@ -56,10 +56,10 @@ test('a diff of anything but text, of a character the viewer boxes or of a path 
   const text = { path: 'index.js', kind: 'changed', before: 'a\n', after: 'b\n' }
   assert.equal(unifiedSections(rowsOf({ 'logo.png': { size: 3, digest: 'one' } }, { 'logo.png': { size: 3, digest: 'two' } })), null, 'bytes not UTF-8')
   assert.equal(unifiedSections([text, { path: 'logo.png', kind: 'added', before: '', after: { format: 'digest', size: 3, digest: 'two' } }]), null)
-  for (const after of ['if (x‮) {}\n', 'a b\n', `x${String.fromCodePoint(0xE0041)}\n`, 'lone \uD800\n', '﻿a\n', 'a​b\n', 'a\rb\n', 'last\r']) {
+  for (const after of ['if (x\u202E) {}\n', 'a\u00A0b\n', `x${String.fromCodePoint(0xE0041)}\n`, 'lone \uD800\n', '\uFEFFa\n', 'a\u200Bb\n', 'a\rb\n', 'last\r']) {
     assert.equal(unifiedSections([text, { ...text, after }]), null, JSON.stringify(after))
   }
-  assert.equal(unifiedSections([{ ...text, before: 'a‮\n', after: 'b‮\n' }]), null, 'in the lines no hunk shows too')
-  for (const path of ['a\tb.js', 'a\nb.js', 'a‮.js', 'a​.js']) assert.equal(unifiedSections([{ ...text, path }]), null, JSON.stringify(path))
-  assert.equal(unifiedSections([{ ...text, after: '👩\u{1F3FD}‍💻 ❤️\n' }]).length, 1, 'an emoji\'s joiners and selectors are text')
+  assert.equal(unifiedSections([{ ...text, before: 'a\u202E\n', after: 'b\u202E\n' }]), null, 'in the lines no hunk shows too')
+  for (const path of ['a\tb.js', 'a\nb.js', 'a\u202E.js', 'a\u200B.js']) assert.equal(unifiedSections([{ ...text, path }]), null, JSON.stringify(path))
+  assert.equal(unifiedSections([{ ...text, after: '👩\u{1F3FD}\u200D💻 ❤\uFE0F\n' }]).length, 1, 'an emoji\'s joiners and selectors are text')
 })

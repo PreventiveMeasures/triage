@@ -97,13 +97,13 @@ test('a lone CR shows; one ending the text ends a line only where a newline foll
 })
 
 test('a text has one to show exactly where it holds a box, past those that stay text', () => {
-  const emoji = '👩\u{1F3FD}‍💻 ❤️‍🔥 🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}'
+  const emoji = '👩\u{1F3FD}\u200D💻 ❤\uFE0F\u200D🔥 🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}'
   for (const text of ['', 'a\tb\nc\r\nd', emoji, 'c\r\n']) assert.equal(hasShownControls(text), false, JSON.stringify(text))
-  for (const text of ['a‮b', 'a b', 'x\u{E0068}', 'lone \uD800', `${emoji}​`, 'c\r', 'a\rb']) {
+  for (const text of ['a\u202Eb', 'a\u00A0b', 'x\u{E0068}', 'lone \uD800', `${emoji}\u200B`, 'c\r', 'a\rb']) {
     assert.equal(hasShownControls(text), true, JSON.stringify(text))
   }
   assert.equal(hasShownControls('c\r', true), false, 'a CR ending a line before its newline')
-  assert.equal(parts(controlParts('x️​y')), 'x[VS16|U+FE0F VARIATION SELECTOR-16][ZWSP|U+200B ZERO WIDTH SPACE]y', 'every box found all the same after asking')
+  assert.equal(parts(controlParts('x\uFE0F\u200By')), 'x[VS16|U+FE0F VARIATION SELECTOR-16][ZWSP|U+200B ZERO WIDTH SPACE]y', 'every box found all the same after asking')
 })
 
 test('in highlighted markup the boxes go in the text, never in a tag, and a CR before a tag and a newline ends its line', () => {
