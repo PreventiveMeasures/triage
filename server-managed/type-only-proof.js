@@ -16,9 +16,10 @@
 // `otherRuns` the other's, none for a side not there), for the viewer to diff
 // those alone with its types set aside: the hashbang, each statement Node's
 // type stripping leaves to run (a module load, `export {}`, `export default`
-// of a name), and each comment it keeps that may be one a tool reads (a
+// of a name), each comment it keeps that may be one a tool reads (a
 // triple-slash directive, a source map or source URL pragma), told wide of
-// the proof's own grammar for them, so none it reads is ever set aside. A
+// the proof's own grammar for them, so none it reads is ever set aside, and
+// each enum, whose members compile into what reads them (runLines). A
 // line holding any of it is told whole; a range is `[from, to)` of lines
 // counted from zero, as the viewer splits a text at `\n`. None are told of
 // a pair where a diff of those lines would not show what changed: a
@@ -74,13 +75,34 @@ export function typeOnlyStamped(from, to) {
   return [base, other].every(file => file !== null && DECLARATION.test(file.path) && proveTypeOnly(file.text).proven)
 }
 
+// Each enum a program declares, wherever it stands: exported, or within a
+// namespace, a module or `declare global`. Stripping erases one whole, yet its
+// members are values: tsc writes a const enum's member into the code that
+// reads it (`E.A` emitted as `1`), and a const enum's member may be computed
+// from any enum's, so a change to one changes what runs elsewhere, and none is
+// folded as types alone. Statements alone hold one, so lists of them alone are
+// walked, a work list as namespaces nest.
+function enumsOf(program) {
+  const found = [], lists = [program.body]
+  while (lists.length > 0) {
+    for (const statement of lists.pop()) {
+      let node = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement
+      if (node?.type === 'TSEnumDeclaration') found.push(node)
+      while (node?.type === 'TSModuleDeclaration') node = node.body
+      if (node?.type === 'TSModuleBlock') lists.push(node.body)
+    }
+  }
+  return found
+}
+
 // The lines of a text proven to hold types alone but for what runs that hold
 // any of that, as merged ranges (`lines`), and its triple-slash comments, by
 // whether each leads it (`leading`, `below`). Stripping blanks what it erases
 // in place, each character to a blank, so a statement it leaves blank is
 // erased and one it leaves anything of runs, as the proof found, and a comment
 // it leaves is kept; what it reads starts past a byte order mark, and so do
-// the offsets in its tree.
+// the offsets in its tree. An enum, which stripping blanks, is told among them
+// all the same (enumsOf), so that no fold sets one aside as types alone.
 function runLines(text) {
   const shift = text.startsWith('\uFEFF') ? 1 : 0
   const body = text.slice(shift)
@@ -88,7 +110,7 @@ function runLines(text) {
   const { program, comments } = parseSync('file.ts', body, { lang: 'ts', sourceType: 'module' })
   const kept = ({ start, end }) => code.slice(start, end)
   const steering = comments.filter(comment => STEERING.test(kept(comment)))
-  const spans = [...program.hashbang ? [program.hashbang] : [], ...program.body.filter(statement => !BLANK.test(kept(statement))), ...steering]
+  const spans = [...program.hashbang ? [program.hashbang] : [], ...program.body.filter(statement => !BLANK.test(kept(statement))), ...steering, ...enumsOf(program)]
   const starts = [0]
   for (let at = text.indexOf('\n'); at !== -1; at = text.indexOf('\n', at + 1)) starts.push(at + 1)
   // The line an offset of the text is on: the last whose start is at most it.

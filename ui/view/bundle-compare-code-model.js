@@ -4,7 +4,7 @@
 // unchanged runs folded, and the words changed inside a line marked in its
 // highlighted markup. Lines are numbered from zero, a final newline ending
 // the last line rather than starting an empty one.
-import { hidesMixedWhitespace, pairLines } from '@preventive/compare/view.js'
+import { hidesMixedWhitespace, pairLines, wordRanges } from '@preventive/compare/view.js'
 import { blocksHold, changeBlocks, textLines } from '../../common/line-diff.js'
 
 export { textLines }
@@ -201,15 +201,45 @@ export function diffRows(model, expansion = new Map(), { context = model.typeFol
   return model.typeFolds ? withTypes(rows, model.typeFolds) : rows
 }
 
+// How long a line may be for a word view (@preventive/compare's words.js),
+// past which it has none, nor does pairLines pair it: a minified line's.
+const WORD_REACH = 2000
+const pastWords = (x, y) => x.length > WORD_REACH || y.length > WORD_REACH
+
+// What differs between two lines past a word view's reach, `{ a, b }`, a
+// `[from, to)` range on each side that holds any: what lies between all they
+// share at their start and at their end, so a token changed in a minified line
+// is found where it is. Linear, its ends never splitting a pair of surrogates.
+export function affixRanges(x, y) {
+  const shorter = Math.min(x.length, y.length)
+  let head = 0, tail = 0
+  while (head < shorter && x[head] === y[head]) head++
+  if (head > 0 && /[\uDC00-\uDFFF]/u.test(x[head] ?? y[head] ?? '')) head--
+  while (tail < shorter - head && x[x.length - 1 - tail] === y[y.length - 1 - tail]) tail++
+  if (tail > 0 && /[\uDC00-\uDFFF]/u.test(x[x.length - tail])) tail--
+  const range = line => (head < line.length - tail ? [[head, line.length - tail]] : [])
+  return { a: range(x), b: range(y) }
+}
+
+// The ranges a view marks of a removed line and the added line it pairs with:
+// their changed words (wordRanges), else, where either is past a word view's
+// reach, what differs between them (affixRanges); null for none.
+export const changedRanges = (x, y) => wordRanges(x, y) ?? (pastWords(x, y) ? affixRanges(x, y) : null)
+
 // A block between two texts' lines `a` and `b` as rows of [removed line,
 // added line, paired]: each removed line paired with the added line it was
-// edited into (pairLines), the lines between pairs sharing rows by position.
+// edited into (pairLines), the lines between pairs sharing rows by position,
+// two of those paired where either is past a word view's reach, as no word of
+// theirs can pair them (changedRanges marks them).
 export function alignLines(a, b, block) {
   const pairs = pairLines(a.slice(block.a0, block.a1), b.slice(block.b0, block.b1)).map(([i, j]) => [block.a0 + i, block.b0 + j])
   const rows = []
   let i = block.a0, j = block.b0
   for (const [pa, pb] of [...pairs, [block.a1, block.b1]]) {
-    while (i < pa || j < pb) rows.push([i < pa ? i++ : null, j < pb ? j++ : null, false])
+    while (i < pa || j < pb) {
+      const left = i < pa ? i++ : null, right = j < pb ? j++ : null
+      rows.push([left, right, left !== null && right !== null && pastWords(a[left], b[right])])
+    }
     if (pa < block.a1) {
       rows.push([pa, pb, true])
       i = pa + 1

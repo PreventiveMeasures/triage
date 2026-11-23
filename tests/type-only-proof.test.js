@@ -137,6 +137,18 @@ test('the lines that run are those Node\'s type stripping leaves, the hashbang, 
   assert.equal(typeOnlyRuns(null, { path: 'x.d.ts', text: `${text}console.log(1);\n` }), false, 'nor of one that runs code')
 })
 
+// An enum's members compile into the code that reads them (tsc writes a const enum's `Role.Admin` as its value),
+// so though stripping erases it, its lines are told among those that run: a fold never sets one aside as types.
+test('an enum\'s lines are told among those that run, wherever it stands, so that no fold sets one aside', () => {
+  const roles = (admin, from = './a') => `import { A } from '${from}';\nexport interface User { role: Role }\nexport declare const enum Role {\n    User = 1,\n    Admin = ${admin}\n}\n`
+  assert.deepEqual(told(roles(4)), [roles(4).split('\n')[0], ...roles(4).split('\n').slice(2, 6)], 'the load, and the enum whole, not the interface')
+  const runs = typeOnlyRuns(declared(roles(4)), declared(roles(1, './b')))
+  assert.deepEqual(runs, { runs: [[0, 1], [2, 6]], otherRuns: [[0, 1], [2, 6]] })
+  const folds = typeFolds(roles(4), roles(1, './b'), runs)
+  assert.ok(folds === null || (folds.before.includes('Admin = 4') && folds.after.includes('Admin = 1')), 'its value changed is among the lines drawn, never folded as types')
+  assert.deepEqual(told('declare namespace N {\n  type T = 1;\n  const enum E { A }\n}\n'), ['  const enum E { A }'], 'within a namespace: its own lines, not the namespace\'s types')
+})
+
 test('none are told where a triple-slash directive steers on one side alone though its line reads the same on both', () => {
   const directive = '/// <reference path="./more.d.ts" />'
   const [load, loads] = ["import { a } from 'a';\n", "import { a } from 'a';\nimport { b } from 'b';\n"]

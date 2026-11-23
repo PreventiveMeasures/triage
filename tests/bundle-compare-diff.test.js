@@ -17,7 +17,7 @@ import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundleCompareFiles, bundleCompareScopes, bundleCompareSideScopes } from '../common/bundle-compare-inputs.js'
 import { prepareComparison } from '../common/bundle-comparison.js'
 import { scanScopeOptions } from '../ui/scan/scopes.js'
-import { DIFF_CONTEXT, diffRows, fileLineCounts, lineDiff, markHighlighted, markSegments, textLines, typeFolds, whitespaceHidden, whitespaceInsensitive } from '../ui/view/bundle-compare-code-model.js'
+import { DIFF_CONTEXT, affixRanges, changedRanges, diffRows, fileLineCounts, lineDiff, markHighlighted, markSegments, textLines, typeFolds, whitespaceHidden, whitespaceInsensitive } from '../ui/view/bundle-compare-code-model.js'
 import { bundlePackageVersions } from '../common/bundle-sources.js'
 import { bundleFileMeta, comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, versionDirection } from '../common/bundle-compare-diff.js'
 import { bundlePkgOf } from '../common/bundle-pkg-of.js'
@@ -790,6 +790,22 @@ describe('Code view model', () => {
     assert.deepEqual(diffRows(positional, new Map(), { split: true }).map(row => row.kind === 'change' ? [row.left, row.right] : row.kind), [
       'ctx', [1, 1], [2, 2], [null, 3], 'ctx',
     ], 'unrelated lines share rows by position')
+  })
+
+  // A minified line is past a word view's reach, and pairLines pairs none such: a token changed in one is
+  // found where it is all the same, between what the two lines share at either end.
+  test('two lines past a word view\'s reach are paired where they share a row, what differs between them marked', () => {
+    const line = token => `var a=1;${'f(a);'.repeat(500)}${token}${'g(a);'.repeat(500)}`
+    const [before, after] = [line('h(1);'), line('h(2);require("child_process").exec(x);')]
+    const model = lineDiff(`${before}\n`, `${after}\n`)
+    assert.deepEqual(diffRows(model, new Map(), { split: true }).map(row => [row.left, row.right, row.paired]), [[0, 0, true]], 'one line edited')
+    const at = before.indexOf('h(1);') + 2
+    assert.deepEqual(changedRanges(before, after), { a: [[at, at + 1]], b: [[at, at + '2);require("child_process").exec(x'.length]] }, 'the token and what was put after it')
+    assert.deepEqual(affixRanges('ab😀c', 'ab😁c'), { a: [[2, 4]], b: [[2, 4]] }, 'a pair of surrogates whole')
+    assert.deepEqual(affixRanges(`${before}`, `${before}x`), { a: [], b: [[before.length, before.length + 1]] }, 'what was added alone')
+    assert.equal(changedRanges('alpha', 'omega beta'), null, 'a short line replaced has none, as its word view')
+    const short = lineDiff('a\nb\n', 'c\nd\n')
+    assert.ok(diffRows(short, new Map(), { split: true }).every(row => row.kind !== 'change' || row.paired === false), 'short lines no words pair stay apart')
   })
 
   test('marks go around the changed characters without crossing highlight tags', () => {
