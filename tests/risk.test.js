@@ -1024,6 +1024,21 @@ test('a tarball unpacking past risk\'s bounds is given up on as it unpacks', asy
   await assert.rejects(assessNpm('bomb', '1.0.0', { now: NOW, downloads: false }), error => error instanceof NpmRiskError && error.code === 'package-too-large')
 })
 
+test('a tarball is read as installers lay it out, and refused where they would install other than one set of files', async t => {
+  const own = await npmTarballVersion(gzipSync(tar([{ name: 'jake-v10.9.2/package.json', data: '{}' }, { name: 'jake-v10.9.2/lib/jake.js', data: 'jake' },
+    { name: 'bin.js', data: 'pnpm installs it' }])))
+  assert.deepEqual(own.json.sources, ['bin.js', 'lib/jake.js', 'package.json'], "past a release's own top directory, a file under none at its name")
+  const shadowed = version('shadowed', '1.0.0', { 'package.json': '{}' }, {}, ago(30))
+  shadowed.tgz = gzipSync(tar([{ name: 'package/package.json', data: '{}' }, { name: 'package/index.js', data: 'module.exports = 1' },
+    { name: 'index.js', data: "module.exports = 'other'" }]))
+  shadowed.doc.dist.integrity = `sha512-${createHash('sha512').update(shadowed.tgz).digest('base64')}`
+  await assert.rejects(npmTarballVersion(shadowed.tgz), /tarball-conflict/u, 'a file at the top, which pnpm installs over the one at its path and npm leaves out')
+  const linked = gzipSync(tar([{ name: 'package/real.js', data: 'real' }, { name: 'package/index.js', type: '1', linkname: 'package/real.js' }]))
+  await assert.rejects(npmTarballVersion(linked), /tarball-conflict/u, 'a hard link, an empty file under pnpm 10 and 11, none under npm')
+  npm(t, [{ name: 'shadowed', versions: [shadowed] }])
+  await assert.rejects(assessNpm('shadowed', '1.0.0', { now: NOW, downloads: false }), error => error instanceof NpmRiskError && error.code === 'tarball-conflict')
+})
+
 test('a tarball @preventive/archive refuses is npm\'s answer unread, saying why', async t => {
   const twice = version('twice', '1.0.0', { 'package.json': '{}' }, {}, ago(30))
   twice.tgz = gzipSync(tar([{ name: 'package/package.json', data: '{}' }, { name: 'package/index.js', data: 'one' }, { name: 'package/index.js', data: 'two' }]))

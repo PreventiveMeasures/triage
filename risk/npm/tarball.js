@@ -2,7 +2,7 @@
 // (npm renames a .gitignore .npmignore, pnpm and yarn keep it): gunzipped and
 // read as a tar archive by @preventive/archive, which refuses one malformed, a
 // name or a symlink that would climb out of it, and a name repeated as another
-// entry; each file by its path there, its first component dropped; a text
+// entry; each file at the path installers put it (npmTarLayout); a text
 // where it is UTF-8 with no NUL, else null. Held to the npm viewer's bounds
 // (server-managed/npm-packages.ts readNpmTar).
 import { CompressionError, decompress } from '@preventive/archive/compression.js'
@@ -19,10 +19,66 @@ export const MAX_TAR_BYTES = 96 * 1024 * 1024
 
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
-// The files of a tar archive, by path: their bytes. A file at its top is not
-// extracted, and one under another top directory at the same path replaces
-// an earlier one, as extraction would. Past MAX_TAR_ENTRIES it is given up on
-// as `package-too-large`, before any more of it is read.
+// Where npm and pnpm install a tar entry's file in its package: its name as
+// stored past its first component, whatever that is (`package/`, a release's
+// own `ejs-v3.1.10/`, `.` where it was packed from within the package), its
+// `.` segments dropped, as each drops one component of the name it reads; a
+// file under no directory at that name, as pnpm installs it (npm leaves it
+// out, and fails on a tarball of such files alone, its package.json gone).
+// '' where no name is left, the package's own place.
+export function npmTarPath(storedName) {
+  const segments = storedName.split('/')
+  return segments.length === 1 ? storedName : segments.slice(1).filter(segment => segment !== '.').join('/')
+}
+
+const sameBytes = (a, b) => a.length === b.length && a.every((byte, at) => byte === b[at])
+
+// The files a tar archive's entries install, by package path (npmTarPath):
+// their bytes. Where installers would install other than these, or one of
+// several, it is refused as `tarball-conflict`, rather than read as one of
+// them: two files at one path, unless their bytes are the same (npm and pnpm
+// install the last, so a file under another top directory, or at the top,
+// replaces one under `package/` there); a file where another lies within it,
+// as in a directory (npm keeps the file, pnpm the directory); a file at the
+// package's own place; and a hard link (pnpm 10 and 11 write an empty file,
+// npm and pnpm 12 none). Directories, symlinks and devices hold no file and
+// are skipped, as every installer skips them. Past `maxFiles` files or
+// `maxBytes` bytes, `package-too-large`. `refuse(code)` throws.
+export function npmTarLayout(entries, { maxFiles, maxBytes }, refuse) {
+  const files = new Map()
+  // The paths laid out as a tree, each name a file's bytes or a directory's
+  // Map, so each path is walked once to find a file and a directory at one place.
+  const root = new Map()
+  let total = 0
+  for (const { storedName, type, data } of entries) {
+    if (type === 'hardlink') refuse('tarball-conflict')
+    if (type !== 'file' && type !== 'contiguous-file') continue
+    const path = npmTarPath(storedName)
+    if (path === '') refuse('tarball-conflict')
+    const segments = path.split('/')
+    let at = root
+    for (let i = 0; i < segments.length - 1; i++) {
+      let next = at.get(segments[i])
+      if (next === undefined) at.set(segments[i], next = new Map())
+      else if (!(next instanceof Map)) refuse('tarball-conflict')
+      at = next
+    }
+    const seen = at.get(segments.at(-1))
+    if (seen !== undefined) {
+      if (seen instanceof Map || !sameBytes(seen, data)) refuse('tarball-conflict')
+      continue
+    }
+    at.set(segments.at(-1), data)
+    files.set(path, data)
+    total += data.length
+    if (files.size > maxFiles || total > maxBytes) refuse('package-too-large')
+  }
+  return files
+}
+
+// The files of a tar archive, by path: their bytes, as installers lay them
+// out (npmTarLayout). Past MAX_TAR_ENTRIES it is given up on as
+// `package-too-large`, before any more of it is read.
 function npmTarFiles(tar) {
   let entries
   try {
@@ -31,17 +87,7 @@ function npmTarFiles(tar) {
     if (error instanceof ArchiveError && error.limited) throw new Error('package-too-large', { cause: error })
     throw error
   }
-  const files = new Map()
-  let total = 0
-  for (const { name, type, data } of entries) {
-    const slash = name.indexOf('/')
-    if ((type !== 'file' && type !== 'contiguous-file') || slash === -1) continue
-    const path = name.slice(slash + 1)
-    total += data.length - (files.get(path)?.length ?? 0)
-    files.set(path, data)
-    if (files.size > MAX_PACKAGE_FILES || total > MAX_PACKAGE_BYTES) throw new Error('package-too-large')
-  }
-  return files
+  return npmTarLayout(entries, { maxFiles: MAX_PACKAGE_FILES, maxBytes: MAX_PACKAGE_BYTES }, code => { throw new Error(code) })
 }
 
 // A file's text: UTF-8 with no NUL, else null.

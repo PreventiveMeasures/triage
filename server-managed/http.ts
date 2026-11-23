@@ -347,9 +347,10 @@ const NPM_RISK_PATH = '/api/npm/risk'
 const NPM_DELTA_PATH = '/api/npm/delta'
 const NPM_DELTAS_PATH = '/api/npm/deltas'
 // What risk's errors (risk/npm/registry.js NpmRiskError) are answered as: npm
-// having no such package or version, or a tarball unpacking past risk's
-// bounds; npm failing otherwise a 502.
-const NPM_RISK_STATUS: Partial<Record<string, number>> = { 'package-not-found': 404, 'version-not-found': 404, 'package-too-large': 413 }
+// having no such package or version, a tarball unpacking past risk's bounds,
+// or one installers would install other than one set of files from, as the
+// viewer refuses it (npm-packages.ts readNpmTar); npm failing otherwise a 502.
+const NPM_RISK_STATUS: Partial<Record<string, number>> = { 'package-not-found': 404, 'version-not-found': 404, 'package-too-large': 413, 'tarball-conflict': 422 }
 // A risk failure answered with its code alone, as risk's status for it (NPM_RISK_STATUS, else 502), its cause
 // logged where it is the server's or npm's, not the reader's (a 5xx), for the logs to say why.
 function sendRiskError(res: ServerResponse, err: NpmRiskError) {

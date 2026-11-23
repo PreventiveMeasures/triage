@@ -30,7 +30,9 @@
 // of npm to; else a tarball is upstream's getTarball's, bounded as upstream
 // bounds it. What risk asks npm itself is given up on after 30 seconds, and
 // read no further than its bounds, `upstream-too-large` past them, as is a
-// tarball unpacking past tarball.js's, `package-too-large`.
+// tarball unpacking past tarball.js's, `package-too-large`; one installers
+// would install other than one set of files from (tarball.js npmTarLayout)
+// is `tarball-conflict`.
 import { advisories } from '@preventive/upstream/advisories.js'
 import { getTarball } from '@preventive/upstream/npm.js'
 import { compareVersions, satisfies, validRange } from '@preventive/upstream/semver.js'
@@ -261,7 +263,8 @@ export async function npmVersionFiles(name, version, { manifest, published, dist
     throw signal?.aborted ? error : new NpmRiskError('upstream-unavailable', `npm's tarball of ${what} couldn't be had: ${error.message}`)
   })
   try { return { npm: { name, version, manifest, published }, ...await npmTarballVersion(tarball) } } catch (error) {
-    throw new NpmRiskError(error.message === 'package-too-large' ? 'package-too-large' : 'upstream-invalid', `npm's tarball of ${what}: ${error.message}`)
+    const code = error.message === 'package-too-large' || error.message === 'tarball-conflict' ? error.message : 'upstream-invalid'
+    throw new NpmRiskError(code, `npm's tarball of ${what}: ${error.message}`)
   }
 }
 
