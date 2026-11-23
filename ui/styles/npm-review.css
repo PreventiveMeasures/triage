@@ -83,6 +83,10 @@ npm-review .npm-review-progress-block button { min-height: 0; padding: 0; line-h
   }
 .dependency-review-patched { padding: 0 .3rem; cursor: default; }
 .npm-review-badge { display: inline-flex; padding: .1rem .4rem; cursor: default; }
+/* The toolbar's badge, a published review's copy button left of it. */
+.npm-review-status { display: inline-flex; align-items: center; gap: .25rem; }
+.npm-review-status dependency-review-copy { display: inline-flex; }
+.npm-review-status dependency-review-copy:empty { display: none; }
 .npm-review-filters { gap: .7rem; padding: 0 .15rem; }
 npm-review .npm-review-filters button {
   padding: 0; border: 0; background: transparent; min-height: 1.4rem; color: var(--muted); font-size: .68rem;
