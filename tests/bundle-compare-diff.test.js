@@ -17,7 +17,8 @@ import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundleCompareFiles, bundleCompareScopes, bundleCompareSideScopes } from '../common/bundle-compare-inputs.js'
 import { prepareComparison } from '../common/bundle-comparison.js'
 import { scanScopeOptions } from '../ui/scan/scopes.js'
-import { DIFF_CONTEXT, diffRows, fileLineCounts, lineDiff, markHighlighted, markSegments, textLines, typeFolds, whitespaceHidden, whitespaceInsensitive } from '../ui/view/bundle-compare-code-model.js'
+import { DIFF_CONTEXT, diffRows, fileLineCounts, hidesLiteralWhitespace, lineDiff, markHighlighted, markSegments, textLines, typeFolds, whitespaceHidden, whitespaceInsensitive, whitespaceKept } from '../ui/view/bundle-compare-code-model.js'
+import { changeBlocks } from '../common/line-diff.js'
 import { bundlePackageVersions } from '../common/bundle-sources.js'
 import { bundleFileMeta, comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, versionDirection } from '../common/bundle-compare-diff.js'
 import { bundlePkgOf } from '../common/bundle-pkg-of.js'
@@ -738,10 +739,38 @@ describe('Code view model', () => {
   })
 
   test('what diff -b would hide: whether it hides a change, and one mixing kinds of blank', () => {
-    assert.deepEqual(whitespaceHidden('  a()\n', '    a()\n'), { hides: true, mixed: false })
-    assert.deepEqual(whitespaceHidden('  a()\n', '\ta()\n'), { hides: true, mixed: true }, 'spaces turned to a tab')
-    assert.deepEqual(whitespaceHidden('\t  a()\n', '\t    a()\n'), { hides: true, mixed: true }, 'a run of tabs and spaces made longer')
-    assert.deepEqual(whitespaceHidden('a b\n', 'ab\n'), { hides: false, mixed: false }, 'a blank taken from between two characters shows')
+    assert.deepEqual(whitespaceHidden('  a()\n', '    a()\n'), { hides: true, mixed: false, literal: false })
+    assert.deepEqual(whitespaceHidden('  a()\n', '\ta()\n'), { hides: true, mixed: true, literal: false }, 'spaces turned to a tab')
+    assert.deepEqual(whitespaceHidden('\t  a()\n', '\t    a()\n'), { hides: true, mixed: true, literal: false }, 'a run of tabs and spaces made longer')
+    assert.deepEqual(whitespaceHidden('a b\n', 'ab\n'), { hides: false, mixed: false, literal: false }, 'a blank taken from between two characters shows')
+  })
+
+  // A string's, a template's or a regular expression's blanks are its value: diff -b hiding them would hide
+  // `split(' ')` made `split('  ')`, a command's argument run on, or a template's line indented anew.
+  test('what diff -b would hide within a literal, which a view does not hide', () => {
+    for (const [before, after, why] of [
+      ["s.split(' ')\n", "s.split('  ')\n", 'a string'],
+      ['exec("rm -rf /tmp/x")\n', 'exec("rm  -rf /tmp/x")\n', 'a command run on'],
+      ['x = /a b/\n', 'x = /a  b/\n', 'a regular expression'],
+      ['x = `\n  a\n`\n', 'x = `\n    a\n`\n', "a template's line indented anew"],
+      ['x = `a \n`\n', 'x = `a\n`\n', "a template's line ending its blanks"],
+    ]) {
+      assert.deepEqual(whitespaceHidden(before, after, 'src/a.js'), { hides: true, mixed: false, literal: true }, why)
+      assert.equal(hidesLiteralWhitespace('src/a.js', before, after, changeBlocks(before, after, true)), true, why)
+    }
+    for (const [before, after, why] of [
+      ["  s.split(' ')\n", "    s.split(' ')\n", 'code re-indented, its string as it was'],
+      ["s.split(' ')   \n", "s.split(' ')\n", 'blanks ending a line of code'],
+      ['a  =  "x"\n', 'a = "x"\n', 'blanks between tokens'],
+      ['x = 1 // a  b\n', 'x = 1 // a b\n', 'a comment'],
+    ]) assert.deepEqual(whitespaceHidden(before, after, 'src/a.js'), { hides: true, mixed: false, literal: false }, why)
+    // A stylesheet's strings by its own reading, a `//` in it no comment.
+    assert.equal(whitespaceHidden('a { content: "x y" }\n', 'a { content: "x  y" }\n', 'a.css').literal, true)
+    assert.equal(whitespaceHidden('a { background: url(https://x.y/z)  }\n', 'a { background: url(https://x.y/z) }\n', 'a.css').literal, false)
+    // The reason a view keeps whitespace changes shown: blanks mixing kinds first, then a literal's.
+    assert.equal(whitespaceKept('src/a.js', '  a()\n', '\ta()\n', changeBlocks('  a()\n', '\ta()\n', true)), 'mixed')
+    assert.equal(whitespaceKept('src/a.js', "f(' ')\n", "f('  ')\n", changeBlocks("f(' ')\n", "f('  ')\n", true)), 'literal')
+    assert.equal(whitespaceKept('src/a.js', '  a()\n', '    a()\n', changeBlocks('  a()\n', '    a()\n', true)), null)
   })
 
   test('whitespace is hidden only in files whose whitespace means nothing, told by extension or #! line', () => {

@@ -6,6 +6,7 @@
 // the last line rather than starting an empty one.
 import { hidesMixedWhitespace, pairLines } from '@preventive/compare/view.js'
 import { blocksHold, changeBlocks, textLines } from '../../common/line-diff.js'
+import { JS_STRING_OR_COMMENT } from '../../risk/files/script.js'
 
 export { textLines }
 
@@ -131,11 +132,68 @@ export function fileLineCounts(before, after) {
 // `blocks` (diff -b's by default) pair as unchanged lines that differ.
 export const hidesWhitespace = (before, after, blocks = changeBlocks(before, after, true)) => !blocksHold(before, after, blocks)
 
-// What diff -b would hide between two texts: whether it hides a change
-// (`hides`), and whether one mixes kinds of blank (`mixed`), which no view hides.
-export function whitespaceHidden(before, after) {
+// A stylesheet's strings, as risk reads them (risk/files/script.js): no `//`
+// comments, so `url(https://…)` is code.
+const CSS_STRING = /("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|\/\*[\s\S]*?\*\//gu
+const STYLESHEET = /\.(?:css|scss|less)$/iu
+
+// A text's literals by line: the parts of its strings, templates and regular
+// expressions on each line (a template's whole line where one runs past it),
+// NUL apart, as risk's JS_STRING_OR_COMMENT reads them in one linear pass, a
+// stylesheet's strings by its own reading; `path` says which.
+function literalLines(path, text) {
+  const pattern = STYLESHEET.test(path) ? CSS_STRING : JS_STRING_OR_COMMENT
+  const starts = [0]
+  for (let at = text.indexOf('\n'); at !== -1; at = text.indexOf('\n', at + 1)) starts.push(at + 1)
+  const pieces = starts.map(() => [])
+  let line = 0
+  for (const match of text.matchAll(pattern)) {
+    if (match[1] === undefined) continue
+    const from = match.index + match[0].indexOf(match[1]), to = from + match[1].length
+    while (line + 1 < starts.length && starts[line + 1] <= from) line++
+    for (let at = line; at < starts.length && starts[at] < to; at++) {
+      const end = at + 1 < starts.length ? starts[at + 1] - 1 : text.length
+      pieces[at].push(text.slice(Math.max(from, starts[at]), Math.min(to, end)))
+    }
+  }
+  return pieces.map(list => list.join('\0'))
+}
+
+// Whether diff -b, as `blocks` were found with it, hides blanks changing
+// within a literal, whose value they are part of: a line kept as unchanged
+// that differs in its strings, templates or regular expressions (`"a b"` and
+// `"a  b"`, a template's line indented anew). Each text is read only once a
+// kept line differs.
+export function hidesLiteralWhitespace(path, before, after, blocks) {
+  const a = textLines(before), b = textLines(after)
+  let ai = 0, bi = 0, news = null, olds = null
+  for (let run = 0; run <= blocks.length; run++) {
+    const end = run < blocks.length ? blocks[run].a0 : a.length
+    for (; ai < end; ai++, bi++) {
+      if (a[ai] === b[bi]) continue
+      olds ??= literalLines(path, before)
+      news ??= literalLines(path, after)
+      if (olds[ai] !== news[bi]) return true
+    }
+    if (run < blocks.length) ({ a1: ai, b1: bi } = blocks[run])
+  }
+  return false
+}
+
+// Why diff -b, as `blocks` were found with it, may not hide what it would in a
+// file at `path`, or null where it may: blanks of more than one kind changing
+// (`mixed`, which also takes blocks that are none for it), else blanks within
+// a literal (`literal`). A view shows whitespace changes then.
+export const whitespaceKept = (path, before, after, blocks) => (hidesMixedWhitespace(before, after, blocks) ? 'mixed'
+  : hidesLiteralWhitespace(path, before, after, blocks) ? 'literal' : null)
+
+// What diff -b would hide between two texts of a file at `path`: whether it
+// hides a change (`hides`), and whether one mixes kinds of blank (`mixed`) or
+// lies within a literal (`literal`), neither of which a view hides.
+export function whitespaceHidden(before, after, path = '') {
   const blocks = changeBlocks(before, after, true)
-  return { hides: hidesWhitespace(before, after, blocks), mixed: hidesMixedWhitespace(before, after, blocks) }
+  const mixed = hidesMixedWhitespace(before, after, blocks)
+  return { hides: hidesWhitespace(before, after, blocks), mixed, literal: !mixed && hidesLiteralWhitespace(path, before, after, blocks) }
 }
 
 // Files whose whitespace means nothing but in their strings, the only ones in

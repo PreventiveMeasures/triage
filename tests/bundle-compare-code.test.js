@@ -1735,6 +1735,18 @@ test('a file naming exfiltration hosts is tagged so in its head and the tree, a 
   assert.equal(tags(row).length, 3, 'in the tree too')
 })
 
+test('a file whose whitespace changes lie within a literal is diffed as it is while whitespace changes are hidden, saying why', t => {
+  const split = [{ 'src/split.js': "  const words = s.split(' ')\n" }, { 'src/split.js': "    const words = s.split('  ')\n" }]
+  const element = view('src/split.js', split)
+  element._setWhitespace(true)
+  t.after(() => element._setWhitespace(false))
+  const markup = renderText(element.render())
+  assert.match(markup, /class=bundle-compare-diff-table/u, 'its whitespace changes show')
+  assert.doesNotMatch(markup, /Only whitespace changed/u)
+  assert.match(markup, /Whitespace changes are shown: hiding them would hide blanks changing within a string, a template or a regular expression, whose value they are part of\./u)
+  assert.doesNotMatch(renderText(view('src/split.js', split).render()), /accessible-label=Hide whitespace changes/u, 'not offered while they show, as it may hide none here')
+})
+
 test('a file whose whitespace changes mix kinds of blank is diffed as it is while whitespace changes are hidden, saying why', async t => {
   const tabbed = [{ 'src/tabs.js': '  a()\n  b()\n' }, { 'src/tabs.js': '\ta()\n\tb()\n' }]
   const spaced = [{ 'src/spaces.js': '  a()\n' }, { 'src/spaces.js': '    a()\n' }]
