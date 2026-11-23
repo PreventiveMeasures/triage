@@ -167,15 +167,20 @@ function kind(code) {
   return FORMAT.test(char) ? 'format character' : IGNORABLE.test(char) && !UNASSIGNED.test(char) ? 'invisible character' : 'unassigned code point'
 }
 
-// The characters in `text` to show, in order, as [at, code point] (passed).
-function shown(text, lineEnd) {
+// The characters in `text` to show, in order, as [at, code point] (passed);
+// the first alone where `first`.
+function shown(text, lineEnd, first = false) {
   const found = []
   CANDIDATES.lastIndex = 0
   for (let match = CANDIDATES.exec(text); match; match = CANDIDATES.exec(text)) {
     const code = match[0].codePointAt(0)
     const next = passed(text, match.index, code, lineEnd)
-    if (next === -1) found.push([match.index, code])
-    else CANDIDATES.lastIndex = next
+    if (next !== -1) {
+      CANDIDATES.lastIndex = next
+      continue
+    }
+    found.push([match.index, code])
+    if (first) break
   }
   return found
 }
@@ -183,6 +188,12 @@ function shown(text, lineEnd) {
 // Whether `text` may have any to show: a quick test, before finding which.
 export function hasControls(text) {
   return UNSEEN.test(text)
+}
+
+// Whether `text` has any to show: a character a copy of it would carry
+// though the viewer draws it as a box. `lineEnd`: see shown.
+export function hasShownControls(text, lineEnd = false) {
+  return hasControls(text) && shown(text, lineEnd, true).length > 0
 }
 
 const box = code => {

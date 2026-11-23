@@ -48,6 +48,7 @@ import './bundle-code-splitter.js'
 import { CODE_MODE_ICON, COLLAPSE_DIRS_ICON, COPY_ICON, FILES_MODE_ICON, NEXT_ICON, PREV_ICON } from './lit-icons.js'
 import { readKept, trimKept } from './kept-entries.js'
 import { prefs } from './bundle-compare-prefs.js'
+import { showToast } from './toast.js'
 
 const KINDS = [
   { kind: 'changed', label: 'Modified', letter: 'M' },
@@ -504,6 +505,8 @@ export class BundleCompareCode extends LitElement {
           <span class="bundle-code-rail-label">${this.extensions?.railLabel ?? 'Changes'}</span>
           <span class="bundle-code-rail-count">${this._entries.size.toLocaleString()}</span>
           <span class="bundle-code-rail-actions">
+            ${this.extensions?.copyDiff ? html`<button type="button" class="bundle-code-rail-action bundle-code-copy-diff" aria-label="Copy complete diff" data-tooltip="Copy complete diff"
+              @click=${event => void this._copyDiff(event.currentTarget)}>${COPY_ICON}</button>` : nothing}
             <button type="button" class="bundle-code-rail-action" aria-label=${this.extensions?.collapseLabel ?? 'Collapse directories'} data-tooltip="Collapse directories"
               ?disabled=${this._mode !== 'files' || !!this._pathQuery() && !this.extensions?.collapseClearsSearch || tree.dirs.size === 0} @click=${() => this._collapseAll(tree)}>
               ${COLLAPSE_DIRS_ICON}
@@ -534,6 +537,19 @@ export class BundleCompareCode extends LitElement {
       </aside>
       <bundle-code-splitter role="separator" tabindex="0" aria-orientation="vertical"
         aria-label="Resize file tree" data-tooltip="Drag to resize · double-click to reset"></bundle-code-splitter>`
+  }
+
+  // The whole diff (extensions.copyDiff) to the clipboard, its button green
+  // a moment once it is there.
+  async _copyDiff(button) {
+    try {
+      await navigator.clipboard.writeText(this.extensions.copyDiff())
+    } catch {
+      showToast('Could not copy the diff to the clipboard.', { kind: 'error' })
+      return
+    }
+    button.classList.add('copied')
+    setTimeout(() => button.classList.remove('copied'), 1000)
   }
 
   // Painted again as what it asked for comes (printed copies, the server's

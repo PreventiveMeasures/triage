@@ -681,6 +681,11 @@
 .bundle-code-close:hover { color: var(--text); background: var(--surface-active); }
 .bundle-code-rail-action:disabled { opacity: .35; }
 .bundle-code-rail-action[aria-pressed=true] { color: var(--accent); }
+/* Review's whole-diff copy, its glyph as large as its neighbours'; green a
+   moment once copied, the pointer still on it. */
+.bundle-code-copy-diff svg { width: 13px; height: 13px; }
+.bundle-code-copy-diff.copied,
+.bundle-code-copy-diff.copied:hover:not(:disabled) { color: var(--green); }
 .bundle-code-rail-action:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .bundle-code-rail-prefix {
   padding: .25rem .75rem;
