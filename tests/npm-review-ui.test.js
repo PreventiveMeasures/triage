@@ -135,6 +135,7 @@ test('non-text files stay visible and unchecked in both review modes, with disab
   await Promise.resolve()
   assert.deepEqual(page._files, ['asset.bin', 'index.js', 'package.json'])
   assert.deepEqual(page._nonTextFiles, ['asset.bin', 'index.js'], 'a binary-to-text change remains non-reviewable')
+  assert.equal(reviewExtensions(page).copyDiff, null, 'no diff to copy where it is not of text alone')
   assert.deepEqual(page._summary, { coverage: 'partial', checkedFiles: 1, totalFiles: 3, verdictLimit: 'accept' })
   assert.match(text(reviewExtensions(page).filters), /Unchecked 2/u)
   for (const mode of ['code', 'diff']) {
@@ -1443,6 +1444,46 @@ test('review automatically uses whole diff below both line and byte limits', () 
   assert.equal(reviewViewMode([{ before: 'x'.repeat(1024 * 1024), after: 'x'.repeat(1024 * 1024) }]), 'code')
   assert.equal(reviewViewMode([{ before: '', after: 'é'.repeat(1024 * 1024) }]), 'code', 'the limit measures UTF-8 bytes')
   assert.equal(reviewViewMode([{ before: '', after: { format: 'digest', size: 2 * 1024 * 1024 } }]), 'code')
+})
+
+test('the Files rail copies the complete diff of text, beside collapsing its folders, whatever its filters show', async () => {
+  const page = component()
+  page.details = { ...entry, kind: 'sourcemap', json: { sources: ['package.json', 'lib/index.js'], sourcesContent: ['{"version":"2.0.0"}\n', 'export default 2\n'] } }
+  page._base = { ...base, kind: 'sourcemap', json: { sources: ['package.json'], sourcesContent: ['{"version":"1.0.0"}\n'] } }
+  answer = { reviews: [], teams: TEAMS }
+  page._key = null
+  page._ensureContext(page._base, prepareComparison(page._base, page.details))
+  await Promise.resolve()
+  const diff = '--- /dev/null\n+++ b/lib/index.js\n@@ -0,0 +1 @@\n+export default 2\n'
+    + '--- a/package.json\n+++ b/package.json\n@@ -1 +1 @@\n-{"version":"1.0.0"}\n+{"version":"2.0.0"}\n'
+  page._unchecked = true
+  const extensions = reviewExtensions(page)
+  assert.equal(extensions.copyDiff(), diff, 'every file, in the tree\'s order, the Unchecked filter on')
+  assert.equal(page._unifiedText, diff, 'worked out once asked for, and kept')
+  const rail = new BundleCompareCode()
+  Object.assign(rail, { base: page._base, other: page.details, files: page._diff.files, extensions, path: 'lib/index.js' })
+  rail.willUpdate(new Map([['files']]))
+  const head = text(rail._renderRail(rail._railState(), rail.path))
+  assert.match(head, /class="bundle-code-rail-actions">\s*<button [^>]*aria-label="Copy complete diff" data-tooltip="Copy complete diff"[^]*aria-label=Collapse folders/u, 'to the left of collapsing folders')
+  assert.doesNotMatch(head.match(/bundle-code-copy-diff[^]*?<\/button>/u)[0], /disabled/u, 'whatever the search')
+  const written = []
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { writeText: value => { written.push(value); return Promise.resolve() } } } })
+  const classes = new Set()
+  const button = { classList: { add: name => classes.add(name), remove: name => classes.delete(name) } }
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    await rail._copyDiff(button)
+    assert.deepEqual([written, [...classes]], [[diff], ['copied']])
+    mock.timers.tick(1000)
+    assert.deepEqual([...classes], [], 'green a moment')
+  } finally { mock.timers.reset() }
+  const toasts = loadingToasts.length
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { writeText: () => Promise.reject(new Error('Denied')) } } })
+  await rail._copyDiff(button)
+  assert.deepEqual([loadingToasts.slice(toasts).map(toast => [toast.message, toast.options.kind]), [...classes]],
+    [[['Could not copy the diff to the clipboard.', 'error']], []], 'said where the clipboard refuses it')
+  rail.extensions = { ...extensions, copyDiff: null }
+  assert.doesNotMatch(text(rail._renderRail(rail._railState(), rail.path)), /Copy complete diff/u, 'none where none is given, as in Compare')
 })
 
 test('the shared tree keeps review decorations, progress and unchecked filtering', () => {

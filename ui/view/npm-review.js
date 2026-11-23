@@ -9,6 +9,7 @@ import { allowedReviewVerdicts, isReviewableFile, needsPackageJsonReview, summar
 import { bundleComparisonDiff } from './bundle-comparison.js'
 import { comparisonFileList, withinComparisonLimits } from './bundle-compare-files.js'
 import { buildBundleSourceTree, orderedComparisonFiles } from './bundle-source-tree.js'
+import { unifiedSections } from './bundle-compare-unified.js'
 import { reviewTitle, sameReviewContext, selectReviewOnOpen, takeReviewSelection } from './npm-review-presentation.js'
 import { renderReview } from './npm-review-view.js'
 import { reviewView } from './bundle-compare-prefs.js'
@@ -39,7 +40,7 @@ export class NpmReview extends LitElement {
   createRenderRoot() { return this }
   constructor() {
     super()
-    this._teams = []; this._reviews = []; this._files = []; this._nonTextFiles = []
+    this._teams = []; this._reviews = []; this._files = []; this._nonTextFiles = []; this._unified = null; this._unifiedText = null
     this._selectedTeams = new Set(); this._additionalTeams = new Map(); this._editors = new Map()
     this._file = null; this._path = null; this._patch = null; this._patched = null; this._basePatch = null
     this._loading = false; this._saving = false; this._error = null; this._context = null; this._key = null
@@ -181,6 +182,10 @@ export class NpmReview extends LitElement {
     this._files = orderedComparisonFiles(buildBundleSourceTree(files.map(file => file.path)))
     const nonText = new Set(files.filter(file => !isReviewableFile(file.before, file.after)).map(file => file.path))
     this._nonTextFiles = this._files.filter(path => nonText.has(path))
+    // The whole diff in the tree's order, where it is of text alone, as the
+    // Files rail copies it: its sections, and its text once it is asked for.
+    const byPath = new Map(files.map(file => [file.path, file]))
+    this._unified = unifiedSections(this._files.map(path => byPath.get(path))); this._unifiedText = null
     this._mode = withinComparisonLimits(files, REVIEW_DISPLAY_LIMITS) ? 'diff' : 'code'
     this._key = key; this._teams = []; this._reviews = []; this._selectedTeams = new Set(); this._additionalTeams = new Map()
     this._selectedReview = null; this._continuation = null; this._editors.clear(); this._path = this._files[0] ?? null; this._panel = null; this._notice = ''

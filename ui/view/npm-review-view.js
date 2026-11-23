@@ -5,6 +5,7 @@ import { npmComparisonSource } from './npm-compare-source.js'
 import { NEXT_ICON } from './lit-icons.js'
 import { compareSourceOptions, renderComparisonHeader, renderComparisonPicker, renderComparisonSummary } from './bundle-compare-picker.js'
 import { renderComparisonViewer } from './bundle-compare-view.js'
+import { unifiedDiff } from './bundle-compare-unified.js'
 import { discardButton, reviewAuthor, reviewBadge, reviewCoverage, reviewDate, reviewFile, reviewFileStates, reviewNote, reviewProgress, reviewTitle, sameReviewContext, verdictIcon,
   verdictLabel, verdictLabels } from './npm-review-presentation.js'
 
@@ -232,6 +233,8 @@ export function reviewExtensions(page) {
       <button type="button" class="npm-review-button" aria-pressed=${String(!!page._unchecked)} @click=${() => { page._unchecked = true }}>Unchecked ${page._files.length - checked}</button>
     </div>`,
     fileActions: (path, inline) => renderReviewEditor(page, path, inline),
+    // The whole diff, of every file whatever the filters show, where it is of text alone.
+    copyDiff: page._unified?.length > 0 ? () => page._unifiedText ??= unifiedDiff(page._unified) : null,
   }
 }
 
