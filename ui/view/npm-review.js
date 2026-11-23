@@ -11,6 +11,7 @@ import { comparisonFileList, withinComparisonLimits } from './bundle-compare-fil
 import { buildBundleSourceTree, orderedComparisonFiles } from './bundle-source-tree.js'
 import { reviewTitle, sameReviewContext, selectReviewOnOpen, takeReviewSelection } from './npm-review-presentation.js'
 import { renderReview } from './npm-review-view.js'
+import { reviewView } from './bundle-compare-prefs.js'
 import './bundle-selector.js'
 import './mode-switch.js'
 
@@ -114,11 +115,25 @@ export class NpmReview extends LitElement {
   _navigate(target, basePatch = target === this._target ? this._basePatch : null) {
     return this._navigateTo(npmPackageRoute(this.entry, 'review', this._location(target, true, basePatch)))
   }
+  // `route` opened, a review's drawn as this one's diff is (reviewView):
+  // opening a review sets its view from its route alone (npm-package.js openNpmRoute).
   async _navigateTo(route) {
     if (this._blocked || this._loading) return
     const key = this._key, navigation = this._navigation = {}
     if (this._unsaved && !await this._saveAll()) return
-    if (key === this._key && navigation === this._navigation && !this._unsaved) await managedHistory?.navigate(route)
+    if (key === this._key && navigation === this._navigation && !this._unsaved) await managedHistory?.navigate(route.bundleTab === 'review' ? { ...route, ...reviewView(state) } : route)
+  }
+  // The route of the review shown, against its base as loaded (its exact
+  // version, as its patch changes it where it does), drawn as its diff is.
+  _shownRoute(base = this._base) {
+    const location = this._location(targetOf(base.npm?.name, base.npm?.version), true, base.npmPatch?.patch.hash ?? null)
+    return npmPackageRoute(this.entry, 'review', { ...location, ...reviewView(state) })
+  }
+  // A view setting changed in its diff (whitespace or type-only changes
+  // hidden, pretty-printing): the URL of the review shown names it.
+  _viewChanged() {
+    if (state.bundleDetailsTab !== 'review' || state.selectedBundle !== this.entry?.integrity || !this._base || !this._context) return
+    managedHistory?.replaceRoute(this._shownRoute())
   }
   // What a base load is for: the version, `target`, both patches and the session.
   _baseKeyOf(target) { return JSON.stringify([this.entry.integrity, target, this._patch, this._basePatch, this.session?.id, this.session?.role]) }
@@ -177,7 +192,7 @@ export class NpmReview extends LitElement {
       state.npmReview = { bundle: this.entry.integrity, ...location }
       // Pin tags to the exact bytes shown without loading the same base again.
       this._baseKey = this._baseKeyOf(target)
-      managedHistory?.replaceRoute(npmPackageRoute(this.entry, 'review', location))
+      managedHistory?.replaceRoute(this._shownRoute(base))
     }
   }
   async _refresh(initializeTeams = false) {

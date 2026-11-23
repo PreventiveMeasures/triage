@@ -25,6 +25,9 @@ mock.module('../ui/view/client-managed.js', { exports: {
     { downloads: answers.stats[name]?.downloads ?? null, times: answers.versions[name]?.times, malware: answers.malware[`${name}@${version}`], told: answers.told[`${name}@${version}`],
       ...answers.versions[name]?.teamScoped && { minimumReleaseAge: 0, downloads: null } })),
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: async (name, version) => { socketAsked.push(`${name}@${version}`); return { socket: await answers.socket[`${name}@${version}`] ?? null } }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
+  // What pretty-source.js and rename-diff.js ask of it, as npm-package.js opens a review drawn as its URL names.
+  fetchPrettyBundleChanges() {}, fetchPrettyBundleFile() {}, fetchPrettyNpmChanges() {}, fetchPrettyNpmFile() {}, fetchPrettyNpmFiles() {},
+  fetchBundleRenameDiff() {}, fetchBundleRenameDiffs() {}, fetchNpmRenameDiff() {}, fetchNpmRenameDiffs() {},
 } })
 const { npmAdvisoriesColumn, npmAdvisoryStatus, npmBinaryColumn, npmCompareBadges, npmFilesRead, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmFilesFilter, npmReadabilityWarning, npmReviewLimit, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmStatsRow } = await import('../ui/view/npm-overview.js')
 const { npmTakenDown } = await import('../common/dependency-reviews.js')

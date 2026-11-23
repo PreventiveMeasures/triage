@@ -14,6 +14,8 @@ import { fileRowDetails } from '../../common/bundle-sources.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { managedTabLocation } from './managed-bundle-navigation.js'
+import { prefs } from './bundle-compare-prefs.js'
+import { setPrettySource } from './pretty-source.js'
 import { managedHistory } from './managed-history.js'
 import { render } from './render.js'
 import { bundleOriginLinks, githubTagHref } from './bundle-origin-links.js'
@@ -346,6 +348,11 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
     state.npmReview = { bundle: entry.integrity,
       ...(route.reviewPackage ? { reviewPackage: route.reviewPackage, reviewSpec: route.reviewSpec ?? null } : {}), ...(route.patch ? { patch: route.patch } : {}),
       ...(route.basePatch ? { basePatch: route.basePatch } : {}) }
+    // Its diff drawn as its URL names it, what it doesn't name off
+    // (common/managed/routes.js), as Review's own links carry its view.
+    prefs.ignoreWhitespace = route.hideWhitespace === true
+    prefs.ignoreTypes = route.hideTypes === true
+    setPrettySource(route.pretty ?? false)
   }
   state.bundles = [entry]
   selectBundle(entry.integrity, tab)

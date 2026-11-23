@@ -8,6 +8,7 @@ import { needsPrettyPrint } from '../common/pretty-print.js'
 import { encodeMappings } from '../common/sourcemap-mappings.js'
 import { toldVersion } from './_npm-risk.js'
 import { typeOnlyRuns, typeOnlyStamped } from '../server-managed/type-only-proof.js'
+import { templates } from './_lit.js'
 
 const state = {}
 mock.module('../client/index.js', { namedExports: { state, BUNDLE_SOURCE_WRAP_KEY: 'wrap' } })
@@ -143,6 +144,7 @@ const { bundleFilesAsMap } = await import('../common/bundle-sources.js')
 const { resolutionRows } = await import('../ui/view/bundle-compare-files.js')
 const { npmDependencyFlagTags } = await import('../ui/view/npm-dependency-checks.js')
 await import('../ui/view/bundle-compare-code.js')
+const { prefs } = await import('../ui/view/bundle-compare-prefs.js')
 const CompareCode = customElements.get('bundle-compare-code')
 // The bundles each view is drawn with, for the mock server's comparisons.
 const willUpdate = CompareCode.prototype.willUpdate
@@ -972,6 +974,32 @@ test('the search signs a line as the diff shows it with whitespace changes hidde
   assert.ok(!only._searchResults(only._railState().order).files.some(file => file.path === 'src/only.js'))
 })
 
+test('a view setting changed in the diff, by its switch, its pretty-print toggle or a file\'s own action, is told with `compare-view-change`, for a page whose URL names it', t => {
+  t.after(() => { view()._setWhitespace(false); state.bundleSourcePretty = false })
+  const element = view('src/indent.js', [{ 'src/indent.js': 'if (a) {\n  fetch(x)\n}\n', 'data.json': '{"a":1}\n' }, { 'src/indent.js': 'if (a) {\n    fetch(x)\n}\n', 'data.json': '{"a":2}\n' }])
+  element._mode = 'code'
+  const told = []
+  element.dispatchEvent = event => { told.push([event.type, event.bubbles, event.composed]) }
+  // The function a template drawn calls, the one whose values hold `value`, or whose text `markup`.
+  const handler = (find, at = template => template.values.includes(find) || template.strings.join('').includes(find)) => templates(element.render()).find(at)
+    ?.values.find(value => typeof value === 'function')
+  handler('Hide whitespace changes')()
+  assert.equal(prefs.ignoreWhitespace, true, 'its switch pressed')
+  assert.match(renderText(element.render()), /Only whitespace changed in this file\./u)
+  handler('Show whitespace changes')()
+  assert.equal(prefs.ignoreWhitespace, false, 'its file\'s own action')
+  assert.deepEqual(told, [['compare-view-change', true, true], ['compare-view-change', true, true]], 'each change told, out of the viewer')
+  element.path = 'data.json'
+  handler('aria-label="Pretty-print"')()
+  assert.equal(state.bundleSourcePretty, 'indented', 'its pretty-print toggle')
+  handler('aria-label="Pretty-print"')()
+  assert.equal(state.bundleSourcePretty, 'folded', 'on JSON, folded')
+  assert.equal(told.length, 4)
+  element.path = 'src/indent.js'
+  element._setTypes(true); element._setTypes(false)
+  assert.equal(told.length, 6, 'type-only changes hidden and shown')
+})
+
 test('a hit in a diff too large to show unasked asks for it, and opens at its line', () => {
   const text = line => Array.from({ length: 60_000 }, (_, i) => i === 7 ? line : `line ${i}`).join('\n') + '\n'
   const element = view('src/large.js', [{ 'src/large.js': text('fetch(old)') }, { 'src/large.js': text('fetch(new)') }])
@@ -1197,8 +1225,7 @@ test('a file\'s diff drawn keeps its blocks for the search, which doesn\'t diff 
     ['−a0', '+b0', ' b1'])
 })
 
-test('split, the search lists a drawn diff\'s hits in the rows that diff aligned, aligning no block again', async t => {
-  const { prefs } = await import('../ui/view/bundle-compare-code.js')
+test('split, the search lists a drawn diff\'s hits in the rows that diff aligned, aligning no block again', t => {
   t.after(() => { prefs.layout = 'unified' })
   prefs.layout = 'split'
   const element = view('src/api.js')
@@ -2851,7 +2878,6 @@ export type User = z.infer<typeof UserSchema>;
 `
 
 test('a declaration file that changed in types alone but for what runs shows, its type-only changes hidden, its imports alone, a row where its types stand', async t => {
-  const { prefs } = await import('../ui/view/bundle-compare-code.js')
   t.after(() => { element._setTypes(false); prefs.layout = 'unified' })
   // Added, as a zod schema's; an import added beside its types changing; one
   // too large for the tree to count, likewise; a type-only import given an

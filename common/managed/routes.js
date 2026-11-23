@@ -4,6 +4,7 @@ import { MAX_FINDING_ID_LENGTH, isLinkableFindingId } from '../finding-id.js'
 import { isGithubRepoName } from '../github-pr.ts'
 import { isNpmPackageName, isNpmPackageSpec, isPatchHash, isPatchPath } from './npm-packages.js'
 import { parseRiskRoute, riskPath } from './risk-routes.js'
+import { reviewViewOf, reviewViewQuery } from './review-view-routes.js'
 import { filtersOf, filtersQuery } from './team-filters.js'
 
 // How Compare reviews the changes, past its Overview: `code`, beside the
@@ -109,7 +110,8 @@ export function managedRoutePath(route) {
 // `?patch=<hash>&repo=<repo id or name>&commit=<commit>&path=<path>`, or by
 // its hash alone, which only one kept answers (`?patch=<hash>`); and,
 // against a version as a patch changes it, that patch by its hash alone
-// (`basePatch`, `&basePatch=<hash>`).
+// (`basePatch`, `&basePatch=<hash>`). Past those, how its diff is drawn
+// (review-view-routes.js).
 export const NPM_TABS = new Set(['overview', 'code', 'search', 'compare', 'review', 'treemap'])
 // A patch as the server reads one (server-managed/npm-patch.ts requestedPatch).
 const isPatch = patch => isPatchHash(patch?.hash) && (patch.repoId == null ? patch.commit == null && patch.path == null
@@ -125,7 +127,7 @@ function npmPackagePath(route) {
     const base = route.reviewPackage == null ? '' : `/${route.reviewPackage}${route.reviewSpec == null ? '' : `@${route.reviewSpec}`}`
     const { patch } = route
     const query = [...patch == null ? [] : [`patch=${patch.hash}`], ...patch?.repoId == null ? [] : [`repo=${patch.repoId}&commit=${patch.commit}`],
-      ...patch?.path == null ? [] : [`path=${patch.path.split('/').map(encodeURIComponent).join('/')}`], ...route.basePatch == null ? [] : [`basePatch=${route.basePatch}`]].join('&')
+      ...patch?.path == null ? [] : [`path=${patch.path.split('/').map(encodeURIComponent).join('/')}`], ...route.basePatch == null ? [] : [`basePatch=${route.basePatch}`], ...reviewViewQuery(route)].join('&')
     return `/npm/${route.packageName}${route.packageSpec == null ? '' : `@${route.packageSpec}`}/review${base}${query ? `?${query}` : ''}`
   }
   const file = tab === 'code' && isLineNumber(route.file) ? `/${route.file}` : ''
@@ -149,7 +151,7 @@ function parseNpmRoute(path, hash, search) {
     if (patch && !isPatch(patch) || basePatch !== null && (!isPatchHash(basePatch) || !review[3])) return null
     return { view: 'npm', packageName: review[1], packageSpec: review[2] ?? null, bundleTab: 'review',
       ...(review[3] ? { reviewPackage: versionOnly ? review[1] : review[3], reviewSpec: versionOnly ? review[3] : review[4] ?? null } : {}), ...(patch ? { patch } : {}),
-      ...(basePatch ? { basePatch } : {}) }
+      ...(basePatch ? { basePatch } : {}), ...reviewViewOf(search) }
   }
   const match = /^\/npm(?:\/((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?(?:\/(code|search|compare|treemap)(?:\/([^/]+)(?:\/([a-z]+))?)?)?)?$/u.exec(path)
   if (!match) return undefined

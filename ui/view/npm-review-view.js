@@ -244,7 +244,7 @@ export function renderReview(page) {
     ${renderComparisonViewer({ base: page._base, other: page._other, diff: page._diff, source: page.source, path: page._path, seek: page._seek,
       baseName: page._base.npm ? `${page._base.npm.name}@${page._base.npm.version}${page._base.npmPatch ? ' (patched)' : ''}` : 'Empty package',
       otherName: `${page.entry.npm.name}@${page.entry.npm.version}${page._patch ? ' (patched)' : ''}`,
-      select: path => page._selectFile(path), extensions: reviewExtensions(page), mode: page._mode,
+      select: path => page._selectFile(path), extensions: reviewExtensions(page), mode: page._mode, viewChanged: () => page._viewChanged(),
     })}
     <span class="npm-review-announcement" role="status">${page._notice ?? ''}</span>${page._panel ? nothing : savingMessage(page)}${panel(page)}`
 }
