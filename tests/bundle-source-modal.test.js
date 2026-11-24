@@ -737,6 +737,33 @@ test('the source popup and the Search tab\'s source offer a managed bundle\'s mi
   }
 })
 
+test('the source popup offers its file in the Code tab wherever its bundle has one to open', t => {
+  const previous = { serverMode: state.serverMode, localMode: state.localMode, bundles: state.bundles, selectedBundle: state.selectedBundle }
+  t.after(() => Object.assign(state, previous))
+  const local = { name: 'app.map', integrity: 'sha512-open-in-code' }
+  const managed = { name: 'app.map', integrity: 'sha512-open-in-code', managedId: 'b3' }
+  const details = { kind: 'sourcemap', integrity: local.integrity, size: 12, json: { version: 3, sources: ['src/main.js'], sourcesContent: ['export {}\n'] } }
+  const bar = markup => markup.match(/<header class="bundle-source-bar">(.*?)<\/header>/su)?.[1] ?? ''
+  const offered = () => bar(renderText(renderBundleSourceModal())).includes('data-action="bundle-source-open-code"')
+  for (const [serverMode, localMode, entry, view, listed, shown, why] of [
+    ['standalone', true, local, 'bundles', true, true, 'over the bundle view\'s tabs, as the Treemap'],
+    ['managed', false, managed, 'bundles', true, true, 'a managed bundle\'s too'],
+    ['standalone', true, local, 'findings', true, true, 'a finding\'s Code, its local bundle listed'],
+    ['standalone', true, local, 'files', false, false, 'a bundle the sidebar doesn\'t list has no Code tab to open'],
+    ['managed', false, managed, 'findings', true, false, 'no managed route from another view'],
+  ]) {
+    Object.assign(state, { serverMode, localMode, currentView: view, bundleDetailsTab: 'treemap', selectedBundle: entry.integrity,
+      bundles: listed ? [entry] : [], bundleSourceFile: 'src/main.js', bundleDetails: details })
+    assert.equal(offered(), shown, why)
+  }
+  // Code and Search show the file in place, their bar without it.
+  Object.assign(state, { serverMode: 'standalone', localMode: true, currentView: 'bundles', bundleDetailsTab: 'search', bundles: [local], bundleSearchQuery: '' })
+  assert.equal(renderText(renderBundleSourceModal()), '')
+  const search = bar(renderText(renderBundlesList([local])))
+  assert.ok(search.includes('aria-label="Close source viewer"'), 'the Search tab\'s source bar')
+  assert.ok(!search.includes('bundle-source-open-code'))
+})
+
 test('Code own files in a managed bundle without a stamp link to its stored repository and directory', () => {
   const bundle = Bundle.parse(new Bundle({ modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'src/index.js': 'app' } }]]) }).serialize())
   const stored = { repoId: 7, repoFullName: 'org/app', repoDirectory: 'apps/web' }

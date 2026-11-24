@@ -17,8 +17,8 @@ import { pushed, stepped } from './focus-code-history.js'
 import { bundleFileHistory, stepBundleFile, visitBundleFile } from './bundle-code-history.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { startViewTransition } from './render-transition.js'
-import { bundleSourceModalShown, refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
-import { keepSourceLine } from './source-wrap.js'
+import { bundleSourceModalShown, refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent, revealBundleSourceLine } from './render-bundle.js'
+import { keepSourceLine, topSourceLine } from './source-wrap.js'
 import { togglePrettySource } from './pretty-source.js'
 import { toggleLockfileView } from './lockfile-view.js'
 import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
@@ -257,6 +257,29 @@ function goBundleTab(tab, options) {
   if (state.selectedBundle) persistLastBundle(state.selectedBundle, tab, { push: true })
 }
 
+// Another tab of the open bundle, from its tab strip, or a source popup's
+// Open in Code, which keeps its file (`preserveSource`).
+function switchBundleTab(tab, options) {
+  // Leaving Graph stops its canvas' rAF / observers.
+  if (state.bundleDetailsTab === 'graph' && tab !== 'graph') {
+    cleanupGraph2()
+    document.body.classList.remove('report-fullscreen')
+  }
+  // Switching tabs resets the source-viewer pointer (selectBundleTab): the
+  // modal renders over non-slide tabs whenever it's set.
+  prepareNpmReviewTab(state, tab, npm => npmRisk(npm)?.oldVersion ?? null)
+  goBundleTab(tab, options)
+  render()
+  // Code opens a default file on entry, perhaps deep in a subtree the rail
+  // opens scrolled past.
+  if (tab === 'code') {
+    ensureBundleSources().then(() => {
+      if (state.bundleDetailsTab === 'code') revealBundleCodeCurrent()
+      return null
+    })
+  }
+}
+
 // A line link pasted or typed over the open managed file changes only the
 // fragment; managed-history keeps the page. Mark the lines it names, within
 // the file, and bring them into view.
@@ -341,6 +364,33 @@ const SOURCE_CLICKS = [
     if (state.currentView === 'bundles' && state.bundleDetailsTab === 'search') goBundleTab('code', { preserveSource: true })
     selectBundleSourceFile(path)
     showSourceFile(state.bundleDetailsTab === 'code', true)
+  }],
+  // The popup's Open in Code: the file in its bundle's Code tab, with its
+  // file tree, at the line the popup had at its top, its marked lines kept,
+  // and over the bundle view its finding panel too. Over a finding's view,
+  // its local bundle opens on the file (selectBundle's `file`).
+  [near('[data-action="bundle-source-open-code"]'), (el) => {
+    const path = state.bundleSourceFile
+    const integrity = state.selectedBundle
+    if (!path || !integrity) return
+    const top = topSourceLine(el)
+    const reveal = () => {
+      if (state.bundleDetailsTab !== 'code' || state.bundleSourceFile !== path) return
+      if (top > 1) revealBundleSourceLine(top, 'start')
+      queueMicrotask(() => document.querySelector('.bundle-code-main .bundle-source-code')?.focus({ preventScroll: true }))
+    }
+    if (state.currentView === 'bundles') {
+      switchBundleTab('code', { preserveSource: true })
+      reveal()
+      return
+    }
+    const target = state.bundleSourceTargetLine
+    const marked = target?.bundle === integrity && target.path === path
+      ? { line: target.line, ...(target.end > target.line ? { endLine: target.end } : {}) } : {}
+    showStoredBundle(integrity, 'code', { file: { path, ...marked } }).then(() => {
+      reveal()
+      return null
+    }).catch(() => {})
   }],
   // Backdrop or close button. Before the opening clicks further down, so a
   // stray view-source target inside the modal doesn't reopen it.
@@ -554,24 +604,7 @@ const REPORT_CLICKS = [
       if (state.selectedBundle) persistLastBundle(state.selectedBundle, tab)
       return
     }
-    // Leaving Graph stops its canvas' rAF / observers.
-    if (state.bundleDetailsTab === 'graph' && tab !== 'graph') {
-      cleanupGraph2()
-      document.body.classList.remove('report-fullscreen')
-    }
-    // Switching tabs resets the source-viewer pointer (selectBundleTab): the
-    // modal renders over non-slide tabs whenever it's set.
-    prepareNpmReviewTab(state, tab, npm => npmRisk(npm)?.oldVersion ?? null)
-    goBundleTab(tab)
-    render()
-    // Code opens a default file on entry, perhaps deep in a subtree the rail
-    // opens scrolled past.
-    if (tab === 'code') {
-      ensureBundleSources().then(() => {
-        if (state.bundleDetailsTab === 'code') revealBundleCodeCurrent()
-        return null
-      })
-    }
+    switchBundleTab(tab)
   }],
   [near('[data-bundle-retry-sources]'), () => {
     if (state.bundleDetails) delete state.bundleDetails.sourceError

@@ -82,7 +82,7 @@ import { bundleValidationFact } from './bundle-validation.js'
 // hoisted functions are used, and only after init.
 import { renderHighlighted } from './render-finding.js'
 import { render } from './render.js'
-import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON, TERMINAL_ICON, WRAP_ICON } from './lit-icons.js'
+import { CODE_MODE_ICON, COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON, TERMINAL_ICON, WRAP_ICON } from './lit-icons.js'
 import { focusTerminal } from './terminal-attach.js'
 import { openAdminPage } from '../managed/navigation.js'
 
@@ -529,12 +529,13 @@ export function revealBundleCodeCurrent() {
   })
 }
 
-// Bring a line a link marks into the middle of the Code pane, two frames on:
-// once its source has laid out, and wrapped lines have resized their rows.
-function revealBundleSourceLine(line) {
+// Bring a line into the Code pane, two frames on: once its source has laid
+// out, and wrapped lines have resized their rows. A line a link marks to its
+// middle, the line a popup had at its top (Open in Code) to its top.
+export function revealBundleSourceLine(line, block = 'center') {
   requestAnimationFrame(() => requestAnimationFrame(() => {
     document.querySelector(`.bundle-code-main .bundle-source-lineno-row[data-line="${line}"]`)
-      ?.scrollIntoView({ block: 'center' })
+      ?.scrollIntoView({ block })
   }))
 }
 
@@ -696,13 +697,17 @@ function bundleViewerFindings(details, path, content, byFile = null) {
   return { fileFindings, lineFindings }
 }
 
-// The title bar of the source viewer modal and the Search tab's sidebar.
-function renderBundleSourceBar(path, history = null, prettyToggle = nothing) {
+// The title bar of the source viewer modal and the Search tab's sidebar;
+// the modal's offers its file in the Code tab (`openInCode`), where there is
+// one to open.
+function renderBundleSourceBar(path, history = null, prettyToggle = nothing, openInCode = false) {
   return html`<header class="bundle-source-bar">
       <div class="bundle-source-title mono" data-tooltip-truncated data-tooltip=${path}>${path}</div>
       ${history?.files.length > 1 ? renderBundleCodeFileNav(history) : nothing}
       ${renderSourceWrapToggle()}
       ${prettyToggle}
+      ${openInCode ? html`<button type="button" class="bundle-source-open-code" data-action="bundle-source-open-code"
+        data-tooltip="Open this file in the Code tab, with its file tree">${CODE_MODE_ICON}<span>Open in Code</span></button>` : nothing}
       <button
         type="button"
         class="bundle-source-close"
@@ -728,6 +733,12 @@ function renderBundleSourceCodeWrap(path, details, { content, fileFindings, line
 // findings), but the Code and Search tabs, which show the file in place.
 export const bundleSourceModalShown = () => !!state.bundleSourceFile && state.bundleDetailsTab !== 'code' && state.bundleDetailsTab !== 'search'
 
+// Where the popup's file can open in a Code tab: the bundle view's, whose
+// every kind of bundle has one, or a local bundle's from a finding's Code
+// over another view, the sidebar listing it.
+const bundleSourceCodeTab = () => state.currentView === 'bundles'
+  || !isManagedUiMode() && (state.bundles ?? []).some(bundle => bundle.integrity === state.selectedBundle)
+
 export function renderBundleSourceModal() {
   if (!bundleSourceModalShown()) return nothing
   const path = state.bundleSourceFile
@@ -741,7 +752,7 @@ export function renderBundleSourceModal() {
   const viewed = loading || error ? null : viewedSource(details, entry, path, bundleSourcesAsMap(details).get(path))
   return html`<div class="bundle-source-overlay">
     <div class=${classMap({ 'bundle-source-modal': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
-      ${renderBundleSourceBar(path, bundleFileHistory(state.bundleCodeHistory, details?.integrity ?? null, path), viewed?.toggle)}
+      ${renderBundleSourceBar(path, bundleFileHistory(state.bundleCodeHistory, details?.integrity ?? null, path), viewed?.toggle, bundleSourceCodeTab())}
       <div class="bundle-source-body" aria-busy=${String(loading)}>
         ${error ? html`<div class="bundles-slide-placeholder is-error" role="status">Failed to load source: ${error}</div>`
           : loading ? html`<div class="bundles-slide-placeholder" role="status">Loading source…</div>`

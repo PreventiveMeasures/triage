@@ -268,6 +268,34 @@ it('keeps the origin and earlier visits when an import moves from Search to Code
   }
 })
 
+it('a source popup\'s Open in Code keeps its file, history and finding panel in Code', () => {
+  for (const tab of ['treemap', 'graph', 'overview']) {
+    selectBundle(entry.integrity, tab)
+    const history = visitBundleFile(bundleFileHistory(null, entry.integrity, 'src/first.js'), 'src/main.js')
+    Object.assign(state, { bundleSourceFile: 'src/main.js', bundleCodeHistory: history, bundleSourceFindingIdx: 2 })
+    selectBundleTab('code', { preserveSource: true })
+    assert.equal(state.bundleDetailsTab, 'code', tab)
+    assert.equal(state.bundleSourceFile, 'src/main.js', tab)
+    assert.equal(state.bundleCodeHistory, history, tab)
+    assert.equal(state.bundleSourceFindingIdx, 2, tab)
+  }
+})
+
+it('a finding\'s source popup asks its bundle\'s Code for its file and marked lines', () => {
+  for (const [file, request] of [
+    [{ path: 'src/main.js' }, { bundle: entry.integrity, path: 'src/main.js' }],
+    [{ path: 'src/main.js', line: 3, endLine: 5 }, { bundle: entry.integrity, path: 'src/main.js', line: 3, endLine: 5 }],
+  ]) {
+    state.currentView = 'findings'
+    state.bundleSourceFile = 'src/main.js'
+    selectBundle(entry.integrity, 'code', { file })
+    assert.equal(state.currentView, 'bundles')
+    assert.equal(state.bundleDetailsTab, 'code')
+    assert.equal(state.bundleSourceFile, null, 'Code opens it once the sources have loaded')
+    assert.deepEqual(state.bundleCodeFileRequest, request)
+  }
+})
+
 it('ordinary tab changes still clear the source selection and file history', () => {
   selectBundle(entry.integrity, 'code')
   state.bundleSourceFile = 'src/main.js'

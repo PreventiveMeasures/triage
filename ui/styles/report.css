@@ -2277,6 +2277,28 @@ body.report-fullscreen {
   border-color: var(--accent);
   color: var(--text);
 }
+/* Open in Code (events.js): the popup's file in its bundle's Code tab,
+   bordered as Close beside it is. */
+.bundle-source-open-code {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: .3rem;
+  height: 1.6rem;
+  padding: 0 .5rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius, 4px);
+  color: var(--muted);
+  font: inherit; font-size: .75rem;
+  white-space: nowrap;
+}
+.bundle-source-open-code:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+/* A narrow popup keeps the path the room: the icon alone. */
+@media (width < 600px) {
+  .bundle-source-open-code > span { display: none; }
+}
 .bundle-source-body {
   flex: 1; min-height: 0;
   display: flex;

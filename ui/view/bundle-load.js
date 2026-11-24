@@ -116,12 +116,14 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
 // own. The detail tab carries between bundles, Overview from another view,
 // an explicit `tab` first. From Code to Code, the file open (or asked for
 // while the sources load) is asked for again: the Code view opens it where
-// the bundle has the path, else makes its usual pick.
-export function selectBundle(integrity, tab = state.currentView === 'bundles' ? state.bundleDetailsTab : 'overview', { workspaceId = null } = {}) {
+// the bundle has the path, else makes its usual pick. `file` asks Code for
+// one of its own (`{ path, line, endLine }`), as a source popup's Open in
+// Code does.
+export function selectBundle(integrity, tab = state.currentView === 'bundles' ? state.bundleDetailsTab : 'overview', { workspaceId = null, file = null } = {}) {
   const details = state.bundleDetails, request = state.bundleCodeFileRequest
   const pending = request?.bundle === state.selectedBundle && (!details || (details.metadataOnly === true && !details.sourceError))
-  const carried = state.currentView === 'bundles' && state.bundleDetailsTab === 'code' && tab === 'code'
-    ? state.bundleSourceFile ?? (pending ? request.path : null) : null
+  const carried = file?.path ?? (state.currentView === 'bundles' && state.bundleDetailsTab === 'code' && tab === 'code'
+    ? state.bundleSourceFile ?? (pending ? request.path : null) : null)
   beginViewNavigation()
   state.currentView = 'bundles'
   state.selectedBundle = integrity
@@ -129,7 +131,7 @@ export function selectBundle(integrity, tab = state.currentView === 'bundles' ? 
   state.bundleDetails = null
   state.bundleSourceFile = null
   state.bundleCodeHistory = null
-  state.bundleCodeFileRequest = carried ? { bundle: integrity, path: carried } : null
+  state.bundleCodeFileRequest = carried ? { ...file, bundle: integrity, path: carried } : null
   state.bundleCompare = null
   state.bundleSourceFindingIdx = null
   state.bundleCodeSearchQuery = ''
@@ -145,7 +147,8 @@ export function selectBundle(integrity, tab = state.currentView === 'bundles' ? 
 
 // Downloads carry between source tabs, cancelled (unfinished alone) on a
 // return to metadata or the source overlay closed. Import links keep their
-// source and history from Search into Code; Compare's other side stays.
+// source and history from Search into Code, and a source popup's Open in
+// Code its finding panel too; Compare's other side stays.
 export function selectBundleTab(tab, { preserveSource = false } = {}) {
   if (bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile) && !bundleNeedsSources(tab, preserveSource ? state.bundleSourceFile : null)) beginViewNavigation()
   state.bundleDetailsTab = tab
@@ -153,8 +156,8 @@ export function selectBundleTab(tab, { preserveSource = false } = {}) {
   if (!preserveSource) {
     state.bundleSourceFile = null
     state.bundleCodeHistory = null
+    state.bundleSourceFindingIdx = null
   }
-  state.bundleSourceFindingIdx = null
 }
 
 // A local bundle's OPFS bytes parsed into details: a sourcemap's `map` and
