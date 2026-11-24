@@ -117,8 +117,8 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
 // an explicit `tab` first. From Code to Code, the file open (or asked for
 // while the sources load) is asked for again: the Code view opens it where
 // the bundle has the path, else makes its usual pick. `file` asks Code for
-// one of its own (`{ path, line, endLine }`), as a source popup's Open in
-// Code does.
+// one of its own (`{ path, line, endLine }`), as a source popup's Code
+// button does.
 export function selectBundle(integrity, tab = state.currentView === 'bundles' ? state.bundleDetailsTab : 'overview', { workspaceId = null, file = null } = {}) {
   const details = state.bundleDetails, request = state.bundleCodeFileRequest
   const pending = request?.bundle === state.selectedBundle && (!details || (details.metadataOnly === true && !details.sourceError))
@@ -147,8 +147,8 @@ export function selectBundle(integrity, tab = state.currentView === 'bundles' ? 
 
 // Downloads carry between source tabs, cancelled (unfinished alone) on a
 // return to metadata or the source overlay closed. Import links keep their
-// source and history from Search into Code, and a source popup's Open in
-// Code its finding panel too; Compare's other side stays.
+// source and history from Search into Code, and a source popup's Code
+// button its finding panel too; Compare's other side stays.
 export function selectBundleTab(tab, { preserveSource = false } = {}) {
   if (bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile) && !bundleNeedsSources(tab, preserveSource ? state.bundleSourceFile : null)) beginViewNavigation()
   state.bundleDetailsTab = tab

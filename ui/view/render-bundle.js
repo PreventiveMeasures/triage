@@ -531,7 +531,7 @@ export function revealBundleCodeCurrent() {
 
 // Bring a line into the Code pane, two frames on: once its source has laid
 // out, and wrapped lines have resized their rows. A line a link marks to its
-// middle, the line a popup had at its top (Open in Code) to its top.
+// middle, the line a popup had at its top (its Code button) to its top.
 export function revealBundleSourceLine(line, block = 'center') {
   requestAnimationFrame(() => requestAnimationFrame(() => {
     document.querySelector(`.bundle-code-main .bundle-source-lineno-row[data-line="${line}"]`)
@@ -707,7 +707,7 @@ function renderBundleSourceBar(path, history = null, prettyToggle = nothing, ope
       ${renderSourceWrapToggle()}
       ${prettyToggle}
       ${openInCode ? html`<button type="button" class="bundle-source-open-code" data-action="bundle-source-open-code"
-        data-tooltip="Open this file in the Code tab, with its file tree">${CODE_MODE_ICON}<span>Open in Code</span></button>` : nothing}
+        data-tooltip="Open this file in the Code tab, with its file tree">${CODE_MODE_ICON}<span>Code</span></button>` : nothing}
       <button
         type="button"
         class="bundle-source-close"

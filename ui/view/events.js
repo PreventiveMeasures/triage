@@ -258,7 +258,7 @@ function goBundleTab(tab, options) {
 }
 
 // Another tab of the open bundle, from its tab strip, or a source popup's
-// Open in Code, which keeps its file (`preserveSource`).
+// Code button, which keeps its file (`preserveSource`).
 function switchBundleTab(tab, options) {
   // Leaving Graph stops its canvas' rAF / observers.
   if (state.bundleDetailsTab === 'graph' && tab !== 'graph') {
@@ -365,7 +365,7 @@ const SOURCE_CLICKS = [
     selectBundleSourceFile(path)
     showSourceFile(state.bundleDetailsTab === 'code', true)
   }],
-  // The popup's Open in Code: the file in its bundle's Code tab, with its
+  // The popup's Code button: the file in its bundle's Code tab, with its
   // file tree, at the line the popup had at its top, its marked lines kept,
   // and over the bundle view its finding panel too. Over a finding's view,
   // its local bundle opens on the file (selectBundle's `file`).

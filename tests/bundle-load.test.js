@@ -268,7 +268,7 @@ it('keeps the origin and earlier visits when an import moves from Search to Code
   }
 })
 
-it('a source popup\'s Open in Code keeps its file, history and finding panel in Code', () => {
+it('a source popup\'s Code button keeps its file, history and finding panel in Code', () => {
   for (const tab of ['treemap', 'graph', 'overview']) {
     selectBundle(entry.integrity, tab)
     const history = visitBundleFile(bundleFileHistory(null, entry.integrity, 'src/first.js'), 'src/main.js')

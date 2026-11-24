@@ -465,7 +465,7 @@
     }
     /* Its count beside its icon. */
     & .bundle-code-importers-toggle { width: auto; min-width: 23px; }
-    /* Open in Code: a labelled toolbar button. */
+    /* The popup's Code button: a labelled toolbar button. */
     & .bundle-source-open-code {
       height: 22px;
       border: 0; border-radius: 0;

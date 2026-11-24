@@ -2277,7 +2277,7 @@ body.report-fullscreen {
   border-color: var(--accent);
   color: var(--text);
 }
-/* Open in Code (events.js): the popup's file in its bundle's Code tab,
+/* The popup's Code button (events.js): its file in its bundle's Code tab,
    bordered as Close beside it is. */
 .bundle-source-open-code {
   flex-shrink: 0;
@@ -2294,10 +2294,6 @@ body.report-fullscreen {
 .bundle-source-open-code:hover {
   border-color: var(--accent);
   color: var(--text);
-}
-/* A narrow popup keeps the path the room: the icon alone. */
-@media (width < 600px) {
-  .bundle-source-open-code > span { display: none; }
 }
 .bundle-source-body {
   flex: 1; min-height: 0;
