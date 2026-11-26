@@ -371,6 +371,8 @@ describe('activeFilterDescriptions — the revalidation outcome', () => {
     // kinds take the partial rows in — so the others read as their label.
     state.filterRevalidate = 'refuted'
     assert.deepEqual(described(), [{ label: 'Revalidation', value: 'Refuted' }])
+    state.filterRevalidate = 'unrevalidated'
+    assert.deepEqual(described(), [{ label: 'Revalidation', value: 'Not revalidated' }])
   })
 
   it('says nothing for a value that names no option', () => {

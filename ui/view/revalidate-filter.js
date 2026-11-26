@@ -9,7 +9,10 @@
 // outlives the element (the chrome is rebuilt on cross-view entry).
 //
 // Dispatches `revalidate-change(detail.value)`; events.js writes the state.
-// A dedup group shows in full when any of its rows carries the outcome.
+// A dedup group shows in full when any of its rows carries the outcome —
+// except under Not revalidated, offered last while the underlying findings
+// are on screen, which keeps a group only when NONE of its rows carries one
+// (filters.js matchesOutcomeRow).
 //
 // CONFIRMED carries a second question: it takes the partial confirmations
 // along with the full ones (format.js REVALIDATE_FILTERS), and a chip

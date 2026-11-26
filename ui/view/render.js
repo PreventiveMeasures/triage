@@ -14,7 +14,7 @@ import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, replaceReport, report, reportSlot } from './dom.js'
 import { SEVERITIES, canDropRevalidation, configureDependencyRepos, configureDepsDir, configureRevalidation, depsDirName, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, isRevalidation, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, revalidationShown, stampUpstreamFindings } from './format.js'
 import { activeTabFor, canEditTriage, canTriageFinding, clearMergedGroups, drawnTabs, findingRepoTarget, getMergedGroups, getRevalidationGroups, groupKey, groupState, primaryTab, triageEntry, triageScope, underlyingFindingsShown } from './group.js'
-import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, hasSecurityContrast, isAppStackedGroup, isCrossContextGroup, modelOfFinding, priorityApplies, rangeApplies, repositoryFilterValues, runFilterValue, runFiltersOffered, scopeRows, shouldLockConfirmed } from './filters.js'
+import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, hasSecurityContrast, isAppStackedGroup, isCrossContextGroup, isUnrevalidatedGroup, modelOfFinding, priorityApplies, rangeApplies, repositoryFilterValues, runFilterValue, runFiltersOffered, scopeRows, shouldLockConfirmed } from './filters.js'
 import { reportDuplicateIds } from './report-duplicates.js'
 import { SOURCE_LABELS, revalidateKindOf } from '@preventive/report'
 import { COMBO_FIELDS, buildAnalyzerTags } from './analyzer-tags.js'
@@ -1530,8 +1530,12 @@ function renderImpl() {
   if (state.filterValidationModel && (!validationModelSet.has(runFilterValue(state.filterValidationModel, NULL_MODEL_SENTINEL)) || !runFiltersShown)) {
     state.filterValidationModel = ''
   }
-  // Likewise a revalidation outcome the set no longer reaches.
-  const revalidateOptions = reachableRevalidateFilters(revalidateKinds)
+  // Likewise a revalidation outcome the set no longer reaches. Not
+  // revalidated joins the outcomes only while the underlying findings are
+  // on screen — the simplified view folds them under the pass's row — and
+  // some row there carries no outcome; leaving the detail stop clears it.
+  const revalidateOptions = reachableRevalidateFilters(revalidateKinds,
+    underlyingFindingsShown() && allGroups.some(isUnrevalidatedGroup))
   if (state.filterRevalidate && !revalidateOptions.some((o) => o.value === state.filterRevalidate)) {
     state.filterRevalidate = ''
   }
