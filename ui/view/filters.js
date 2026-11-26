@@ -2,7 +2,7 @@ import { automaticFixFor, managedIssueFor } from './managed-issues.js'
 import { isPlaceholderNpmPackage, state } from '#client/index.js'
 import { SEVERITY_ORDER, displayedSeverity, findingText, isModule, isRevalidation, isRuledOut, prettyModel, revalidateKind } from './format.js'
 import { drawnTabs, getMergedGroups, primaryTab, tabKey, triageEntry, underlyingFindingsShown } from './group.js'
-import { activeRevalidateKinds, canLockConfirmed, defaultConfidenceFloor as confidenceFloor, confidenceOnScale, confirmedCoverage, confirmedIsDefault, rangeApplies } from '../../common/finding-filters.js'
+import { NOT_REVALIDATED_FILTER, activeRevalidateKinds, canLockConfirmed, defaultConfidenceFloor as confidenceFloor, confidenceOnScale, confirmedCoverage, confirmedIsDefault, rangeApplies } from '../../common/finding-filters.js'
 export { rangeApplies } from '../../common/finding-filters.js'
 import { reportDuplicateIds } from './report-duplicates.js'
 import { ignoresOwnRepo } from '../../common/finding-repo.js'
@@ -188,6 +188,21 @@ export function filterRevalidateKind(f) {
   return revalidateKind(f) || (f._source && !f._sourcePass ? 'revalidation' : '')
 }
 
+// Whether no finding in the row carries an outcome — what Not revalidated
+// keeps (finding-filters.js NOT_REVALIDATED_FILTER). The whole row, not its
+// drawn tabs: a stamp on any copy means the pass looked at the issue.
+export function isUnrevalidatedGroup(group) {
+  return group.every((f) => filterRevalidateKind(f) === '')
+}
+
+// The outcome asked of the row as a whole, where the option needs it: Not
+// revalidated is the complement of "some tab answers", like the annotation
+// filters' 'without', so a row the pass re-examined can't ride in on one
+// unstamped tab beneath its pass row.
+function matchesOutcomeRow(group) {
+  return activeFilters().filterRevalidate !== NOT_REVALIDATED_FILTER.value || isUnrevalidatedGroup(group)
+}
+
 export function matchesConfirmed(group) {
   const kinds = activeRevalidateKinds('confirmed', '')
   return group.some((f) => kinds.includes(filterRevalidateKind(f)))
@@ -315,7 +330,9 @@ function matchesScopeFilters(f) {
     if (!allowOwn && !isModule(f.file)) return false
   }
   // Outcome: one option can cover several values (Confirmed takes the pass's
-  // row and the findings no pass judged, filterRevalidateKind).
+  // row and the findings no pass judged, filterRevalidateKind). Not
+  // revalidated matches the unstamped tabs here and asks the rest of the
+  // row too (matchesOutcomeRow).
   if (F.filterRevalidate) {
     const kinds = activeRevalidateKinds(F.filterRevalidate, F.filterPartial)
     if (kinds && !kinds.includes(filterRevalidateKind(f))) return false
@@ -459,7 +476,7 @@ export function applyScopeFilters(groups) {
 // The same rows, whole: the `<analyzer-select>` counts ask for the rows App
 // mode folds under the pass's, as applyFilters does.
 export function scopeRows(groups) {
-  return groups.filter((g) => g.some(matchesScopeFilters))
+  return groups.filter((g) => g.some(matchesScopeFilters) && matchesOutcomeRow(g))
 }
 
 // Per-tab filters via `g.some`, then the group-level ones. A row holding a
@@ -472,6 +489,7 @@ export function applyFilters(groups) {
   const duplicatesMode = !state.currentWorkspace && F.filterDuplicates
   const duplicateIds = duplicatesMode ? reportDuplicateIds() : null
   return groups.filter((g) => (g.some(isRevalidation) ? g.some(matchesEntryFilters) : g.some(matchesFilters)) && matchesRunRow(g)
+    && matchesOutcomeRow(g)
     && matchesAnnotationFilters(g)
     && triState(duplicatesMode, () => g.some((f) => duplicateIds.has(tabKey(f))))
     && triState(F.filterCrossContext, () => isCrossContextGroup(g))

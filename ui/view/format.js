@@ -6,11 +6,11 @@ import { html, nothing } from 'lit'
 // whole client layer in with it. Callers pass in whatever state they read.
 import { parseFindingUrl } from '../../client/finding-link.js'
 import { formatBytes as formatByteSize } from '../scan/metrics.js'
-import { REVALIDATE_FILTERS, hasRevalidateStamp } from '../../common/finding-filters.js'
+import { NOT_REVALIDATED_FILTER, REVALIDATE_FILTERS, hasRevalidateStamp } from '../../common/finding-filters.js'
 import { ignoresOwnRepo } from '../../common/finding-repo.js'
 import { asCommit, repoCommit, sameRepoSlug } from '../../common/repo-commit.js'
 import { codeSpan } from './code-span.js'
-export { PARTIAL_MODES, REVALIDATE_FILTERS, revalidateFilterKinds } from '../../common/finding-filters.js'
+export { NOT_REVALIDATED_FILTER, PARTIAL_MODES, REVALIDATE_FILTERS, revalidateFilterKinds, revalidateFilterOption } from '../../common/finding-filters.js'
 // The finding readers shared with the report library's markdown writer,
 // re-exported so the viewer keeps one import; `isHttpUrl` is the one
 // http(s) gate every `<a>` in the viewer goes through.
@@ -77,10 +77,16 @@ export function isRuledOut(f) {
 }
 
 // The outcome options worth offering for the kinds present; the toolbar
-// drops the control when this is empty.
-export function reachableRevalidateFilters(kinds) {
+// drops the control when this is empty. `unrevalidated`: whether the
+// underlying findings are on screen and some row carries no outcome at all
+// (render.js) — then Not revalidated joins them, but only beside a pass
+// that stamped something, since with no stamp on screen every row is
+// "not revalidated" and the option would filter nothing.
+export function reachableRevalidateFilters(kinds, unrevalidated = false) {
   const present = new Set(kinds)
-  return REVALIDATE_FILTERS.filter((o) => o.kinds.some((k) => present.has(k)))
+  present.delete('')
+  const options = REVALIDATE_FILTERS.filter((o) => o.kinds.some((k) => present.has(k)))
+  return unrevalidated && present.size > 0 ? [...options, NOT_REVALIDATED_FILTER] : options
 }
 
 // ── Dependency directory ─────────────────────────────────────────────

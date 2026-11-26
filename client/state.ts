@@ -799,7 +799,9 @@ export const state: State = store<State>({
   filterRepo: '',
   // Revalidation outcome — empty string = no filter; otherwise a value
   // from view/format.js's REVALIDATE_FILTERS (`confirmed` / `refuted`),
-  // each covering one or more values of a finding's `revalidate` field.
+  // each covering one or more values of a finding's `revalidate` field, or
+  // NOT_REVALIDATED_FILTER's `unrevalidated` — the rows no finding of which
+  // carries one, offered while the underlying findings are on screen.
   // The dropdown lists only the outcomes the loaded set reaches and is
   // hidden entirely when it reaches none, so this stays '' for every
   // report that predates the revalidation pass. A selection that stops

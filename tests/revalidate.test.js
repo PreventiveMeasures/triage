@@ -21,7 +21,7 @@ import './_polyfills.js'
 
 const { state } = await import('../client/state.ts')
 const { REVALIDATE_KINDS, readReport } = await import('@preventive/report')
-const { applyFilters, applyOpeningFilters, applySorting, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters, priorityApplies, priorityForGroup, rangeApplies, shouldLockConfirmed } = await import('../ui/view/filters.js')
+const { applyFilters, applyOpeningFilters, applySorting, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters, priorityApplies, priorityForGroup, rangeApplies, scopeRows, shouldLockConfirmed } = await import('../ui/view/filters.js')
 const { activeTabFor, getMergedGroups, getShownGroups, groupKey, linkableGroups, sortTabs } = await import('../ui/view/group.js')
 const { mergeDuplicateFields } = await import('../common/finding-duplicates.js')
 const { activeRevalidateKinds, confidenceOnScale, hasRevalidateStamp } = await import('../common/finding-filters.js')
@@ -922,6 +922,64 @@ describe('revalidate filter — the toolbar dropdown', () => {
     assert.deepEqual(values(['unreachable']), ['unreachable'])
     assert.deepEqual(values(['unknown']), [])
     assert.deepEqual(values([]), [])
+  })
+
+  // The rows the pass never got to, asked for while the underlying
+  // findings are on screen: last in the list, beside a pass that
+  // stamped something, and never in place of one — with no stamp
+  // anywhere, every row is "not revalidated" and the option is a no-op.
+  describe('Not revalidated', () => {
+    const pass = (id) => makeFinding(id, { revalidate: 'revalidation' })
+    const values = (kinds, unrevalidated) => reachableRevalidateFilters(kinds, unrevalidated).map((o) => o.value)
+
+    it('joins the outcomes last, only when asked and beside a stamp', () => {
+      assert.deepEqual(values(REVALIDATE_KINDS, true), ['confirmed', 'unreachable', 'refuted', 'unrevalidated'])
+      assert.deepEqual(values(['refuted'], true), ['refuted', 'unrevalidated'])
+      assert.deepEqual(values(REVALIDATE_KINDS, false), ['confirmed', 'unreachable', 'refuted'])
+      // A pass that only answered `unknown` still looked at its rows.
+      assert.deepEqual(values(['unknown'], true), ['unrevalidated'])
+      assert.deepEqual(values([], true), [])
+      assert.deepEqual(values(['', ''], true), [], 'unstamped rows alone are no pass')
+      assert.equal(reachableRevalidateFilters(['confirmed'], true).at(-1).label, 'Not revalidated')
+      // Not one of the pass's answers, so not in the list of them.
+      assert.equal(REVALIDATE_FILTERS.some((o) => o.value === 'unrevalidated'), false)
+    })
+
+    it('keeps the rows none of whose findings carries an outcome', () => {
+      const groups = [
+        [pass('A'), makeFinding('A1')],
+        [makeFinding('B', { revalidate: 'confirmed' })],
+        [makeFinding('C', { revalidate: 'refuted' })],
+        [makeFinding('D', { revalidate: 'unknown' })],
+        [makeFinding('E')],
+        [makeFinding('F'), makeFinding('F2', { revalidate: 'partial' })],
+        [makeFinding('G'), makeFinding('G2')],
+      ]
+      state.revalidationDetailed = true
+      state.filterRevalidate = 'unrevalidated'
+      // A re-examined row is out though its analyzer tab carries no stamp,
+      // as is a dedup row the pass stamped through one copy.
+      assert.deepEqual(applyFilters(groups).map((g) => g.map((f) => f.id)), [['E'], ['G', 'G2']])
+      assert.deepEqual(scopeRows(groups).map((g) => g[0].id), ['E', 'G'])
+    })
+
+    // An import whose producer ran no pass stands with the pass's row
+    // (filterRevalidateKind), so it is under Confirmed and not here.
+    it('leaves out imports the filter reads as standing', () => {
+      state.filterRevalidate = 'unrevalidated'
+      assert.deepEqual(applyFilters([[makeFinding('A', { _source: 'claude-security' })]]), [])
+      const judged = makeFinding('B', { _source: 'deepsec', _sourcePass: true })
+      assert.equal(applyFilters([[judged]]).length, 1)
+    })
+
+    // It replaces the range like every outcome does.
+    it('takes the confidence range out of play', () => {
+      state.filterConfMin = 8
+      state.filterRevalidate = 'unrevalidated'
+      assert.equal(applyFilters([[makeFinding('A', { confidence: 2 })]]).length, 1)
+      state.filterRevalidate = ''
+      assert.equal(applyFilters([[makeFinding('A', { confidence: 2 })]]).length, 0)
+    })
   })
 })
 

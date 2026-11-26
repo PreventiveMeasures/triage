@@ -37,11 +37,29 @@ export const REVALIDATE_FILTERS = [
   { value: 'refuted', label: 'Refuted', kinds: ['refuted'] },
 ]
 
+// The option that is no answer of the pass's: the rows it never looked
+// at. Kept out of REVALIDATE_FILTERS, which answers "did the pass leave
+// this standing" — this asks whether the pass got to it at all. Offered
+// only while the underlying findings are on screen (format.js
+// reachableRevalidateFilters), and asked of the ROW rather than of a tab:
+// one stamped finding, or the pass's own row, means the pass looked at
+// that issue whichever copy it stamped, so a row qualifies only when NONE
+// of its findings carries an outcome (filters.js matchesOutcomeRow). Its
+// one kind is the "no stamp" '' the per-tab check reads.
+export const NOT_REVALIDATED_FILTER = { value: 'unrevalidated', label: 'Not revalidated', kinds: [''] }
+
+const OUTCOME_OPTIONS = [...REVALIDATE_FILTERS, NOT_REVALIDATED_FILTER]
+
+// The option one dropdown value names, or undefined.
+export function revalidateFilterOption(value) {
+  return OUTCOME_OPTIONS.find((o) => o.value === value)
+}
+
 // The kinds one dropdown value covers, or null when the value names no
 // option — filters.js reads that as "no filter" rather than hiding
 // every finding behind a value it can't interpret.
 export function revalidateFilterKinds(value) {
-  return REVALIDATE_FILTERS.find((o) => o.value === value)?.kinds ?? null
+  return revalidateFilterOption(value)?.kinds ?? null
 }
 
 // How finely Confirmed is drawn, once it has taken the partial rows

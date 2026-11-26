@@ -6,7 +6,7 @@
 // merged set, the unit of the toolbar's "X of Y".
 import { state } from '#client/index.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, clearFilterOverride, cloneFilterFields, setFilterOverride } from './filters.js'
-import { REVALIDATE_FILTERS, SEVERITIES, revalidateFilterKinds } from './format.js'
+import { SEVERITIES, revalidateFilterKinds, revalidateFilterOption } from './format.js'
 import { getMergedGroups, groupState } from './group.js'
 // The words the markdown writer spells the same enumerations with, so
 // a row here and a header line in the file can't disagree on one.
@@ -34,7 +34,7 @@ const ROW_FILTERS = [
 // where it applies: it lives INSIDE Confirmed, the one option whose kinds
 // take the partial rows (as `activeRevalidateKinds` reads it).
 function revalidateValue(value, partial) {
-  const label = REVALIDATE_FILTERS.find((o) => o.value === value)?.label ?? value
+  const label = revalidateFilterOption(value)?.label ?? value
   if (!revalidateFilterKinds(value)?.includes('partial')) return label
   if (partial === 'exclude') return `${label} (full only)`
   if (partial === 'only') return `${label} (partial only)`
