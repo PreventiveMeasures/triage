@@ -159,12 +159,13 @@ function measureLines(pre, width, wrapped, pitch) {
   return { rows, toggles }
 }
 
-// The line at the top of a viewer's code, to put back in place once its
-// lines rewrap: returns the function that does.
-export function keepSourceLine(toggle) {
-  const scroller = toggle.closest(VIEWERS)?.querySelector('.bundle-source-code-wrap')
+// The gutter row of the line at the top of the code of the viewer holding
+// `el`, with its scroller and that scroller's top edge; null where it shows
+// no lines.
+function topSourceRow(el) {
+  const scroller = el.closest(VIEWERS)?.querySelector('.bundle-source-code-wrap')
   const rows = scroller?.querySelectorAll('.bundle-source-lineno-row')
-  if (!rows?.length) return () => {}
+  if (!rows?.length) return null
   const edge = scroller.getBoundingClientRect().top
   let high = rows.length - 1, low = 0
   while (low < high) {
@@ -172,9 +173,24 @@ export function keepSourceLine(toggle) {
     if (rows[middle].getBoundingClientRect().bottom <= edge) low = middle + 1
     else high = middle
   }
-  const row = rows[low]
+  return { scroller, row: rows[low], edge }
+}
+
+// The line at the top of a viewer's code, to put back in place once its
+// lines rewrap: returns the function that does.
+export function keepSourceLine(toggle) {
+  const top = topSourceRow(toggle)
+  if (!top) return () => {}
+  const { scroller, row, edge } = top
   const offset = row.getBoundingClientRect().top - edge
   return () => {
     if (row.isConnected) scroller.scrollTop += row.getBoundingClientRect().top - edge - offset
   }
+}
+
+// The number of the line at the top of the code of the viewer holding `el`,
+// for another viewer to open the file at; null where it shows no lines.
+export function topSourceLine(el) {
+  const line = Number(topSourceRow(el)?.row.dataset.line)
+  return line > 0 ? line : null
 }
